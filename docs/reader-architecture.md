@@ -31,6 +31,8 @@ Explicit paper openings show metadata over an already mounted PDF. Closing the i
 
 The iOS plugin requests portrait or landscape through the foreground window scene. Screen orientation is independent of PDF page rotation and never changes annotation coordinates or the sidecar schema. Viewport changes preserve the normalized page position; fit-width mode refits automatically, while manually chosen or restored zoom remains stable.
 
+On short landscape screens, the top and bottom controls use single rows with 44-point targets, and references and notes open in a narrow panel below the top bar. Safe-area insets keep overlays clear of the notch and home indicator. A UIKit container retains Tauri's original controller as a child and manages the iPhone status bar: hidden in landscape and visible in portrait, including physical rotation. The WKWebView disables native scroll-inset adjustment because CSS already handles safe areas; applying both would shrink and shift the document viewport. Native dialog guards check both the original controller and its root container.
+
 The text adapter consumes PDF.js text streams with `getReader()` because affected WebKit versions lack the asynchronous stream iteration used by `getTextContent()`. Both text layers and bibliography extraction use the same adapter. It retains chunk styles, language, cleanup, and the separate XFA path without modifying global stream prototypes or PDF.js internals.
 
 ## App-owned annotation proposal

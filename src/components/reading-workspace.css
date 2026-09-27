@@ -1,4 +1,4 @@
-.app-shell.reading-mode { display: block; position: relative; padding: 0; min-height: 0; }
+.app-shell.reading-mode { --reader-overlay-clearance: 125px; display: block; position: relative; padding: 0; min-height: 0; }
 .reading-mode .workbench { position: absolute; inset: 0; overflow: hidden; }
 .reading-mode .library-sidebar { display: none; }
 .reading-mode.library-is-open .library-sidebar {
@@ -10,13 +10,13 @@
   padding: calc(30px + env(safe-area-inset-top, 0px)) calc(18px + env(safe-area-inset-right, 0px)) calc(22px + env(safe-area-inset-bottom, 0px)) calc(18px + env(safe-area-inset-left, 0px));
   box-shadow: 12px 0 44px #23382c38;
 }
-.reading-mode .mobile-library-close { display: inline-flex; position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; }
+.reading-mode .mobile-library-close { display: inline-flex; position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
 .reading-mode .reading-grid, .reading-mode .reading-grid.with-inspector { display: block; position: absolute; inset: 0; }
 .app-shell.reading-mode .reading-grid .reading-surface { display: flex; position: absolute; inset: 0; }
 .reading-mode .inspector {
   position: absolute;
   z-index: 35;
-  top: calc(env(safe-area-inset-top, 0px) + 125px);
+  top: calc(env(safe-area-inset-top, 0px) + var(--reader-overlay-clearance));
   right: env(safe-area-inset-right, 0px);
   bottom: env(safe-area-inset-bottom, 0px);
   width: min(420px, 100%);
@@ -27,7 +27,7 @@
 .reading-mode .runtime-banner, .reading-mode .operation-banner, .reading-mode .notice {
   position: absolute;
   z-index: 55;
-  top: calc(env(safe-area-inset-top, 0px) + 130px);
+  top: calc(env(safe-area-inset-top, 0px) + var(--reader-overlay-clearance) + 5px);
   left: calc(env(safe-area-inset-left, 0px) + 12px);
   right: calc(env(safe-area-inset-right, 0px) + 12px);
   max-width: 680px;
@@ -59,12 +59,33 @@
 .reading-mode.has-selection .pdf-reader-immersive .pdf-toolbar {
   bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
 }
+.reading-mode.has-selection .pdf-reader-immersive .pdf-pages { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 220px); }
 .library-import { margin: 10px 0 24px; }
 .library-import label { display: block; margin-bottom: 8px; font-size: 12px; color: #526851; }
 .library-import .arxiv-form { height: 46px; max-width: none; }
 .library-import input { font-size: 16px; }
 .library-import .import-button { min-width: 44px; min-height: 44px; }
 @media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
-  .reading-mode .inspector { width: 100%; border-radius: 14px 14px 0 0; }
+  .reading-mode .inspector { width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); border-radius: 14px 14px 0 0; }
   .reading-mode.library-is-open .library-sidebar { width: 100%; }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .app-shell.reading-mode { --reader-overlay-clearance: 68px; }
+  .reading-mode .inspector {
+    right: calc(env(safe-area-inset-right, 0px) + 8px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+    width: min(400px, calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px));
+    border-radius: 12px;
+  }
+  .reading-mode .inspector-tabs { height: 45px; min-height: 45px; gap: 16px; padding: 0 14px; }
+  .reading-mode .inspector-tabs > button { min-height: 44px; }
+  .reading-mode .inspector-content { padding: 14px 16px; }
+  .reading-mode .inspector-intro, .reading-mode .notes-intro > .empty-symbol, .reading-mode .notes-intro > h2 { display: none; }
+  .reading-mode .notes-intro { margin-bottom: 12px; }
+  .reading-mode .notes-list-heading { margin: 12px 0; }
+  .reading-mode .inspector-footer { display: none; }
+  .reading-mode .mobile-selection-action { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); min-height: 44px; padding: 8px 12px; }
+  .reading-mode.has-selection .pdf-reader-immersive .pdf-toolbar { bottom: calc(env(safe-area-inset-bottom, 0px) + 60px); }
+  .reading-mode.has-selection .pdf-reader-immersive .pdf-pages { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 132px); }
 }

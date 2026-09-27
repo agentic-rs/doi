@@ -26,7 +26,8 @@ final class ExportPlugin: Plugin, UIDocumentPickerDelegate, UIPopoverPresentatio
         invoke.reject("The Files picker is unavailable.")
         return
       }
-      guard controller.presentedViewController == nil else {
+      guard controller.presentedViewController == nil,
+        controller.viewIfLoaded?.window?.rootViewController?.presentedViewController == nil else {
         invoke.reject("Close the current native dialog before exporting annotations.")
         return
       }

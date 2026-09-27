@@ -29,13 +29,23 @@ The scale fix was checked with the cached Attention Is All You Need paper in the
 
 The pinch-zoom update routes gestures through the PDF scale instead of magnifying the webview. The Mac app loads the cached paper with the staged canvas/text rendering path. Its + button changes 223% to 238%, displays sharp text, and keeps the controls at their original size; Fit Width returns to 223%. The performance update was rebuilt and relaunched, resuming the cached paper at its saved scale. It previews only mounted page images during gestures, then renders the final scale on release. Automated gesture tests use synthetic events and geometry mocks; native pinch frame rate has not been measured by this task.
 
-The earlier signed pinch-zoom IPA is at `src-tauri/gen/apple/build/arm64/Papertrail.ipa`. The subsequent performance update uses the existing live Xcode helper and a signed iPhone `xcodebuild`; the IPA has not been re-exported. The helper remains available for Xcode Run/Build. This performance update has not been installed or interaction-tested on a physical iPhone; the simulator interaction results below describe the earlier immersive-reader update.
+The earlier signed pinch-zoom IPA is at `src-tauri/gen/apple/build/arm64/Papertrail.ipa`. The subsequent performance and landscape updates use the existing live Xcode helper and signed iPhone `xcodebuild`; the IPA has not been re-exported. The helper remains available for Xcode Run/Build. These updates have not been installed or interaction-tested on a physical iPhone; the landscape simulator checks below cover the latest native changes.
 
 The iOS screen-orientation action is intentionally available only on iOS. Desktop checks cover the shared reader and backend; phone geometry, touch selection, iOS Keychain, and Files behavior use simulator or physical-device checks. Older macOS versions remain unverified.
 
 ## Native simulator checks
 
-Installed the updated build over the existing app on an iPhone 16 simulator running iOS 18.4, without uninstalling it. The cached library survived the update. Native interaction checks verified:
+The landscape update (2026-09-28) was checked on iPhone 16 and iPhone SE (3rd generation) simulators running iOS 18.4. Native checks confirmed:
+
+- Single-row top and bottom controls fit both 852×393 and 667×375 landscape viewports, with 44-point targets.
+- The iPhone 16 reference panel sits below the top bar and inside the notch-safe edges; its first citation and action are visible without scrolling past decorative headings.
+- Native geometry diagnostics identified duplicate 59-point left/right scroll insets. Disabling native inset adjustment restored the full viewport and eliminated horizontal shifts when focusing a field. Temporary diagnostics were removed from the final build.
+- The status bar hides in landscape and returns in portrait. The overlay's orientation button, physical simulator rotation, and launch in landscape were exercised.
+- The native Files export picker opens and cancels successfully with the new controller containment.
+- All 80 frontend tests pass. The fit/resize test now explicitly advances animation frames instead of depending on a busy machine meeting a one-second timer deadline.
+- Final simulator, signed iPhone, and desktop bundles build successfully. Strict deep signature verification passes for the iPhone app with system trust services available. The physical iPhone build uses the restricted Xcode PATH and existing live helper.
+
+Earlier immersive-reader checks installed the build over the existing iPhone 16 app without uninstalling it. The cached library survived. Native interaction checks verified:
 
 - Real Attention Is All You Need metadata and its complete abstract appear when opening the paper.
 - **Read paper** and **Resume reading** reveal the unobstructed PDF; tapping opens the controls, and **Info** reopens the information sheet.
@@ -55,7 +65,7 @@ Workspace integration tests use a mocked reader and command boundary; DOM select
 
 - Browser-based UI inspection was rejected by automatic approval review under the user's no-Chrome instruction; it was not retried through another surface.
 - No real AI provider/key was supplied. The configurable request/response protocol is tested with a local server; remote provider behavior and native credential writes are unverified.
-- Native Save dialog clicks and visual highlight alignment in the running app are unverified. Export validation and file writing are tested.
+- The native iOS export picker opens and cancels in the simulator; completing a Files save and visual highlight alignment in the running app remain unverified. Export validation and file writing are tested.
 - Plain-text reference extraction is heuristic; uncertain matches are presented as candidates. The app reads arXiv targets internally and opens other source links externally.
 - The iOS packages are development builds. The immersive flow is verified in the native simulator; the updated package was not installed or interaction-tested on a physical phone by this task. Physical-device interaction with Keychain, Files export, PDF selection, and AI remains unverified. iOS 18 is the minimum supported version. See [installation steps](ios.md).
 - Windows, Linux, Android, and older macOS versions have not been built or tested.

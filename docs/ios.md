@@ -97,7 +97,7 @@ If the phone asks you to trust the developer after installation, open Settings â
 - Simulator: `src-tauri/gen/apple/build/arm64-sim/Papertrail.app`, installed and launch-tested on the iPhone 16 simulator.
 - iPhone: `src-tauri/gen/apple/build/iphone/Papertrail.ipa`. Use this package in place of the generic `arm64` path in the installation commands above. Development packages are restricted to the devices covered by their provisioning profile and must be rebuilt and reinstalled when that profile expires.
 
-The updated simulator build was installed without uninstalling the app, and its cached library survived. Native simulator checks verified the immersive flow with real papers, portrait/landscape changes, reference following, and Back/Forward. The updated signed IPA contains the current frontend assets and passes strict signature verification. Physical-device installation and interaction testing were not performed for this update.
+The simulator build was installed without uninstalling the app, and its cached library survived. Native simulator checks verified the immersive flow with real papers, portrait/landscape changes, reference following, and Back/Forward. The latest landscape changes build successfully for the simulator and a signed physical iPhone target through the live Xcode helper. The earlier exported IPA does not contain these latest changes; use Xcode Run or export a new build. Physical-device installation and interaction testing were not performed for this update.
 
 ## Reading on iPhone
 
@@ -106,6 +106,8 @@ Opening a paper from an arXiv ID, the library, or a reference presents its title
 Tap a page to show the reading overlay, then tap again or use its close button to hide it. Scrolling, following a PDF link, and selecting text retain their normal behavior. The overlay provides the library, **Info**, **Refs & notes**, AI settings, and Back/Forward. The bottom PDF controls provide page navigation, zoom, fit width, and PDF rotation.
 
 Use **Landscape** or **Portrait** in the top overlay to switch the viewer's native screen orientation. This is separate from **Rotate clockwise**, which rotates the PDF pages without changing the phone's screen orientation. The reader keeps the current paper and reading location when its viewport changes.
+
+In iPhone landscape, controls fit on one row at each edge and use icons with 44-point tap targets. References and notes appear in a narrower panel beneath the top controls. The system clock and status icons hide in landscape and return in portrait; overlays respect the notch and home indicator in both directions.
 
 Pinch the PDF with two fingers to zoom the document while reading overlays keep their size. A page preview follows your fingers and sharpens after you release.
 

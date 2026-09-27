@@ -331,25 +331,49 @@ async function advancePreviewFrame(duration = 16) {
 
 describe('immersive PDF view', () => {
   it('fits a new paper, refits on resize, and preserves manual zoom', async () => {
+    // Location reports run after layout in an animation frame. Drive those
+    // frames directly so a busy native build cannot consume a timer deadline.
+    const frames = new Map<number, FrameRequestCallback>();
+    let frame_id = 0;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++frame_id, callback);
+      return frame_id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
+    async function reportView() {
+      expect(frames.size).toBeGreaterThan(0);
+      await act(async () => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        callbacks.forEach((callback) => callback(performance.now()));
+      });
+    }
     const props = readerProps();
-    render(<PdfReader {...props} />);
-    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(336 / 600));
+    await act(async () => { render(<PdfReader {...props} />); });
+    await reportView();
+    expect(latestLocation(props).zoom).toBeCloseTo(336 / 600);
     expect(latestLocation(props).zoom_mode).toBe('fit_width');
 
     resizeViewport(840);
-    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(816 / 600));
+    await reportView();
+    expect(latestLocation(props).zoom).toBeCloseTo(816 / 600);
     const fitted = latestLocation(props);
     expect(fitted.page_number).toBe(1);
     expectActualPosition(props);
 
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
-    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(816 / 600 + 0.15));
+    await reportView();
+    expect(latestLocation(props).zoom).toBeCloseTo(816 / 600 + 0.15);
     expect(latestLocation(props).zoom_mode).toBe('custom');
+    const reports_before_resize = vi.mocked(props.on_location_change).mock.calls.length;
     resizeViewport(390);
-    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(816 / 600 + 0.15));
+    await reportView();
+    expect(vi.mocked(props.on_location_change).mock.calls.length).toBeGreaterThan(reports_before_resize);
+    expect(latestLocation(props).zoom).toBeCloseTo(816 / 600 + 0.15);
 
     fireEvent.click(screen.getByRole('button', { name: 'Fit page width' }));
-    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(366 / 600));
+    await reportView();
+    expect(latestLocation(props).zoom).toBeCloseTo(366 / 600);
     expect(latestLocation(props).zoom_mode).toBe('fit_width');
     expect(props.on_error).not.toHaveBeenCalled();
   });

@@ -1,5 +1,6 @@
 import Tauri
 import UIKit
+import WebKit
 
 private enum ReaderOrientation: String, Decodable {
   case portrait
@@ -27,6 +28,36 @@ private struct OrientationRequest {
 
 final class ReaderPlugin: Plugin {
   private var pending: OrientationRequest?
+  private var visibility_observer: NSObjectProtocol?
+
+  override func load(webview: WKWebView) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      // The document uses viewport-fit=cover and CSS safe-area insets. Native
+      // scroll insets would subtract the same space again and shift on focus.
+      webview.scrollView.contentInsetAdjustmentBehavior = .never
+      webview.scrollView.setContentOffset(.zero, animated: false)
+      if self.visibility_observer == nil {
+        // A webview can be created before its window becomes visible.
+        self.visibility_observer = NotificationCenter.default.addObserver(
+          forName: UIWindow.didBecomeVisibleNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.installStatusBarContainer() }
+      }
+      self.installStatusBarContainer()
+    }
+  }
+
+  deinit {
+    if let observer = visibility_observer {
+      NotificationCenter.default.removeObserver(observer)
+    }
+  }
+
+  private func installStatusBarContainer() {
+    if let controller = manager.viewController {
+      ReaderContainerController.install(around: controller)
+    }
+  }
 
   @objc func setOrientation(_ invoke: Invoke) throws {
     let options = try invoke.parseArgs(OrientationOptions.self)
@@ -40,16 +71,20 @@ final class ReaderPlugin: Plugin {
         return
       }
       guard let controller = self.manager.viewController,
-        let scene = controller.viewIfLoaded?.window?.windowScene,
+        let window = controller.viewIfLoaded?.window,
+        let scene = window.windowScene,
         scene.activationState == .foregroundActive else {
         invoke.reject("The reader window is not active.")
         return
       }
-      guard controller.presentedViewController == nil else {
+      guard controller.presentedViewController == nil,
+        window.rootViewController?.presentedViewController == nil else {
         invoke.reject("Close the native dialog before changing the reading direction.")
         return
       }
-      guard !controller.supportedInterfaceOrientations.intersection(options.orientation.mask).isEmpty else {
+      self.installStatusBarContainer()
+      let orientation_controller = window.rootViewController ?? controller
+      guard !orientation_controller.supportedInterfaceOrientations.intersection(options.orientation.mask).isEmpty else {
         invoke.reject("This window does not support the requested reading direction.")
         return
       }
@@ -61,7 +96,7 @@ final class ReaderPlugin: Plugin {
       let request_id = UUID()
       self.pending = OrientationRequest(request_id: request_id, invoke: invoke,
         orientation: options.orientation, deadline: ProcessInfo.processInfo.systemUptime + 3)
-      controller.setNeedsUpdateOfSupportedInterfaceOrientations()
+      orientation_controller.setNeedsUpdateOfSupportedInterfaceOrientations()
       scene.requestGeometryUpdate(.iOS(interfaceOrientations: options.orientation.mask)) { [weak self] error in
         DispatchQueue.main.async {
           self?.finish(request_id, error: error.localizedDescription)
