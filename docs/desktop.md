@@ -4,7 +4,7 @@ Use the native macOS app to test changes without reinstalling on an iPhone. This
 
 ## Run with live updates
 
-Prerequisites: Node.js 22 or newer, pnpm, Rust 1.88 or newer, and the [Tauri macOS prerequisites](https://v2.tauri.app/start/prerequisites/#macos). The frontend build targets Safari 18; testing currently uses this development Mac's native webview.
+Prerequisites: Node.js 22.18 or newer, pnpm, Rust 1.88 or newer, and the [Tauri macOS prerequisites](https://v2.tauri.app/start/prerequisites/#macos). The frontend build targets Safari 18; testing currently uses this development Mac's native webview.
 
 From the project directory:
 

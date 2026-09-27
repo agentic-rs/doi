@@ -13,6 +13,7 @@ The immersive reader update shows metadata and the abstract when a paper is expl
 - `pnpm desktop:build --debug --bundles app`: the updated native Mac app builds with the bundled frontend.
 - `pnpm ios:sim`: updated Rust and Swift code compiles and the Apple Silicon simulator package builds.
 - The updated signed iPhone IPA exported successfully. Its executable is arm64, strict deep signature verification passes, and the current frontend assets are embedded. Device installation requires matching provisioning; signing settings and profile details remain local.
+- `pnpm ios:open` prepares the generated Xcode environment and keeps Tauri's build helper running. A signed iPhone `xcodebuild` succeeds with an otherwise empty environment and `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, reproducing Xcode's restricted tool search paths. The launcher passes a strict TypeScript check; fixture checks cover inline YAML conversion, repeat preparation, shell quoting, and preserving the project when a template is unrecognized. Direct Xcode UI access was rejected by automatic approval review; this verification uses the command-line builder.
 
 The local HTTP test needs permission to bind a loopback port in restricted sandboxes. It does not contact an external AI provider or use a real API key.
 

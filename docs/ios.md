@@ -4,17 +4,17 @@ Papertrail supports iOS 18 and newer. It bundles its interface, PDF.js worker, f
 
 ## Toolchain
 
-Use macOS with Xcode and its iOS SDK/simulator runtime, Rust, Node.js 22 or newer, and pnpm. Tauri also requires XcodeGen, CocoaPods, and libimobiledevice. These are installed on the development Mac used for this build.
+Use macOS with Xcode and its iOS SDK/simulator runtime, Rust, Node.js 22.18 or newer, and pnpm. The build launcher uses Node's built-in TypeScript support. Tauri also requires XcodeGen, CocoaPods, and libimobiledevice. These are installed on the development Mac used for this build.
 
 On a fresh checkout:
 
 ```sh
 pnpm install
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim
-pnpm tauri ios init
+pnpm ios:init
 ```
 
-The initializer creates `src-tauri/gen/apple/papertrail.xcodeproj`. That project is generated locally and excluded from Git, including local signing settings and build artifacts. The iOS configuration and native plugin sources are tracked. Run the initializer again when starting from a fresh checkout.
+The initializer creates `src-tauri/gen/apple/papertrail.xcodeproj` and prepares this Mac's Node, pnpm, and Rust paths for Xcode's Rust build phase. The generated project, local toolchain environment, signing settings, and build artifacts are excluded from Git. The iOS configuration and native plugin sources are tracked. Run `pnpm ios:init` when starting from a fresh checkout.
 
 The minimum OS is set in `src-tauri/tauri.ios.conf.json`. The reader uses PDF.js's legacy bundle, which includes compatibility polyfills; current PDF.js lists Safari 18+ support for this bundle in its [browser support guide](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions#which-browsersenvironments-are-supported).
 
@@ -44,9 +44,14 @@ Use `xcrun simctl list devices available` to choose another simulator. Intel Mac
 ## Your iPhone
 
 1. Connect or pair the iPhone with this Mac and trust the Mac on the phone.
-2. Add your Apple account in Xcode Settings → Accounts. Open the generated project and select the `papertrail_iOS` target. In Signing & Capabilities, enable automatic signing and select your team. If the bundle identifier is unavailable to your account, change `identifier` in `src-tauri/tauri.conf.json` and regenerate the iOS project.
-3. Enable Settings → Privacy & Security → Developer Mode on the iPhone, restart, and confirm when prompted.
-4. Select your iPhone as Xcode's destination and run the app. For the Tauri build environment and bundled interface, start Xcode with `pnpm tauri ios run --open`, then press Run. Keep that terminal command running while Xcode builds.
+2. From the project directory, run `pnpm ios:open` to open Xcode. Keep that terminal running while using Xcode's Run or Build actions.
+3. Add your Apple account in Xcode Settings → Accounts and select the `papertrail_iOS` target. In Signing & Capabilities, enable automatic signing and select your team. If the bundle identifier is unavailable to your account, change `identifier` in `src-tauri/tauri.conf.json` and regenerate the iOS project with `pnpm ios:init`.
+4. Enable Settings → Privacy & Security → Developer Mode on the iPhone, restart, and confirm when prompted.
+5. Select your iPhone as Xcode's destination and press Run.
+
+`pnpm ios:open` refreshes the existing project's local toolchain environment, bundles the frontend, and starts the Tauri CLI helper before opening Xcode. It does not install or run the app on the phone itself. The helper must remain running while Xcode builds; opening the `.xcodeproj` alone does not provide it. Press Ctrl+C in the terminal when finished. See [Tauri's Xcode workflow](https://v2.tauri.app/develop/#using-xcode-or-android-studio).
+
+The environment hook is also stored in the local XcodeGen configuration, so it survives regeneration of the generated project. Reopening through `pnpm ios:open` leaves your existing signing settings intact.
 
 Apple supports a personal Apple account for running your own development app; signing and provisioning must match your account/device. See [Apple's device setup instructions](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) and [Developer Mode instructions](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
 
@@ -58,7 +63,7 @@ APPLE_DEVELOPMENT_TEAM=YOUR_TEAM_ID pnpm ios:build
 
 The CLI prints the output location. `YOUR_TEAM_ID` is the development team ID shown by your Apple developer account; it is not the certificate fingerprint or the identifier in parentheses beside a certificate name. See [Tauri's signing guide](https://v2.tauri.app/distribute/sign/ios/) for signing setup.
 
-Before exporting for a new phone, perform a build with that phone explicitly selected in Xcode. A generic archive can otherwise create a profile covering only the Mac's “Designed for iPad/iPhone” destination. When building from the terminal, keep `pnpm tauri ios build --debug --open` running, and in another terminal run:
+Before exporting for a new phone, perform a build with that phone explicitly selected in Xcode. A generic archive can otherwise create a profile covering only the Mac's “Designed for iPad/iPhone” destination. When building from the terminal, keep `pnpm ios:open` running, and in another terminal run:
 
 ```sh
 xcodebuild -project src-tauri/gen/apple/papertrail.xcodeproj \
@@ -68,7 +73,7 @@ xcodebuild -project src-tauri/gen/apple/papertrail.xcodeproj \
   DEVELOPMENT_TEAM=YOUR_TEAM_ID CODE_SIGN_STYLE=Automatic build
 ```
 
-Then export with `pnpm ios:build`. The selected device must appear in the app's embedded provisioning profile; a valid signature alone does not establish that a particular iPhone can install it.
+After the device build finishes, stop `ios:open` with Ctrl+C, then export with `pnpm ios:build`. Use one Tauri iOS command at a time; restart `pnpm ios:open` when returning to Xcode. The selected device must appear in the app's embedded provisioning profile; a valid signature alone does not establish that a particular iPhone can install it.
 
 An exported development IPA installs only on devices covered by its provisioning profile. In Xcode, use Window → Devices and Simulators, select the iPhone, and add the IPA under Installed Apps. Alternatively, install the corresponding signed `.app` directly:
 
@@ -81,6 +86,11 @@ xcrun devicectl device install app --device DEVICE_ID /private/tmp/papertrail-ip
 Use the device identifier from the first command. Direct installation does not publish an app to the App Store or TestFlight. Distribution through those services is a separate signing and submission workflow.
 
 If the phone asks you to trust the developer after installation, open Settings → General → VPN & Device Management, select the signing account under Developer App, and follow the trust prompts. Developer trust and Developer Mode are separate steps; complete whichever the phone requests before reopening Papertrail.
+
+## Xcode build troubleshooting
+
+- **Build Rust Code: `pnpm: command not found`**: Xcode's GUI environment lacks the Node/pnpm paths available in your terminal. Run `pnpm ios:open` from a terminal where pnpm and Rust work; the launcher refreshes the generated project's local environment.
+- **CLI options helper unavailable**: the Tauri terminal command has stopped or the project was opened without it. Run `pnpm ios:open` again and keep that terminal running before pressing Run or Build in Xcode.
 
 ## Packages built on this Mac
 

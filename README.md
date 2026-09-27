@@ -6,7 +6,7 @@ Built with Tauri 2, Rust, React, TypeScript, and PDF.js. PDFs stay unchanged; an
 
 ## Run locally
 
-Prerequisites: Node.js 22 or newer, pnpm, Rust 1.88 or newer, and your platform's [Tauri development prerequisites](https://v2.tauri.app/start/prerequisites/).
+Prerequisites: Node.js 22.18 or newer, pnpm, Rust 1.88 or newer, and your platform's [Tauri development prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```sh
 pnpm install
@@ -38,17 +38,25 @@ cargo test --manifest-path src-tauri/Cargo.toml
 Requires macOS, Xcode with iOS support, CocoaPods, XcodeGen, libimobiledevice, and the Rust iOS targets. The app supports iOS 18 or newer.
 
 ```sh
-pnpm tauri ios init
+pnpm ios:init
 pnpm ios:sim
 ```
 
-For an iPhone build, configure your Apple account/team in Xcode and run:
+To build or run on an iPhone through Xcode:
+
+```sh
+pnpm ios:open
+```
+
+This prepares the local Xcode toolchain environment, bundles the frontend, and opens the generated project. Keep the terminal running while using Xcode's Run or Build actions; Ctrl+C stops the helper. Select your Apple account/team and iPhone in Xcode, then press Run. The launcher itself does not install or run the app on the phone.
+
+To export a signed iPhone package after configuring signing:
 
 ```sh
 APPLE_DEVELOPMENT_TEAM=YOUR_TEAM_ID pnpm ios:build
 ```
 
-See [iOS build and installation](docs/ios.md) for simulator installation, signed device installation, and development commands. The generated Xcode project and signing settings stay local; run `ios init` on each fresh checkout.
+See [iOS build and installation](docs/ios.md) for simulator installation, signed device installation, and Xcode troubleshooting. The generated Xcode project and signing settings stay local; run `pnpm ios:init` on each fresh checkout.
 
 ## Use
 
