@@ -13,6 +13,8 @@ import { readPdfTextContent } from '../lib/pdf-compatibility';
 import { interactiveReaderTarget, isReaderTap, moveReaderGesture, startReaderGesture } from '../lib/reader-gestures';
 import type { ReaderGesture } from '../lib/reader-gestures';
 import type { SelectionPage } from '../lib/pdf-selection';
+import { attachPdfZoomGestures } from '../lib/pdf-zoom-gestures';
+import type { PdfZoomPoint } from '../lib/pdf-zoom-gestures';
 import './pdf-reader.css';
 
 GlobalWorkerOptions.workerSrc = worker_url;
@@ -61,14 +63,25 @@ interface PdfPageProps {
   on_error: (message: string) => void;
 }
 
+function readPageData(page: PDFPageProxy) {
+  return Promise.all([readPdfTextContent(page), page.getAnnotations({ intent: 'display' })]);
+}
+
 function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page, on_link, on_error }: PdfPageProps) {
   const page_ref = useRef<HTMLDivElement>(null);
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const text_ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(page.pageNumber <= 2);
-  const [rendered, setRendered] = useState(false);
+  const [rendered_viewport, setRenderedViewport] = useState<PageViewport | null>(null);
   const [links, setLinks] = useState<PdfLink[]>([]);
   const viewport = useMemo(() => page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 }), [page, zoom, rotation]);
+  const read_page_data = useMemo(() => {
+    let task: ReturnType<typeof readPageData> | null = null;
+    return () => task ??= readPageData(page).catch((error: unknown) => {
+      task = null;
+      throw error;
+    });
+  }, [page]);
 
   useEffect(() => {
     const element = page_ref.current;
@@ -85,27 +98,48 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
     let disposed = false;
     let render_task: RenderTask | undefined;
     let text_layer: TextLayer | undefined;
-    setRendered(false);
     setLinks([]);
     const canvas = canvas_ref.current;
     const text_element = text_ref.current;
     const page_element = page_ref.current;
-    if (!visible || !canvas || !text_element || !page_element) return;
+    if (!visible || !canvas || !text_element || !page_element) {
+      setRenderedViewport(null);
+      return;
+    }
+    // Keep the last finished bitmap visible while PDF.js draws the new scale.
+    // A cancelled render must never clear or overwrite the visible canvas.
+    const buffer = document.createElement('canvas');
+    const text_buffer = document.createElement('div');
+    function releaseBuffer() {
+      buffer.width = 0;
+      buffer.height = 0;
+    }
 
     async function renderPage() {
       // Restrict canvas memory on high DPI displays and very large pages.
-      const pixel_ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(16_000_000 / (viewport.width * viewport.height)));
-      canvas!.width = Math.ceil(viewport.width * pixel_ratio);
-      canvas!.height = Math.ceil(viewport.height * pixel_ratio);
-      render_task = page.render({ canvas: canvas!, viewport, transform: [pixel_ratio, 0, 0, pixel_ratio, 0, 0] });
+      const pixel_ratio = Math.min(window.devicePixelRatio || 1, Math.sqrt(16_000_000 / (viewport.width * viewport.height)));
+      buffer.width = Math.max(1, Math.floor(viewport.width * pixel_ratio));
+      buffer.height = Math.max(1, Math.floor(viewport.height * pixel_ratio));
+      render_task = page.render({ canvas: buffer, viewport, transform: [pixel_ratio, 0, 0, pixel_ratio, 0, 0] });
       // Cancellation can precede text extraction finishing. Mark the render
       // rejection handled immediately, then surface it in the combined await.
       void render_task.promise.catch(() => undefined);
-      const [content, embedded_annotations] = await Promise.all([readPdfTextContent(page), page.getAnnotations({ intent: 'display' })]);
+      const [content, embedded_annotations] = await read_page_data();
       if (disposed) return;
-      text_layer = new TextLayer({ textContentSource: content, container: text_element!, viewport });
+      text_layer = new TextLayer({ textContentSource: content, container: text_buffer, viewport });
       await Promise.all([render_task.promise, text_layer.render()]);
       if (disposed) return;
+      const context = canvas!.getContext('2d');
+      if (!context) throw new Error('A canvas drawing context is unavailable.');
+      canvas!.width = buffer.width;
+      canvas!.height = buffer.height;
+      context.drawImage(buffer, 0, 0);
+      // PDF.js writes scale/rotation metadata as well as text nodes.
+      text_element!.style.cssText = text_buffer.style.cssText;
+      const text_rotation = text_buffer.getAttribute('data-main-rotation');
+      if (text_rotation === null) text_element!.removeAttribute('data-main-rotation');
+      else text_element!.setAttribute('data-main-rotation', text_rotation);
+      text_element!.replaceChildren(...text_buffer.childNodes);
       register_page(page.pageNumber, {
         page_number: page.pageNumber,
         page_element: page_element!,
@@ -122,22 +156,33 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
           action: typeof annotation.action === 'string' ? annotation.action : null,
         }))
         .filter((link) => link.url || link.destination || link.action));
-      setRendered(true);
+      setRenderedViewport(viewport);
     }
 
-    void renderPage().catch((error: unknown) => {
+    void renderPage().catch(async (error: unknown) => {
+      render_task?.cancel();
+      await render_task?.promise.catch(() => undefined);
       if (!disposed && !(error instanceof RenderingCancelledException)) {
         on_error(`Page ${page.pageNumber} could not be rendered: ${error instanceof Error ? error.message : String(error)}`);
       }
+    }).finally(async () => {
+      // Even cancellation settles asynchronously. Release the staging bitmap
+      // only after PDF.js has stopped using its drawing context.
+      await render_task?.promise.catch(() => undefined);
+      releaseBuffer();
     });
     return () => {
       disposed = true;
       register_page(page.pageNumber, null);
       render_task?.cancel();
+      // Text extraction may still be pending. Do not retain cancelled bitmaps
+      // until it finishes when a rapid pinch starts another render each frame.
+      if (render_task) void render_task.promise.then(releaseBuffer, releaseBuffer);
+      else releaseBuffer();
       text_layer?.cancel();
       text_element.replaceChildren();
     };
-  }, [page, visible, viewport, register_page, on_error]);
+  }, [page, visible, viewport, read_page_data, register_page, on_error]);
 
   const page_annotations = annotations.flatMap((annotation) => annotation.target.page_anchors
     .filter((anchor) => anchor.page_number === page.pageNumber)
@@ -153,8 +198,8 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
         aria-label={`Page ${page.pageNumber}`}
       >
         {visible && <>
-          <canvas ref={canvas_ref} key={`${zoom}-${rotation}`} className="pdf-page-canvas" aria-hidden="true" />
-          <div className="textLayer" ref={text_ref} />
+          <canvas ref={canvas_ref} className="pdf-page-canvas" aria-hidden="true" />
+          <div className="textLayer" ref={text_ref} hidden={rendered_viewport !== viewport} />
           <svg className="pdf-highlight-layer" viewBox={`0 0 ${viewport.width} ${viewport.height}`} aria-hidden="true">
             {page_annotations.flatMap(({ annotation, anchor, anchor_index }) => anchor.quad_points.map((quad, index) => (
               <polygon
@@ -183,7 +228,7 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
             })}
           </div>
         </>}
-        {!rendered && <div className="pdf-page-placeholder" aria-hidden="true">{visible ? 'Rendering page…' : `Page ${page.pageNumber}`}</div>}
+        {!rendered_viewport && <div className="pdf-page-placeholder" aria-hidden="true">{visible ? 'Rendering page…' : `Page ${page.pageNumber}`}</div>}
       </div>
       <span className="pdf-page-label" aria-hidden="true">{page.pageNumber}</span>
     </div>
@@ -214,6 +259,8 @@ export function PdfReader(props: PdfReaderProps) {
   const selection_pages = useRef(new Map<number, SelectionPage>());
   const pending_location = useRef<ReadingLocation | null>(null);
   const pending_anchor = useRef<PageAnchor | null>(null);
+  const pending_view_point = useRef<[number, number] | null>(null);
+  const zoom_anchor = useRef<{ page_number: number; page_position: [number, number] } | null>(null);
   const restoration_frame = useRef<number | null>(null);
   const current_location = useRef(defaultLocation(paper.paper_id));
   const current_paper_id = useRef(paper.paper_id);
@@ -261,6 +308,8 @@ export function PdfReader(props: PdfReaderProps) {
     selection_pages.current.clear();
     cancelPendingTap();
     gesture.current = null;
+    zoom_anchor.current = null;
+    pending_view_point.current = null;
     callbacks.current.on_selection(null);
     callbacks.current.on_references([]);
     const saved = callbacks.current.target_location ?? callbacks.current.paper.last_location;
@@ -335,6 +384,8 @@ export function PdfReader(props: PdfReaderProps) {
     fit_pending.current = zoom_mode.current === 'fit_width';
     pending_location.current = { ...target, zoom_mode: zoom_mode.current };
     pending_anchor.current = callbacks.current.target_anchor ?? null;
+    pending_view_point.current = null;
+    zoom_anchor.current = null;
     setZoom(clamp(target.zoom, minimum_zoom, maximum_zoom));
     setRotation(target.rotation);
     setActivePage(target.page_number);
@@ -366,9 +417,10 @@ export function PdfReader(props: PdfReaderProps) {
     if (!page) return;
     const bounds = page.getBoundingClientRect();
     const root_bounds = scroll_root.getBoundingClientRect();
+    const view_point = pending_view_point.current ?? [20, 20];
     scroll_root.scrollTo({
-      top: scroll_root.scrollTop + bounds.top - root_bounds.top + clamp(target.page_position[1], 0, 1) * bounds.height - 20,
-      left: Math.max(0, scroll_root.scrollLeft + bounds.left - root_bounds.left + clamp(target.page_position[0], 0, 1) * bounds.width - 20),
+      top: scroll_root.scrollTop + bounds.top - root_bounds.top + clamp(target.page_position[1], 0, 1) * bounds.height - view_point[1],
+      left: Math.max(0, scroll_root.scrollLeft + bounds.left - root_bounds.left + clamp(target.page_position[0], 0, 1) * bounds.width - view_point[0]),
       behavior: 'instant',
     });
     // Browsers clamp scrolling near the document edges and center fitted pages.
@@ -377,6 +429,7 @@ export function PdfReader(props: PdfReaderProps) {
     setActivePage(current_location.current.page_number);
     pending_location.current = null;
     pending_anchor.current = null;
+    pending_view_point.current = null;
     if (restoration_frame.current !== null) cancelAnimationFrame(restoration_frame.current);
     // PDF layout is synchronous; one frame suppresses scroll events generated
     // by this restoration before the user moves again.
@@ -412,6 +465,70 @@ export function PdfReader(props: PdfReaderProps) {
   useLayoutEffect(() => {
     resize_callback.current();
   }, [props.viewport_key]);
+
+  useEffect(() => {
+    if (!scroll_root || !loaded || !reading_active) return;
+    return attachPdfZoomGestures(scroll_root, {
+      get_zoom: () => zoom_ref.current,
+      minimum_zoom,
+      maximum_zoom,
+      on_start: (point: PdfZoomPoint) => {
+        // Anchor to a point in the PDF, not the app viewport. The midpoint may
+        // move during a pinch, so retain this page-relative point until it ends.
+        const pages = [...scroll_root.querySelectorAll<HTMLElement>('[data-page-number]')];
+        let nearest: HTMLElement | null = null;
+        let nearest_distance = Infinity;
+        for (const page of pages) {
+          const bounds = page.getBoundingClientRect();
+          const distance = Math.hypot(
+            point.client_x - clamp(point.client_x, bounds.left, bounds.right),
+            point.client_y - clamp(point.client_y, bounds.top, bounds.bottom),
+          );
+          if (distance < nearest_distance) {
+            nearest = page;
+            nearest_distance = distance;
+          }
+        }
+        if (!nearest) return false;
+        const bounds = nearest.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0) return false;
+        zoom_anchor.current = {
+          page_number: Number(nearest.dataset.pageNumber),
+          page_position: [clamp((point.client_x - bounds.left) / bounds.width, 0, 1), clamp((point.client_y - bounds.top) / bounds.height, 0, 1)],
+        };
+        cancelPendingTap();
+        gesture.current = null;
+        const selection = window.getSelection();
+        if (selection?.anchorNode && scroll_root.contains(selection.anchorNode)) selection.removeAllRanges();
+        callbacks.current.on_selection(null);
+        return true;
+      },
+      on_zoom: (next_zoom, point) => {
+        const anchor = zoom_anchor.current;
+        if (!anchor) return;
+        const bounds = scroll_root.getBoundingClientRect();
+        zoom_mode.current = 'custom';
+        fit_pending.current = false;
+        pending_anchor.current = null;
+        pending_view_point.current = [point.client_x - bounds.left, point.client_y - bounds.top];
+        pending_location.current = {
+          paper_id: current_paper_id.current,
+          ...anchor,
+          zoom: next_zoom,
+          zoom_mode: 'custom',
+          rotation: rotation_ref.current,
+        };
+        setZoom(next_zoom);
+        setViewRevision((value) => value + 1);
+      },
+      on_end: () => {
+        zoom_anchor.current = null;
+        gesture.current = null;
+        cancelPendingTap();
+        last_scroll_at.current = performance.now();
+      },
+    });
+  }, [scroll_root, loaded, reading_active]);
 
   useEffect(() => {
     if (!immersive || !reading_active || controls_visible || hinted_paper.current === paper.paper_id) return;
@@ -531,6 +648,8 @@ export function PdfReader(props: PdfReaderProps) {
     }
     pending_location.current = { ...source, page_position, zoom: next_zoom, zoom_mode: next_mode, rotation: next_rotation };
     pending_anchor.current = null;
+    pending_view_point.current = null;
+    zoom_anchor.current = null;
     setZoom(pending_location.current.zoom);
     setRotation(next_rotation);
     setViewRevision((value) => value + 1);
@@ -615,7 +734,7 @@ export function PdfReader(props: PdfReaderProps) {
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     cancelPendingTap();
-    if (!reading_active) {
+    if (!reading_active || zoom_anchor.current) {
       gesture.current = null;
       return;
     }

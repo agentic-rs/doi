@@ -6,7 +6,7 @@ The immersive reader update shows metadata and the abstract when a paper is expl
 
 ## Automated checks
 
-- `pnpm test`: 57 passing frontend tests covering geometry, clipped cross-page DOM selections, text normalization, reference parsing, sidecar validation, history, workspace interactions, mobile panel access, preserved touch-selection anchors, metadata-sheet accessibility and focus, tap gestures, orientation behavior, reading resumption, Safari-compatible text-stream extraction, persisted width fitting, fit/custom scale across PDF rotation, same-scale navigation, explicit link zoom, different page sizes, and bounded scrolling.
+- `pnpm test`: 73 passing frontend tests covering geometry, clipped cross-page DOM selections, text normalization, reference parsing, sidecar validation, history, workspace interactions, mobile panel access, preserved touch-selection anchors, metadata-sheet accessibility and focus, tap gestures, orientation behavior, reading resumption, Safari-compatible text-stream extraction, persisted width fitting, fit/custom scale across PDF rotation, same-scale navigation, explicit link zoom, different page sizes, and bounded scrolling. Zoom regressions cover touch/Safari/Ctrl-wheel event handling, moving pinch anchors, gesture overlap and cleanup, native pixel density, the canvas pixel budget, retaining the previous bitmap, rejecting stale renders, and releasing canceled buffers while text extraction is pending.
 - `pnpm build`: TypeScript and production frontend build pass.
 - `cargo test --manifest-path src-tauri/Cargo.toml`: 13 passing tests covering IDs, real Atom metadata, persistence across restart, revision-bound annotations, provider URL validation, a local HTTP AI roundtrip, atomic native-export writes, reader orientation serialization, saved fit-width mode, and legacy reading locations without a zoom mode.
 - Rust formatting and Clippy with warnings denied pass.
@@ -25,7 +25,9 @@ The updated standalone `Papertrail.app` also opens successfully. Its cached libr
 
 The scale fix was checked with the cached Attention Is All You Need paper in the native Mac app. Fit Width remains selected as PDF rotation recalculates the percentage between 172% and 223%, with the page fitting the window. A same-scale Next Page jump reaches the next page and retains Fit Width. Mixed-size page layout uses independent centering; its CSS layout has not been visually checked with a mixed-size PDF. Geometry tests use bounded scroll and rotation mocks rather than a browser layout engine.
 
-A signed iPhone build of the scale update succeeds through `xcodebuild`. The scale update has not been installed or interaction-tested on a physical iPhone; the simulator interaction results below describe the earlier immersive-reader update.
+The pinch-zoom update routes gestures through the PDF scale instead of magnifying the webview. The Mac app loads the cached paper with the staged canvas/text rendering path. Its + button changes 223% to 238%, displays sharp text, and keeps the controls at their original size; Fit Width returns to 223%. The final build was relaunched successfully. Automated gesture tests use synthetic events and geometry mocks; an actual trackpad or physical iPhone pinch has not been exercised by this task.
+
+`pnpm ios:build` exports the final signed pinch-zoom update to `src-tauri/gen/apple/build/arm64/Papertrail.ipa`. The updated scale and pinch behavior has not been installed or interaction-tested on a physical iPhone; the simulator interaction results below describe the earlier immersive-reader update.
 
 The iOS screen-orientation action is intentionally available only on iOS. Desktop checks cover the shared reader and backend; phone geometry, touch selection, iOS Keychain, and Files behavior use simulator or physical-device checks. Older macOS versions remain unverified.
 

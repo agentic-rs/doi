@@ -68,7 +68,9 @@ See [iOS build and installation](docs/ios.md) for simulator installation, signed
 6. Use Back and Forward in the reading overlay to restore earlier reading positions, including across papers. History navigation returns directly to the PDF without reopening the information sheet.
 7. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
 
-**Fit page width** remains selected across page and citation jumps, reopening a paper, viewport changes, and PDF rotation. A PDF link with an explicit zoom level can override this. The + and − buttons choose manual zoom. Older saved reading positions retain their numeric zoom until you select **Fit page width**.
+Pinch the PDF with two fingers, use a Mac trackpad pinch, or hold Ctrl while scrolling to zoom. Only the PDF scales; reading overlays keep their size. The previous page image stays visible until the updated render is ready.
+
+**Fit page width** remains selected across page and citation jumps, reopening a paper, viewport changes, and PDF rotation. A PDF link with an explicit zoom level can override this. Pinching or using the + and − buttons selects manual zoom. Older saved reading positions retain their numeric zoom until you select **Fit page width**.
 
 PDFs, library metadata, positions, and annotations live in the platform's app data directory for `app.papertrail.reader`. Credentials use the native credential store, rather than the annotation file or frontend storage. Reading cached papers and notes works offline; paper downloads, reference lookup, and remote AI calls need a connection.
 

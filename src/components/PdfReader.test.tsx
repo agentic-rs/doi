@@ -4,16 +4,44 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PdfReaderProps, ReadingLocation } from '../lib/types';
 import { PdfReader } from './PdfReader';
 
+interface MockRenderRequest {
+  page_number: number;
+  canvas: HTMLCanvasElement;
+  viewport: { width: number; height: number; scale: number; rotation: number };
+  transform: number[];
+  cancelled: boolean;
+  complete: () => void;
+}
+
+interface CanvasCopy {
+  canvas: HTMLCanvasElement;
+  source: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
 const pdf_fixture = vi.hoisted(() => ({
   page_sizes: Array.from({ length: 4 }, () => ({ width: 600, height: 800 })),
   annotations: new Map<number, Array<{ subtype: string; id: string; rect: number[]; dest: unknown[] }>>(),
+  defer_renders: false,
+  defer_text: false,
+  render_requests: [] as MockRenderRequest[],
+  text_requests: [] as Array<{ page_number: number; complete: () => void }>,
+  canvas_copies: [] as CanvasCopy[],
 }));
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
   return {
     GlobalWorkerOptions: {},
     RenderingCancelledException: class extends Error {},
-    TextLayer: class { render() { return Promise.resolve(); } cancel() {} },
+    TextLayer: class {
+      constructor({ container, viewport }: { container: HTMLElement; viewport: { rotation: number } }) {
+        container.style.setProperty('--min-font-size', '1.4');
+        container.setAttribute('data-main-rotation', String(viewport.rotation));
+      }
+      render() { return Promise.resolve(); }
+      cancel() {}
+    },
     getDocument: () => {
       const pages = pdf_fixture.page_sizes.map(({ width, height }, index) => ({
         pageNumber: index + 1, rotate: 0, userUnit: 1, view: [0, 0, width, height],
@@ -43,9 +71,21 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
           };
         },
         getTextContent: async () => ({ items: [], styles: {} }),
-        streamTextContent: () => new ReadableStream({ start(controller) { controller.enqueue({ items: [], styles: {}, lang: null }); controller.close(); } }),
+        streamTextContent: () => new ReadableStream({
+          start(controller) {
+            const complete = () => { controller.enqueue({ items: [], styles: {}, lang: null }); controller.close(); };
+            pdf_fixture.text_requests.push({ page_number: index + 1, complete });
+            if (!pdf_fixture.defer_text) complete();
+          },
+        }),
         getAnnotations: async () => pdf_fixture.annotations.get(index + 1) ?? [],
-        render: () => ({ promise: Promise.resolve(), cancel: () => {} }),
+        render: ({ canvas, viewport, transform }: Pick<MockRenderRequest, 'canvas' | 'viewport' | 'transform'>) => {
+          let complete = () => {};
+          const promise = pdf_fixture.defer_renders ? new Promise<void>((resolve) => { complete = resolve; }) : Promise.resolve();
+          const request: MockRenderRequest = { page_number: index + 1, canvas, viewport, transform, cancelled: false, complete };
+          pdf_fixture.render_requests.push(request);
+          return { promise, cancel: () => { request.cancelled = true; } };
+        },
       }));
       return {
         promise: Promise.resolve({
@@ -115,6 +155,17 @@ beforeEach(() => {
   viewport_height = 760;
   pdf_fixture.page_sizes = Array.from({ length: 4 }, () => ({ width: 600, height: 800 }));
   pdf_fixture.annotations.clear();
+  pdf_fixture.defer_renders = false;
+  pdf_fixture.defer_text = false;
+  pdf_fixture.render_requests = [];
+  pdf_fixture.text_requests = [];
+  pdf_fixture.canvas_copies = [];
+  vi.stubGlobal('devicePixelRatio', 1);
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
+    return { drawImage: (source: HTMLCanvasElement) => {
+      pdf_fixture.canvas_copies.push({ canvas: this, source, width: source.width, height: source.height });
+    } } as unknown as CanvasRenderingContext2D;
+  });
   vi.stubGlobal('getComputedStyle', (element: Element) => {
     const style = original_computed_style(element);
     if (element.classList.contains('pdf-pages')) {
@@ -156,7 +207,7 @@ beforeEach(() => {
     const scroll = this.closest<HTMLElement>('.pdf-scroll');
     const page = scroll ? pageLayout(scroll).find((candidate) => candidate.page === this) : null;
     const width = page?.width ?? viewport_width;
-    const height = page?.height ?? viewport_height;
+    const height = page?.height ?? (this.classList.contains('pdf-toolbar') ? 56 : viewport_height);
     const top = page ? page.top - scroll!.scrollTop : 0;
     const left = page ? page.left - scroll!.scrollLeft : 0;
     return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) };
@@ -169,8 +220,15 @@ beforeEach(() => {
   } });
 });
 
-afterEach(() => {
-  cleanup();
+afterEach(async () => {
+  await act(async () => {
+    cleanup();
+    pdf_fixture.render_requests.forEach((request) => request.complete());
+    if (pdf_fixture.defer_text) {
+      pdf_fixture.defer_text = false;
+      pdf_fixture.text_requests.forEach((request) => request.complete());
+    }
+  });
   vi.useRealTimers();
   resize_callbacks.clear();
   vi.restoreAllMocks();
@@ -191,6 +249,56 @@ function expectActualPosition(props: PdfReaderProps) {
   expect(location.page_number).toBe(Number(page.dataset.pageNumber));
   expect(location.page_position[0]).toBeCloseTo(Math.max(0, Math.min(1, (20 - bounds.left) / bounds.width)));
   expect(location.page_position[1]).toBeCloseTo(Math.max(0, Math.min(1, (20 - bounds.top) / bounds.height)));
+}
+
+function firstCanvas(): HTMLCanvasElement {
+  return screen.getByLabelText('Page 1').querySelector<HTMLCanvasElement>('canvas')!;
+}
+
+function latestRender(page_number = 1): MockRenderRequest {
+  return pdf_fixture.render_requests.filter((request) => request.page_number === page_number).at(-1)!;
+}
+
+function latestCopy(canvas: HTMLCanvasElement): CanvasCopy {
+  return pdf_fixture.canvas_copies.filter((copy) => copy.canvas === canvas).at(-1)!;
+}
+
+async function expectReadyPage() {
+  await waitFor(() => {
+    expect(firstCanvas().width).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Page 1').querySelector<HTMLElement>('.textLayer')!.hidden).toBe(false);
+  });
+}
+
+function pdfPointAt(page: HTMLElement, client_x: number, client_y: number): [number, number] {
+  const bounds = page.getBoundingClientRect();
+  return [(client_x - bounds.left) / bounds.width * 600, 800 - (client_y - bounds.top) / bounds.height * 800];
+}
+
+function expectPdfPointAt(page: HTMLElement, point: [number, number], client_x: number, client_y: number) {
+  const actual = pdfPointAt(page, client_x, client_y);
+  expect(actual[0]).toBeCloseTo(point[0]);
+  expect(actual[1]).toBeCloseTo(point[1]);
+}
+
+function dispatchTouch(element: HTMLElement, type: string, touches: Array<{ identifier: number; clientX: number; clientY: number }>): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'touches', { value: touches });
+  fireEvent(element, event);
+  return event;
+}
+
+function dispatchSafariGesture(element: HTMLElement, type: string, scale: number, client_x = 180, client_y = 180): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, { scale, clientX: client_x, clientY: client_y });
+  fireEvent(element, event);
+  return event;
+}
+
+function dispatchZoomWheel(element: HTMLElement, delta_y = -100, client_x = 180, client_y = 180): WheelEvent {
+  const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: delta_y, clientX: client_x, clientY: client_y });
+  fireEvent(element, event);
+  return event;
 }
 
 describe('immersive PDF view', () => {
@@ -418,5 +526,231 @@ describe('immersive PDF view', () => {
     view.rerender(<PdfReader {...props} controls_visible={false} reading_active={false} />);
     view.rerender(<PdfReader {...props} controls_visible={false} reading_active />);
     expect(screen.queryByText(hint)).toBeNull();
+  });
+});
+
+describe('PDF zoom gestures and rendering', () => {
+  it('captures ctrl-wheel inside the PDF, anchors its point, and renders at the full native pixel ratio', async () => {
+    vi.stubGlobal('devicePixelRatio', 3);
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
+    await expectReadyPage();
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const page = screen.getByLabelText('Page 1');
+    const canvas = firstCanvas();
+    const toolbar = document.querySelector<HTMLElement>('.pdf-toolbar')!;
+    const toolbar_height = toolbar.getBoundingClientRect().height;
+    const anchor = pdfPointAt(page, 180, 180);
+    const previous_zoom = latestLocation(props).zoom;
+    const previous_pixels = canvas.width;
+    const wheel = dispatchZoomWheel(scroll);
+
+    expect(wheel.defaultPrevented).toBe(true);
+    await waitFor(() => expect(latestLocation(props).zoom).toBeGreaterThan(previous_zoom));
+    await expectReadyPage();
+    expect(latestLocation(props).zoom_mode).toBe('custom');
+    expectPdfPointAt(page, anchor, 180, 180);
+    expect(firstCanvas()).toBe(canvas);
+    expect(canvas.width).toBeGreaterThan(previous_pixels);
+    expect(latestRender().transform).toEqual([3, 0, 0, 3, 0, 0]);
+    expect(canvas.width).toBe(Math.floor(latestRender().viewport.width * 3));
+    expect(canvas.height).toBe(Math.floor(latestRender().viewport.height * 3));
+    expect(latestCopy(canvas)).toMatchObject({ width: canvas.width, height: canvas.height });
+    expect(latestCopy(canvas).source).not.toBe(canvas);
+    expect(scroll.clientWidth).toBe(360);
+    expect(scroll.clientHeight).toBe(760);
+    expect(toolbar.getBoundingClientRect().height).toBe(toolbar_height);
+    expect(page.closest<HTMLElement>('.pdf-reader')!.style.transform).toBe('');
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+
+    const zoom_after_pdf_gesture = latestLocation(props).zoom;
+    expect(dispatchZoomWheel(toolbar).defaultPrevented).toBe(false);
+    fireEvent.wheel(scroll, { deltaY: -100 });
+    expect(latestLocation(props).zoom).toBe(zoom_after_pdf_gesture);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same PDF point beneath a moving two-finger midpoint and never opens controls', async () => {
+    const props = readerProps();
+    render(<PdfReader {...props} controls_visible={false} />);
+    await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
+    await expectReadyPage();
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const page = screen.getByLabelText('Page 1');
+    const anchor = pdfPointAt(page, 180, 180);
+    const initial_zoom = latestLocation(props).zoom;
+    const pointer = { pointerId: 1, isPrimary: true, button: 0, clientX: 140, clientY: 180 };
+    fireEvent.pointerDown(scroll, pointer);
+    const start = dispatchTouch(scroll, 'touchstart', [
+      { identifier: 1, clientX: 140, clientY: 180 },
+      { identifier: 2, clientX: 220, clientY: 180 },
+    ]);
+    const first_move = dispatchTouch(scroll, 'touchmove', [
+      { identifier: 1, clientX: 100, clientY: 180 },
+      { identifier: 2, clientX: 260, clientY: 180 },
+    ]);
+    expect(start.defaultPrevented).toBe(true);
+    expect(first_move.defaultPrevented).toBe(true);
+    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(initial_zoom * 2));
+    expectPdfPointAt(page, anchor, 180, 180);
+
+    const moved_midpoint = dispatchTouch(scroll, 'touchmove', [
+      { identifier: 1, clientX: 90, clientY: 220 },
+      { identifier: 2, clientX: 310, clientY: 220 },
+    ]);
+    expect(moved_midpoint.defaultPrevented).toBe(true);
+    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(initial_zoom * 220 / 80));
+    expectPdfPointAt(page, anchor, 200, 220);
+    dispatchTouch(scroll, 'touchend', []);
+    fireEvent.pointerUp(scroll, pointer);
+    await expectReadyPage();
+    expect(firstCanvas().width).toBe(Math.floor(parseFloat(page.style.width)));
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 200)); });
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+    expect(latestLocation(props).zoom_mode).toBe('custom');
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('captures Safari gesture events and restores the anchor at their current midpoint', async () => {
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
+    await expectReadyPage();
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const page = screen.getByLabelText('Page 1');
+    const anchor = pdfPointAt(page, 180, 180);
+    const initial_zoom = latestLocation(props).zoom;
+    expect(dispatchSafariGesture(scroll, 'gesturestart', 1).defaultPrevented).toBe(true);
+    expect(dispatchSafariGesture(scroll, 'gesturechange', 2, 200, 220).defaultPrevented).toBe(true);
+    expect(dispatchSafariGesture(scroll, 'gestureend', 2, 200, 220).defaultPrevented).toBe(true);
+    await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(initial_zoom * 2));
+    await expectReadyPage();
+    expectPdfPointAt(page, anchor, 200, 220);
+    expect(firstCanvas().width).toBe(Math.floor(parseFloat(page.style.width)));
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('keeps the previous canvas while rendering and never commits a canceled older viewport', async () => {
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
+    await expectReadyPage();
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const page = screen.getByLabelText('Page 1');
+    const canvas = firstCanvas();
+    const old_pixels = { width: canvas.width, height: canvas.height };
+    const old_copy_count = pdf_fixture.canvas_copies.filter((copy) => copy.canvas === canvas).length;
+    const initial_zoom = latestLocation(props).zoom;
+    pdf_fixture.defer_renders = true;
+    dispatchZoomWheel(scroll);
+    await waitFor(() => expect(latestRender().viewport.scale).toBeGreaterThan(initial_zoom));
+    const canceled = latestRender();
+    expect(canceled.canvas).not.toBe(canvas);
+    expect(firstCanvas()).toBe(canvas);
+    expect({ width: canvas.width, height: canvas.height }).toEqual(old_pixels);
+    expect(pdf_fixture.canvas_copies.filter((copy) => copy.canvas === canvas)).toHaveLength(old_copy_count);
+    expect(page.querySelector<HTMLElement>('.textLayer')!.hidden).toBe(true);
+    expect(page.querySelector('.pdf-page-placeholder')).toBeNull();
+
+    dispatchZoomWheel(scroll);
+    await waitFor(() => expect(latestRender().viewport.scale).toBeGreaterThan(canceled.viewport.scale));
+    const newest = latestRender();
+    expect(canceled.cancelled).toBe(true);
+    await act(async () => { newest.complete(); });
+    await expectReadyPage();
+    expect(latestCopy(canvas).source).toBe(newest.canvas);
+    expect(canvas.width).toBe(Math.floor(newest.viewport.width));
+    expect(canvas.height).toBe(Math.floor(newest.viewport.height));
+    expect(page.querySelector<HTMLElement>('.textLayer')!.getAttribute('data-main-rotation')).toBe('0');
+    expect(page.querySelector<HTMLElement>('.textLayer')!.style.getPropertyValue('--min-font-size')).toBe('1.4');
+    const newest_pixels = { width: canvas.width, height: canvas.height };
+    const committed_copy_count = pdf_fixture.canvas_copies.filter((copy) => copy.canvas === canvas).length;
+
+    await act(async () => { canceled.complete(); });
+    expect(firstCanvas()).toBe(canvas);
+    expect({ width: canvas.width, height: canvas.height }).toEqual(newest_pixels);
+    expect(pdf_fixture.canvas_copies.filter((copy) => copy.canvas === canvas)).toHaveLength(committed_copy_count);
+    expect(latestCopy(canvas).source).toBe(newest.canvas);
+    expect(newest.canvas.width).toBe(0);
+    expect(canceled.canvas.width).toBe(0);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('limits large-page raster buffers to sixteen million pixels', async () => {
+    vi.stubGlobal('devicePixelRatio', 3);
+    pdf_fixture.page_sizes[0] = { width: 2_000, height: 3_000 };
+    const props = readerProps({
+      paper_id: '1706.03762v7', page_number: 1, page_position: [0, 0],
+      zoom: 3, zoom_mode: 'custom', rotation: 0,
+    });
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).zoom).toBe(3));
+    await expectReadyPage();
+    const request = latestRender();
+    const expected_ratio = Math.sqrt(16_000_000 / (6_000 * 9_000));
+    expect(request.transform[0]).toBeCloseTo(expected_ratio);
+    expect(firstCanvas().width).toBe(Math.floor(6_000 * expected_ratio));
+    expect(firstCanvas().height).toBe(Math.floor(9_000 * expected_ratio));
+    expect(firstCanvas().width * firstCanvas().height).toBeLessThanOrEqual(16_000_000);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('releases canceled settled buffers without waiting for pending cached text extraction', async () => {
+    pdf_fixture.defer_text = true;
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const pending_text_count = pdf_fixture.text_requests.filter((request) => request.page_number === 1).length;
+    expect(pending_text_count).toBeGreaterThan(0);
+    for (let update = 0; update < 3; update += 1) {
+      const previous = latestRender();
+      dispatchZoomWheel(scroll);
+      await waitFor(() => expect(latestRender().viewport.scale).toBeGreaterThan(previous.viewport.scale));
+      await waitFor(() => expect(previous.canvas.width).toBe(0));
+      expect(previous.cancelled).toBe(true);
+      expect(previous.canvas.height).toBe(0);
+    }
+    expect(pdf_fixture.text_requests.filter((request) => request.page_number === 1)).toHaveLength(pending_text_count);
+    expect(pdf_fixture.canvas_copies).toHaveLength(0);
+    const newest = latestRender();
+    expect(newest.canvas.width).toBeGreaterThan(0);
+    await act(async () => {
+      pdf_fixture.defer_text = false;
+      pdf_fixture.text_requests.forEach((request) => request.complete());
+    });
+    await expectReadyPage();
+    expect(latestCopy(firstCanvas()).source).toBe(newest.canvas);
+    expect(firstCanvas().width).toBe(Math.floor(newest.viewport.width));
+    expect(newest.canvas.width).toBe(0);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('does not capture zoom gestures while reading is obstructed', async () => {
+    const props = readerProps();
+    const view = render(<PdfReader {...props} reading_active={false} />);
+    await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
+    await expectReadyPage();
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const zoom_before_gestures = latestLocation(props).zoom;
+    expect(dispatchZoomWheel(scroll).defaultPrevented).toBe(false);
+    expect(dispatchSafariGesture(scroll, 'gesturestart', 1).defaultPrevented).toBe(false);
+    expect(dispatchSafariGesture(scroll, 'gesturechange', 2).defaultPrevented).toBe(false);
+    expect(dispatchTouch(scroll, 'touchstart', [
+      { identifier: 1, clientX: 140, clientY: 180 },
+      { identifier: 2, clientX: 220, clientY: 180 },
+    ]).defaultPrevented).toBe(false);
+    expect(dispatchTouch(scroll, 'touchmove', [
+      { identifier: 1, clientX: 100, clientY: 180 },
+      { identifier: 2, clientX: 260, clientY: 180 },
+    ]).defaultPrevented).toBe(false);
+    expect(latestLocation(props).zoom).toBe(zoom_before_gestures);
+
+    view.rerender(<PdfReader {...props} reading_active />);
+    expect(dispatchZoomWheel(scroll).defaultPrevented).toBe(true);
+    await waitFor(() => expect(latestLocation(props).zoom).toBeGreaterThan(zoom_before_gestures));
+    expect(props.on_error).not.toHaveBeenCalled();
   });
 });
