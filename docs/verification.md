@@ -10,11 +10,19 @@ The immersive reader update shows metadata and the abstract when a paper is expl
 - `pnpm build`: TypeScript and production frontend build pass.
 - `cargo test --manifest-path src-tauri/Cargo.toml`: 11 passing tests covering IDs, real Atom metadata, persistence across restart, revision-bound annotations, provider URL validation, a local HTTP AI roundtrip, atomic native-export writes, and reader orientation serialization.
 - Rust formatting and Clippy with warnings denied pass.
-- An earlier local macOS development bundle built with `pnpm tauri build --debug --bundles app`.
+- `pnpm desktop:build --debug --bundles app`: the updated native Mac app builds with the bundled frontend.
 - `pnpm ios:sim`: updated Rust and Swift code compiles and the Apple Silicon simulator package builds.
 - The updated signed iPhone IPA exported successfully. Its executable is arm64, strict deep signature verification passes, and the current frontend assets are embedded. Device installation requires matching provisioning; signing settings and profile details remain local.
 
 The local HTTP test needs permission to bind a loopback port in restricted sandboxes. It does not contact an external AI provider or use a real API key.
+
+## Native desktop checks
+
+On this Mac running macOS 15.4.1, `pnpm desktop:dev` starts Vite on loopback port 1427, compiles and launches the Rust app, and enables the native source watcher. The interactive development session stays available until the app or session is closed. Vite reports the initial dependency optimization and reload.
+
+The updated standalone `Papertrail.app` also opens successfully. Its cached library survives the rebuild, and the immersive PDF reader loads the cached paper, page diagrams, text layer, and captured-selection action in the native desktop window. See the [desktop development guide](desktop.md) for live updates and standalone builds.
+
+The iOS screen-orientation action is intentionally available only on iOS. Desktop checks cover the shared reader and backend; phone geometry, touch selection, iOS Keychain, and Files behavior use simulator or physical-device checks. Older macOS versions remain unverified.
 
 ## Native simulator checks
 

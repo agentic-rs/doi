@@ -10,15 +10,17 @@ Prerequisites: Node.js 22 or newer, pnpm, Rust 1.88 or newer, and your platform'
 
 ```sh
 pnpm install
-pnpm tauri dev
+pnpm desktop:dev
 ```
 
-The install step copies PDF.js fonts, character maps, and WASM assets locally. The development server binds to `127.0.0.1:1427`.
+This opens the native desktop app for testing. Frontend changes reload automatically; Rust changes rebuild and restart the app. Keep the terminal running, and press Ctrl+C to stop. Local desktop development does not require an iPhone installation or Apple device signing.
+
+The install step copies PDF.js fonts, character maps, and WASM assets locally. The development server binds to `127.0.0.1:1427`. Your desktop library persists between runs and is separate from the phone's library. See [desktop development](docs/desktop.md) for the workflow.
 
 To make a desktop bundle:
 
 ```sh
-pnpm tauri build
+pnpm desktop:build
 ```
 
 To check the project:

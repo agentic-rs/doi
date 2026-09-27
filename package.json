@@ -9,6 +9,8 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
     "ios:sim": "tauri ios build --debug --target aarch64-sim --no-sign",
     "ios:build": "tauri ios build --debug --export-method debugging"
   },
