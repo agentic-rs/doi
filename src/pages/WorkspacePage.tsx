@@ -66,6 +66,7 @@ function initialLocation(paper: Paper): ReadingLocation {
     page_number: 1,
     page_position: [0, 0],
     zoom: 1,
+    zoom_mode: 'fit_width',
     rotation: 0,
   };
 }

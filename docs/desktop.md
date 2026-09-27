@@ -17,6 +17,8 @@ The command starts Vite at `http://127.0.0.1:1427`, builds the Rust backend, and
 
 Download a paper, click a PDF page to reveal the reading overlay, select text, and use references, annotations, or AI as in the installed app. Local desktop development does not need an iPhone, an iOS package installation, or Apple device signing.
 
+**Fit page width** stays selected when you jump to another page or citation, reopen the paper, resize the window, or rotate PDF pages. A PDF link with an explicit zoom level can override this. The + and − controls switch to manual zoom. Older saved reading positions keep their numeric zoom until you select **Fit page width**.
+
 `pnpm dev` starts only the frontend for layout development. Native downloads, storage, and AI commands require `pnpm desktop:dev` or a bundled desktop app.
 
 ## Build a standalone app

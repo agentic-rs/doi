@@ -1,11 +1,21 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PdfZoomMode {
+  FitWidth,
+  #[default]
+  Custom,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ReadingLocation {
   pub paper_id: String,
   pub page_number: u32,
   pub page_position: [f64; 2],
   pub zoom: f64,
+  #[serde(default)]
+  pub zoom_mode: PdfZoomMode,
   pub rotation: i32,
 }
 
@@ -109,4 +119,31 @@ pub struct OperationProgress {
   pub message: String,
   pub received_bytes: u64,
   pub total_bytes: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn legacy_reading_locations_keep_their_custom_numeric_zoom() {
+    let legacy = serde_json::json!({
+      "paper_id": "2401.12345v2",
+      "page_number": 2,
+      "page_position": [0.0, 0.5],
+      "zoom": 1.35,
+      "rotation": 90
+    });
+    let location: ReadingLocation = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(location.zoom_mode, PdfZoomMode::Custom);
+    assert_eq!(location.zoom, 1.35);
+    assert_eq!(
+      serde_json::to_value(location).unwrap()["zoom_mode"],
+      "custom"
+    );
+
+    let mut unsupported = legacy;
+    unsupported["zoom_mode"] = "fit_height".into();
+    assert!(serde_json::from_value::<ReadingLocation>(unsupported).is_err());
+  }
 }

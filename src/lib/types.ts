@@ -1,9 +1,13 @@
+export type PdfZoomMode = 'fit_width' | 'custom';
+
 export interface ReadingLocation {
   paper_id: string;
   page_number: number;
   // Fractions of the rotated page viewport, from its top-left corner.
   page_position: [number, number];
   zoom: number;
+  // Older saved locations have only a numeric zoom and retain custom scaling.
+  zoom_mode?: PdfZoomMode;
   rotation: number;
 }
 

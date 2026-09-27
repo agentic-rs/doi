@@ -182,6 +182,7 @@ mod tests {
       page_number: 2,
       page_position: [0.3, 0.5],
       zoom: 1.2,
+      zoom_mode: PdfZoomMode::Custom,
       rotation: 90,
     };
     assert!(validate_location(&location).is_ok());

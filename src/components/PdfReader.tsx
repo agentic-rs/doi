@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan } 
 import { getDocument, GlobalWorkerOptions, RenderingCancelledException, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import worker_url from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import type { Annotation, PageAnchor, PdfReaderProps, ReadingLocation } from '../lib/types';
+import type { Annotation, PageAnchor, PdfReaderProps, PdfZoomMode, ReadingLocation } from '../lib/types';
 import { anchorViewportPosition, clamp, quadToSvgPoints, safeReferenceUrl } from '../lib/pdf-geometry';
 import { extractReferences } from '../lib/pdf-references';
 import { selectionContext } from '../lib/pdf-selection';
@@ -191,7 +191,7 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
 }
 
 function defaultLocation(paper_id: string): ReadingLocation {
-  return { paper_id, page_number: 1, page_position: [0, 0], zoom: 1.1, rotation: 0 };
+  return { paper_id, page_number: 1, page_position: [0, 0], zoom: 1.1, zoom_mode: 'fit_width', rotation: 0 };
 }
 
 export function PdfReader(props: PdfReaderProps) {
@@ -219,8 +219,8 @@ export function PdfReader(props: PdfReaderProps) {
   const current_paper_id = useRef(paper.paper_id);
   current_paper_id.current = paper.paper_id;
   const scroll_frame = useRef<number | null>(null);
-  const fit_width_mode = useRef(false);
-  const initial_fit_pending = useRef(false);
+  const zoom_mode = useRef<PdfZoomMode>('custom');
+  const fit_pending = useRef(false);
   const applied_navigation = useRef<{ paper_id: string; navigation_key: number } | null>(null);
   const viewport_size = useRef<{ width: number; height: number } | null>(null);
   const gesture = useRef<ReaderGesture | null>(null);
@@ -263,12 +263,18 @@ export function PdfReader(props: PdfReaderProps) {
     gesture.current = null;
     callbacks.current.on_selection(null);
     callbacks.current.on_references([]);
-    const initial = callbacks.current.target_location ?? callbacks.current.paper.last_location ?? defaultLocation(paper.paper_id);
+    const saved = callbacks.current.target_location ?? callbacks.current.paper.last_location;
+    const should_fit = callbacks.current.initial_fit_width ?? !saved;
+    const initial_mode = saved?.zoom_mode ?? (should_fit ? 'fit_width' : 'custom');
+    const initial: ReadingLocation = {
+      ...(saved ?? defaultLocation(paper.paper_id)),
+      zoom_mode: initial_mode,
+    };
     pending_location.current = initial;
     pending_anchor.current = callbacks.current.target_anchor ?? null;
     current_location.current = initial;
-    fit_width_mode.current = callbacks.current.initial_fit_width ?? (!callbacks.current.target_location && !callbacks.current.paper.last_location);
-    initial_fit_pending.current = fit_width_mode.current;
+    zoom_mode.current = initial_mode;
+    fit_pending.current = initial_mode === 'fit_width';
     applied_navigation.current = { paper_id: paper.paper_id, navigation_key: callbacks.current.navigation_key };
     setZoom(clamp(initial.zoom, minimum_zoom, maximum_zoom));
     setRotation(initial.rotation);
@@ -325,23 +331,25 @@ export function PdfReader(props: PdfReaderProps) {
     if (!target || target.paper_id !== paper.paper_id) return;
     if (applied_navigation.current?.paper_id === paper.paper_id && applied_navigation.current.navigation_key === navigation_key) return;
     applied_navigation.current = { paper_id: paper.paper_id, navigation_key };
-    fit_width_mode.current = false;
-    initial_fit_pending.current = false;
-    pending_location.current = target;
+    zoom_mode.current = target.zoom_mode ?? 'custom';
+    fit_pending.current = zoom_mode.current === 'fit_width';
+    pending_location.current = { ...target, zoom_mode: zoom_mode.current };
     pending_anchor.current = callbacks.current.target_anchor ?? null;
     setZoom(clamp(target.zoom, minimum_zoom, maximum_zoom));
     setRotation(target.rotation);
     setActivePage(target.page_number);
+    // A same-scale history/page jump still needs a fresh layout restoration.
+    setViewRevision((value) => value + 1);
   }, [navigation_key, paper.paper_id]);
 
   useLayoutEffect(() => {
     if (!scroll_root || !loaded || !pending_location.current) return;
     let target = pending_location.current;
     if (target.paper_id !== paper.paper_id) return;
-    if (initial_fit_pending.current) {
+    if (fit_pending.current) {
       const fitted_zoom = fittedWidth(target.page_number, target.rotation);
       if (fitted_zoom === null) return;
-      initial_fit_pending.current = false;
+      fit_pending.current = false;
       target = { ...target, zoom: fitted_zoom };
       pending_location.current = target;
       setZoom(fitted_zoom);
@@ -363,8 +371,10 @@ export function PdfReader(props: PdfReaderProps) {
       left: Math.max(0, scroll_root.scrollLeft + bounds.left - root_bounds.left + clamp(target.page_position[0], 0, 1) * bounds.width - 20),
       behavior: 'instant',
     });
-    current_location.current = { ...target, page_number, zoom, rotation };
-    setActivePage(page_number);
+    // Browsers clamp scrolling near the document edges and center fitted pages.
+    // Save the point actually visible, rather than an unreachable requested one.
+    current_location.current = readLocation() ?? { ...target, page_number, zoom, rotation };
+    setActivePage(current_location.current.page_number);
     pending_location.current = null;
     pending_anchor.current = null;
     if (restoration_frame.current !== null) cancelAnimationFrame(restoration_frame.current);
@@ -372,7 +382,7 @@ export function PdfReader(props: PdfReaderProps) {
     // by this restoration before the user moves again.
     restoration_frame.current = requestAnimationFrame(() => {
       restoration_frame.current = null;
-      callbacks.current.on_location_change(current_location.current);
+      reportLocation();
     });
   }, [loaded, zoom, rotation, scroll_root, navigation_key, target_location, paper.paper_id, view_revision]);
 
@@ -385,7 +395,7 @@ export function PdfReader(props: PdfReaderProps) {
     // The saved page-relative point predates the resize. Reading it from the
     // shifted page DOM would lose the passage when the phone turns sideways.
     const source = pending_location.current ?? current_location.current;
-    const next_zoom = fit_width_mode.current ? fittedWidth(source.page_number, source.rotation) ?? source.zoom : source.zoom;
+    const next_zoom = zoom_mode.current === 'fit_width' ? fittedWidth(source.page_number, source.rotation) ?? source.zoom : source.zoom;
     pending_location.current = { ...source, zoom: next_zoom };
     setZoom(next_zoom);
     setViewRevision((value) => value + 1);
@@ -465,23 +475,30 @@ export function PdfReader(props: PdfReaderProps) {
     cancelPendingTap();
   }, []);
 
-  function reportLocation() {
-    if (!scroll_root || pending_location.current || restoration_frame.current !== null || scroll_root.clientWidth <= 0 || scroll_root.clientHeight <= 0) return;
+  function readLocation(): ReadingLocation | null {
+    if (!scroll_root || scroll_root.clientWidth <= 0 || scroll_root.clientHeight <= 0) return null;
     const root_bounds = scroll_root.getBoundingClientRect();
     const pages = [...scroll_root.querySelectorAll<HTMLElement>('[data-page-number]')];
     const page = pages.find((candidate) => candidate.getBoundingClientRect().bottom > root_bounds.top + 26);
-    if (!page) return;
+    if (!page) return null;
     const bounds = page.getBoundingClientRect();
     const page_number = Number(page.dataset.pageNumber);
-    const location: ReadingLocation = {
+    return {
       paper_id: current_paper_id.current,
       page_number,
       page_position: [clamp((root_bounds.left + 20 - bounds.left) / bounds.width, 0, 1), clamp((root_bounds.top + 20 - bounds.top) / bounds.height, 0, 1)],
       zoom: zoom_ref.current,
+      zoom_mode: zoom_mode.current,
       rotation: rotation_ref.current,
     };
+  }
+
+  function reportLocation() {
+    if (pending_location.current || restoration_frame.current !== null) return;
+    const location = readLocation();
+    if (!location) return;
     current_location.current = location;
-    setActivePage(page_number);
+    setActivePage(location.page_number);
     callbacks.current.on_location_change(location);
   }
 
@@ -495,10 +512,14 @@ export function PdfReader(props: PdfReaderProps) {
     });
   }
 
-  function changeView(next_zoom: number, next_rotation = rotation, keep_fit_mode = false) {
+  function changeView(requested_zoom: number, next_rotation = rotation, next_mode: PdfZoomMode = 'custom') {
     reportLocation();
-    if (!keep_fit_mode) fit_width_mode.current = false;
     const source = pending_location.current ?? current_location.current;
+    zoom_mode.current = next_mode;
+    fit_pending.current = false;
+    const next_zoom = clamp(next_mode === 'fit_width'
+      ? fittedWidth(source.page_number, next_rotation) ?? requested_zoom
+      : requested_zoom, minimum_zoom, maximum_zoom);
     const page = loaded?.pages[source.page_number - 1];
     let page_position = source.page_position;
     if (page && source.rotation !== next_rotation) {
@@ -508,7 +529,7 @@ export function PdfReader(props: PdfReaderProps) {
       const [x, y] = next_viewport.convertToViewportPoint(pdf_point[0], pdf_point[1]);
       page_position = [clamp(x / next_viewport.width, 0, 1), clamp(y / next_viewport.height, 0, 1)];
     }
-    pending_location.current = { ...source, page_position, zoom: clamp(next_zoom, minimum_zoom, maximum_zoom), rotation: next_rotation };
+    pending_location.current = { ...source, page_position, zoom: next_zoom, zoom_mode: next_mode, rotation: next_rotation };
     pending_anchor.current = null;
     setZoom(pending_location.current.zoom);
     setRotation(next_rotation);
@@ -520,7 +541,7 @@ export function PdfReader(props: PdfReaderProps) {
     reportLocation();
     callbacks.current.on_navigate({
       kind: 'internal',
-      location: { paper_id: paper.paper_id, page_number: clamp(page_number, 1, loaded.pages.length), page_position: [0, 0], zoom, rotation },
+      location: { paper_id: paper.paper_id, page_number: clamp(page_number, 1, loaded.pages.length), page_position: [0, 0], zoom, zoom_mode: zoom_mode.current, rotation },
     });
   }
 
@@ -546,7 +567,10 @@ export function PdfReader(props: PdfReaderProps) {
       const page = loaded.pages[index];
       if (!page) throw new Error('The citation points to an unavailable page.');
       const kind = (destination[1] as { name?: string })?.name;
-      const next_zoom = kind === 'XYZ' && typeof destination[4] === 'number' && destination[4] > 0 ? clamp(destination[4], minimum_zoom, maximum_zoom) : zoom;
+      const explicit_zoom = kind === 'XYZ' && typeof destination[4] === 'number' && destination[4] > 0 ? destination[4] : null;
+      const next_mode = explicit_zoom !== null ? 'custom' : zoom_mode.current;
+      const next_zoom = explicit_zoom !== null ? clamp(explicit_zoom, minimum_zoom, maximum_zoom)
+        : next_mode === 'fit_width' ? fittedWidth(index + 1, rotation) ?? zoom : zoom;
       const viewport: PageViewport = page.getViewport({ scale: next_zoom, rotation: (page.rotate + rotation) % 360 });
       let x = page.view[0];
       let y = page.view[3];
@@ -561,7 +585,7 @@ export function PdfReader(props: PdfReaderProps) {
       const [viewport_x, viewport_y] = viewport.convertToViewportPoint(x, y);
       callbacks.current.on_navigate({
         kind: 'internal',
-        location: { paper_id: paper.paper_id, page_number: index + 1, page_position: [clamp(viewport_x / viewport.width, 0, 1), clamp(viewport_y / viewport.height, 0, 1)], zoom: next_zoom, rotation },
+        location: { paper_id: paper.paper_id, page_number: index + 1, page_position: [clamp(viewport_x / viewport.width, 0, 1), clamp(viewport_y / viewport.height, 0, 1)], zoom: next_zoom, zoom_mode: next_mode, rotation },
       });
     } catch (failure) {
       if (loaded_ref.current?.document === loaded.document) callbacks.current.on_error(failure instanceof Error ? failure.message : String(failure));
@@ -586,10 +610,7 @@ export function PdfReader(props: PdfReaderProps) {
   }
 
   function fitWidth() {
-    const fitted_zoom = fittedWidth(active_page, rotation);
-    if (fitted_zoom === null) return;
-    fit_width_mode.current = true;
-    changeView(fitted_zoom, rotation, true);
+    changeView(zoom, rotation, 'fit_width');
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -661,8 +682,8 @@ export function PdfReader(props: PdfReaderProps) {
           <span className="pdf-zoom-value">{Math.round(zoom * 100)}%</span>
           <button type="button" title="Zoom in" aria-label="Zoom in" disabled={!loaded || zoom >= maximum_zoom} onClick={() => changeView(zoom + 0.15)}><Plus size={15} /></button>
           <span className="pdf-toolbar-divider" />
-          <button type="button" title="Fit page width" aria-label="Fit page width" disabled={!loaded} onClick={fitWidth}><Scan size={16} /></button>
-          <button type="button" title="Rotate clockwise" aria-label="Rotate clockwise" disabled={!loaded} onClick={() => changeView(zoom, (rotation + 90) % 360)}><RotateCw size={16} /></button>
+          <button type="button" title="Fit page width" aria-label="Fit page width" aria-pressed={zoom_mode.current === 'fit_width'} disabled={!loaded} onClick={fitWidth}><Scan size={16} /></button>
+          <button type="button" title="Rotate clockwise" aria-label="Rotate clockwise" disabled={!loaded} onClick={() => changeView(zoom, (rotation + 90) % 360, zoom_mode.current)}><RotateCw size={16} /></button>
         </div>
       </div>
       {immersive && reading_active && <button type="button" className="pdf-controls-accessible" onClick={() => props.on_toggle_controls?.()}>{controls_visible ? 'Hide reading controls' : 'Show reading controls'}</button>}

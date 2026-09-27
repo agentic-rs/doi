@@ -345,6 +345,7 @@ mod tests {
         page_number: 2,
         page_position: [0.0, 0.5],
         zoom: 1.2,
+        zoom_mode: PdfZoomMode::FitWidth,
         rotation: 90,
       };
       db.save_location(location.clone()).await.unwrap();
@@ -380,6 +381,43 @@ mod tests {
         .await
         .unwrap()
         .is_empty());
+    });
+  }
+
+  #[test]
+  fn legacy_saved_reading_positions_load_without_a_database_migration() {
+    tauri::async_runtime::block_on(async {
+      let directory = tempfile::tempdir().unwrap();
+      let path = directory.path().join("library.sqlite");
+      let db = Database::initialize(&path).unwrap();
+      let paper = db.save_paper(fixture_paper()).await.unwrap();
+      let legacy_location = serde_json::json!({
+        "paper_id": paper.paper_id,
+        "page_number": 3,
+        "page_position": [0.1, 0.7],
+        "zoom": 1.6,
+        "rotation": 0
+      });
+      db.connect()
+        .unwrap()
+        .execute(
+          "UPDATE papers SET last_location=?1 WHERE paper_id=?2",
+          params![legacy_location.to_string(), paper.paper_id],
+        )
+        .unwrap();
+
+      let reopened = Database::initialize(&path).unwrap();
+      let loaded = reopened
+        .get_paper(paper.paper_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_location
+        .unwrap();
+      assert_eq!(loaded.zoom_mode, PdfZoomMode::Custom);
+      assert_eq!(loaded.zoom, 1.6);
+      assert_eq!(loaded.page_number, 3);
+      assert_eq!(loaded.page_position, [0.1, 0.7]);
     });
   }
 

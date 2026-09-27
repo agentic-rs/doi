@@ -6,9 +6,9 @@ The immersive reader update shows metadata and the abstract when a paper is expl
 
 ## Automated checks
 
-- `pnpm test`: 50 passing frontend tests covering geometry, clipped cross-page DOM selections, text normalization, reference parsing, sidecar validation, history, workspace interactions, mobile panel access, preserved touch-selection anchors, metadata-sheet accessibility and focus, tap gestures, orientation behavior, reading resumption, and Safari-compatible text-stream extraction.
+- `pnpm test`: 57 passing frontend tests covering geometry, clipped cross-page DOM selections, text normalization, reference parsing, sidecar validation, history, workspace interactions, mobile panel access, preserved touch-selection anchors, metadata-sheet accessibility and focus, tap gestures, orientation behavior, reading resumption, Safari-compatible text-stream extraction, persisted width fitting, fit/custom scale across PDF rotation, same-scale navigation, explicit link zoom, different page sizes, and bounded scrolling.
 - `pnpm build`: TypeScript and production frontend build pass.
-- `cargo test --manifest-path src-tauri/Cargo.toml`: 11 passing tests covering IDs, real Atom metadata, persistence across restart, revision-bound annotations, provider URL validation, a local HTTP AI roundtrip, atomic native-export writes, and reader orientation serialization.
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 13 passing tests covering IDs, real Atom metadata, persistence across restart, revision-bound annotations, provider URL validation, a local HTTP AI roundtrip, atomic native-export writes, reader orientation serialization, saved fit-width mode, and legacy reading locations without a zoom mode.
 - Rust formatting and Clippy with warnings denied pass.
 - `pnpm desktop:build --debug --bundles app`: the updated native Mac app builds with the bundled frontend.
 - `pnpm ios:sim`: updated Rust and Swift code compiles and the Apple Silicon simulator package builds.
@@ -22,6 +22,10 @@ The local HTTP test needs permission to bind a loopback port in restricted sandb
 On this Mac running macOS 15.4.1, `pnpm desktop:dev` starts Vite on loopback port 1427, compiles and launches the Rust app, and enables the native source watcher. The interactive development session stays available until the app or session is closed. Vite reports the initial dependency optimization and reload.
 
 The updated standalone `Papertrail.app` also opens successfully. Its cached library survives the rebuild, and the immersive PDF reader loads the cached paper, page diagrams, text layer, and captured-selection action in the native desktop window. See the [desktop development guide](desktop.md) for live updates and standalone builds.
+
+The scale fix was checked with the cached Attention Is All You Need paper in the native Mac app. Fit Width remains selected as PDF rotation recalculates the percentage between 172% and 223%, with the page fitting the window. A same-scale Next Page jump reaches the next page and retains Fit Width. Mixed-size page layout uses independent centering; its CSS layout has not been visually checked with a mixed-size PDF. Geometry tests use bounded scroll and rotation mocks rather than a browser layout engine.
+
+A signed iPhone build of the scale update succeeds through `xcodebuild`. The scale update has not been installed or interaction-tested on a physical iPhone; the simulator interaction results below describe the earlier immersive-reader update.
 
 The iOS screen-orientation action is intentionally available only on iOS. Desktop checks cover the shared reader and backend; phone geometry, touch selection, iOS Keychain, and Files behavior use simulator or physical-device checks. Older macOS versions remain unverified.
 
