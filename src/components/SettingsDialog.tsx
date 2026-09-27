@@ -80,12 +80,12 @@ export function SettingsDialog({ settings, on_close, on_saved }: SettingsDialogP
         <p className="dialog-description">Connect an OpenAI-compatible provider to ask questions about a passage.</p>
         <form onSubmit={(event) => { void handleSubmit(event); }}>
           <label className="field-label" htmlFor="provider-url">API base URL</label>
-          <input id="provider-url" ref={firstInputRef} type="url" className="text-field" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" required disabled={saving} />
+          <input id="provider-url" ref={firstInputRef} type="url" className="text-field" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" required disabled={saving} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           <p className="field-hint">Include <code>/v1</code> if your provider requires it. Requests use <code>/chat/completions</code>.</p>
           <label className="field-label" htmlFor="provider-model">Model</label>
-          <input id="provider-model" className="text-field" value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="Your provider’s model ID" required disabled={saving} autoComplete="off" />
+          <input id="provider-model" className="text-field" value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="Your provider’s model ID" required disabled={saving} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           <label className="field-label key-label" htmlFor="provider-key">API key <span className="credential-status">{settings.has_api_key ? <><Check size={12} /> Key saved</> : 'Optional for local providers'}</span></label>
-          <input id="provider-key" type="password" className="text-field" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.has_api_key ? 'Leave blank to keep your saved key' : 'Enter your API key'} disabled={saving} autoComplete="off" spellCheck={false} />
+          <input id="provider-key" type="password" className="text-field" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.has_api_key ? 'Leave blank to keep your saved key' : 'Enter your API key'} disabled={saving} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           <p className="field-hint"><KeyRound size={13} /> Stored in your system credential store.</p>
           {settings.has_api_key && <label className="checkbox-label"><input type="checkbox" checked={clearKey} onChange={(event) => setClearKey(event.target.checked)} disabled={saving || Boolean(apiKey.trim())} /> Remove the saved API key</label>}
           <div className="privacy-note">Only the passage you select, nearby text, and paper metadata are sent when you ask a question.</div>

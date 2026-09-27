@@ -86,6 +86,8 @@
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: transparent;
+  user-select: text;
+  -webkit-user-select: text;
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
@@ -127,10 +129,22 @@
 }
 .pdf-embedded-link:hover { background: #56a29322; outline: 1px solid #56a29377; }
 .pdf-embedded-link:focus-visible { outline: 2px solid #2c8179; background: #56a29333; }
-@media (max-width: 760px) {
-  .pdf-toolbar { padding: 7px 9px; gap: 4px; }
-  .pdf-toolbar-group { gap: 2px; }
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  .pdf-toolbar { flex-wrap: wrap; padding: 4px 8px; gap: 0 4px; }
+  .pdf-toolbar-group { gap: 2px; min-width: 0; }
+  .pdf-toolbar-group:first-child { flex-basis: 100%; }
+  .pdf-toolbar-group:last-child { width: 100%; justify-content: center; }
+  .pdf-toolbar button { width: 44px; height: 44px; }
+  .pdf-page-picker { font-size: 14px; gap: 5px; }
+  .pdf-page-picker input { height: 38px; font-size: 16px; }
+  .pdf-outline-select { min-width: 0; flex: 1; max-width: none; min-height: 38px; font-size: 16px; }
   .pdf-toolbar-divider { margin: 0 2px; }
-  .pdf-pages { padding: 18px 20px 32px; }
+  .pdf-pages { padding: 16px 10px 24px; }
+}
+@media (pointer: coarse) and (max-height: 500px) and (min-width: 761px) {
+  .pdf-toolbar { flex-wrap: nowrap; }
+  .pdf-toolbar-group:first-child { flex-basis: auto; flex: 1; }
+  .pdf-toolbar-group:last-child { width: auto; }
+  .pdf-outline-select { max-width: 160px; }
 }
 @media (prefers-reduced-motion: reduce) { .pdf-spinner { animation: none; } }

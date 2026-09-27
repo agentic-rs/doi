@@ -6,7 +6,7 @@ import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
 vi.mock('../lib/tauri', () => ({
-  desktopAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
+  nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
   openArxivPaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
   askSelection: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
   resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(),
@@ -39,9 +39,19 @@ const first: Paper = {
 };
 const second: Paper = { ...first, paper_id: '1409.0473v3', arxiv_id: '1409.0473', arxiv_version: 3, title: 'Second paper', pdf_hash: 'b'.repeat(64) };
 
+function mockLayout(compact: boolean) {
+  vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+    matches: compact && query.includes('(max-width: 760px)'),
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(backend.desktopAvailable).mockReturnValue(true);
+  mockLayout(false);
+  vi.mocked(backend.nativeAvailable).mockReturnValue(true);
   vi.mocked(backend.listPapers).mockResolvedValue([first, second]);
   vi.mocked(backend.getSettings).mockResolvedValue({ base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
   vi.mocked(backend.onProgress).mockResolvedValue(() => {});
@@ -50,7 +60,10 @@ beforeEach(() => {
   vi.mocked(backend.saveReadingPosition).mockResolvedValue();
   vi.mocked(backend.saveAnnotation).mockImplementation(async (annotation) => annotation);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 async function openFirst() {
   render(<WorkspacePage />);
@@ -59,6 +72,69 @@ async function openFirst() {
 }
 
 describe('assembled paper workspace', () => {
+  it('shows paper details alongside the reader on desktop', async () => {
+    await openFirst();
+    expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Close references and notes panel' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps mobile reading space available and retains a touch selection across panel changes', async () => {
+    mockLayout(true);
+    render(<WorkspacePage />);
+    await screen.findByRole('button', { name: /^First paper/ });
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
+    expect(screen.getByRole('dialog', { name: 'Paper library' }).getAttribute('aria-modal')).toBe('true');
+    expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /^First paper/ }));
+    await screen.findByTestId('reader');
+    expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+    expect(screen.getByRole('main').hasAttribute('inert')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select passage' }));
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+    expect(screen.getByText('Selected passage')).toBeTruthy();
+    // iOS collapses its native range when the notes panel takes focus. The
+    // captured PDF quads must remain available to save an annotation.
+    act(() => lastReader.on_selection(null));
+    expect(screen.getByText('Selected passage')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a note' }));
+    fireEvent.change(screen.getByLabelText('Note for this selection'), { target: { value: 'A mobile note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await screen.findByText('A mobile note');
+    expect(vi.mocked(backend.saveAnnotation).mock.calls[0][0].target.page_anchors).toEqual(selection.page_anchors);
+    fireEvent.click(screen.getByRole('button', { name: /Selected passage/ }));
+    expect(lastReader.target_anchor).toEqual(selection.page_anchors[0]);
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
+  });
+
+  it('keeps short touch screens compact at landscape widths and handles a larger viewport', async () => {
+    vi.stubGlobal('innerWidth', 852);
+    vi.stubGlobal('innerHeight', 393);
+    let changeLayout!: (event: MediaQueryListEvent) => void;
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('(pointer: coarse)') && query.includes('(max-height: 500px)'),
+      media: query,
+      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => { changeLayout = listener; },
+      removeEventListener: vi.fn(),
+    })));
+    await openFirst();
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
+    expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
+
+    act(() => changeLayout({ matches: false } as MediaQueryListEvent));
+    expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+    expect(screen.getByRole('main').hasAttribute('inert')).toBe(false);
+    expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBeTruthy();
+
+    act(() => changeLayout({ matches: true } as MediaQueryListEvent));
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
+    expect(screen.getByTestId('reader').textContent).toContain('First paper');
+  });
+
   it('restores source position across internal and cross-paper links', async () => {
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));

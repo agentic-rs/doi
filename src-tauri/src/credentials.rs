@@ -3,11 +3,25 @@ use sha2::{Digest, Sha256};
 
 const SERVICE: &str = "app.papertrail.reader.ai";
 
-fn credential_entry(base_url: &str) -> Result<keyring::Entry> {
+#[cfg(not(target_os = "ios"))]
+use keyring::{Entry as CredentialEntry, Error as CredentialError};
+#[cfg(target_os = "ios")]
+use keyring_core::{Entry as CredentialEntry, Error as CredentialError};
+
+fn credential_entry(base_url: &str) -> Result<CredentialEntry> {
   // A changed provider does not inherit the previous provider's secret.
   let account = format!("{:x}", Sha256::digest(base_url.as_bytes()));
-  keyring::Entry::new(SERVICE, &account)
-    .map_err(|_| "Could not initialize the native credential store.".to_string())
+  #[cfg(not(target_os = "ios"))]
+  let entry = CredentialEntry::new(SERVICE, &account);
+  #[cfg(target_os = "ios")]
+  let entry = apple_native_keyring_store::protected::Cred::build(
+    SERVICE,
+    &account,
+    apple_native_keyring_store::protected::AccessPolicy::WhenUnlockedThisDeviceOnly,
+    None,
+    false,
+  );
+  entry.map_err(|_| "Could not initialize the native credential store.".to_string())
 }
 
 pub async fn get_key(base_url: String) -> Result<Option<String>> {
@@ -17,7 +31,7 @@ pub async fn get_key(base_url: String) -> Result<Option<String>> {
   tauri::async_runtime::spawn_blocking(move || {
     match credential_entry(&base_url)?.get_password() {
       Ok(value) => Ok(Some(value)),
-      Err(keyring::Error::NoEntry) => Ok(None),
+      Err(CredentialError::NoEntry) => Ok(None),
       Err(_) => Err("Could not read the API key from the native credential store. Check that your keychain is unlocked.".into()),
     }
   }).await.map_err(|_| "The credential operation was interrupted.".to_string())?
@@ -37,7 +51,7 @@ pub async fn update_key(base_url: String, api_key: Option<String>) -> Result<()>
     let entry = credential_entry(&base_url)?;
     if api_key.trim().is_empty() {
       match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) | Err(CredentialError::NoEntry) => Ok(()),
         Err(_) => Err("Could not remove the API key from the native credential store.".into()),
       }
     } else {

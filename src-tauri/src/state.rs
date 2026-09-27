@@ -22,7 +22,7 @@ impl AppState {
     std::fs::create_dir_all(&pdf_directory)
       .map_err(|_| "Could not create the local paper library.".to_string())?;
     let http = reqwest::Client::builder()
-      .user_agent("Papertrail/0.1 (local desktop paper reader)")
+      .user_agent("Papertrail/0.1 (local paper reader)")
       .connect_timeout(Duration::from_secs(20))
       .timeout(Duration::from_secs(300))
       .redirect(reqwest::redirect::Policy::custom(|attempt| {

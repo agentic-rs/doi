@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, BookOpen, Check,
   ChevronRight, CircleHelp, FileText, FolderOpen, Link2, LoaderCircle,
-  MessageSquare, PanelRightClose, PanelRightOpen, Plus, Search, Settings2,
+  Library, MessageSquare, PanelRightClose, PanelRightOpen, Plus, Search, Settings2,
   Sparkles, StickyNote, Trash2, Upload, WifiOff, X,
 } from 'lucide-react';
 import { PdfReader } from '../components/PdfReader';
 import { SettingsDialog } from '../components/SettingsDialog';
 import {
-  askSelection, deleteAnnotation, desktopAvailable, getPdfBytes, getSettings,
+  askSelection, deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
   listAnnotations, listPapers, onProgress, openArxivPaper, openExternal,
   resolveReference, saveAnnotation, saveAnnotationFile, saveReadingPosition,
 } from '../lib/tauri';
@@ -51,6 +52,8 @@ const defaultSettings: AiSettings = {
   has_api_key: false,
 };
 
+const compactLayoutQuery = '(max-width: 760px), (pointer: coarse) and (max-height: 500px)';
+
 function initialLocation(paper: Paper): ReadingLocation {
   return paper.last_location ?? {
     paper_id: paper.paper_id,
@@ -90,7 +93,9 @@ function sortAnnotations(annotations: Annotation[]): Annotation[] {
 }
 
 export function WorkspacePage() {
-  const [isDesktop] = useState(desktopAvailable);
+  const [isNative] = useState(nativeAvailable);
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia?.(compactLayoutQuery).matches ?? false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [active, setActive] = useState<ActiveDocument | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -101,12 +106,12 @@ export function WorkspacePage() {
   const [navigationKey, setNavigationKey] = useState(0);
   const [arxivInput, setArxivInput] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [libraryLoading, setLibraryLoading] = useState(isDesktop);
+  const [libraryLoading, setLibraryLoading] = useState(isNative);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [opening, setOpening] = useState<OpenOperation | null>(null);
   const [progress, setProgress] = useState<OperationProgress | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(() => !(window.matchMedia?.(compactLayoutQuery).matches ?? false));
   const [inspectorTab, setInspectorTab] = useState<'references' | 'notes'>('references');
   const [selection, setSelection] = useState<SelectionContext | null>(null);
   const [composerKind, setComposerKind] = useState<'ai' | 'note'>('ai');
@@ -134,6 +139,52 @@ export function WorkspacePage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const arxivInputRef = useRef<HTMLInputElement>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
+  const libraryButtonRef = useRef<HTMLButtonElement>(null);
+  const libraryRef = useRef<HTMLElement>(null);
+
+  const focusArxivInput = useCallback(() => {
+    // Remove the drawer's inert state before focusing during this user gesture,
+    // so iOS can open its keyboard for the arXiv field.
+    if (libraryOpen) flushSync(() => setLibraryOpen(false));
+    arxivInputRef.current?.focus();
+  }, [libraryOpen]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.(compactLayoutQuery);
+    if (!media) return;
+    function updateLayout(event: MediaQueryListEvent) {
+      setCompactLayout(event.matches);
+      setLibraryOpen(false);
+      setInspectorOpen(!event.matches);
+    }
+    media.addEventListener('change', updateLayout);
+    return () => media.removeEventListener('change', updateLayout);
+  }, []);
+
+  useEffect(() => {
+    if (!compactLayout || !libraryOpen) return;
+    libraryRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setLibraryOpen(false);
+      if (event.key !== 'Tab') return;
+      const controls = libraryRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), a[href]');
+      if (!controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      libraryButtonRef.current?.focus();
+    };
+  }, [compactLayout, libraryOpen]);
 
   const commitHistory = useCallback((next: NavigationHistory) => {
     historyRef.current = next;
@@ -149,15 +200,15 @@ export function WorkspacePage() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = null;
     const location = currentPositionRef.current;
-    if (!isDesktop || !location) return;
+    if (!isNative || !location) return;
     void saveReadingPosition(location).catch((cause) => {
       if (mountedRef.current) setNotice({ tone: 'error', message: `Could not save your reading position: ${String(cause)}` });
     });
-  }, [isDesktop]);
+  }, [isNative]);
 
   useEffect(() => {
     mountedRef.current = true;
-    if (!isDesktop) return () => { mountedRef.current = false; };
+    if (!isNative) return () => { mountedRef.current = false; };
     let cancelled = false;
     void Promise.allSettled([listPapers(), getSettings()]).then(([paperResult, settingsResult]) => {
       if (cancelled) return;
@@ -180,7 +231,7 @@ export function WorkspacePage() {
       flushPosition();
       void unlisten.then((stop) => stop()).catch(() => {});
     };
-  }, [flushPosition, isDesktop, storePapers]);
+  }, [flushPosition, isNative, storePapers]);
 
   const handleLocationChange = useCallback((location: ReadingLocation) => {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
@@ -199,9 +250,9 @@ export function WorkspacePage() {
     setSelection(next);
     setQuestion('');
     setNoteDraft('');
-    setInspectorOpen(true);
+    if (!compactLayout) setInspectorOpen(true);
     setInspectorTab('notes');
-  }, []);
+  }, [compactLayout]);
 
   function clearSelection() {
     selectionRef.current = null;
@@ -211,6 +262,8 @@ export function WorkspacePage() {
   }
 
   function applyDocument(document: ActiveDocument, notes: Annotation[], nextHistory: NavigationHistory, location: ReadingLocation) {
+    setLibraryOpen(false);
+    if (compactLayout) setInspectorOpen(false);
     activeRef.current = document;
     setActive(document);
     setAnnotations(sortAnnotations(notes));
@@ -226,8 +279,8 @@ export function WorkspacePage() {
   }
 
   async function openPaper(input: string, cachedPaper?: Paper) {
-    if (!isDesktop) {
-      setNotice({ tone: 'info', message: 'Open Papertrail in its desktop app to download papers and use your local library.' });
+    if (!isNative) {
+      setNotice({ tone: 'info', message: 'Open the Papertrail app to download papers and use your local library.' });
       return;
     }
     const sequence = ++openSequenceRef.current;
@@ -265,6 +318,7 @@ export function WorkspacePage() {
     if (!location || moved.current_index === historyRef.current.current_index) return;
     flushPosition();
     if (activeRef.current?.paper.paper_id === location.paper_id) {
+      if (compactLayout) setInspectorOpen(false);
       commitHistory(moved);
       currentPositionRef.current = location;
       setTargetLocation(location);
@@ -301,6 +355,7 @@ export function WorkspacePage() {
 
   function jumpTo(location: ReadingLocation, anchor: PageAnchor | null = null) {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
+    if (compactLayout) setInspectorOpen(false);
     flushPosition();
     commitHistory(pushLocation(historyRef.current, location));
     currentPositionRef.current = location;
@@ -332,12 +387,12 @@ export function WorkspacePage() {
     function handleShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        arxivInputRef.current?.focus();
+        focusArxivInput();
       }
     }
     document.addEventListener('keydown', handleShortcut);
     return () => document.removeEventListener('keydown', handleShortcut);
-  }, []);
+  }, [focusArxivInput]);
 
   const showSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -526,13 +581,14 @@ export function WorkspacePage() {
   const pendingAnnotation = Boolean(annotationBusy || aiPending);
 
   return (
-    <div className="app-shell">
-      <aside className="library-sidebar" aria-label="Paper library">
-        <a className="brand" href="#" onClick={(event) => { event.preventDefault(); arxivInputRef.current?.focus(); }} aria-label="Papertrail, open a paper">
+    <div className={`app-shell ${libraryOpen ? 'library-is-open' : ''}`}>
+      <aside ref={libraryRef} id="paper-library" className="library-sidebar" aria-label="Paper library" role={compactLayout && libraryOpen ? 'dialog' : undefined} aria-modal={compactLayout && libraryOpen ? true : undefined}>
+        <button type="button" className="icon-button mobile-library-close" aria-label="Close paper library" onClick={() => setLibraryOpen(false)}><X size={20} /></button>
+        <a className="brand" href="#" onClick={(event) => { event.preventDefault(); focusArxivInput(); }} aria-label="Papertrail, open a paper">
           <span className="brand-mark"><BookOpen size={21} strokeWidth={1.6} /></span>
           <span>Papertrail<span className="brand-caption">A place for curious minds</span></span>
         </a>
-        <button type="button" className="button add-paper-button" onClick={() => arxivInputRef.current?.focus()}><Plus size={16} /> Add a paper <kbd>⌘ K</kbd></button>
+        <button type="button" className="button add-paper-button" onClick={focusArxivInput}><Plus size={16} /> Add a paper <kbd>⌘ K</kbd></button>
         <div className="library-section-heading"><span>Your library</span><span className="count-pill">{papers.length}</span></div>
         <label className="library-search"><Search size={15} /><input type="search" placeholder="Find in your library" aria-label="Search your library" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} /></label>
         <div className="library-list">
@@ -544,11 +600,12 @@ export function WorkspacePage() {
             </button>
           ))}
         </div>
-        <div className="library-footer"><span className="local-dot" />{isDesktop ? 'Your library stays on this device' : 'Desktop app preview'}<span className="footer-detail"><WifiOff size={12} /> Cached papers are available offline</span></div>
+        <div className="library-footer"><span className="local-dot" />{isNative ? 'Your library stays on this device' : 'App preview'}<span className="footer-detail"><WifiOff size={12} /> Cached papers are available offline</span></div>
       </aside>
 
-      <main className="workbench">
+      <main className="workbench" inert={compactLayout && libraryOpen}>
         <header className="workspace-toolbar">
+          <button ref={libraryButtonRef} type="button" className="icon-button mobile-library-toggle" aria-label="Open paper library" aria-controls="paper-library" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(true)}><Library size={20} /></button>
           <div className="history-controls">
             <button type="button" className="icon-button" aria-label="Go back to previous reading location" title="Back" disabled={!canGoBack(history) || Boolean(opening)} onClick={() => { void navigateHistory('back'); }}><ArrowLeft size={18} /></button>
             <button type="button" className="icon-button" aria-label="Go forward to next reading location" title="Forward" disabled={!canGoForward(history) || Boolean(opening)} onClick={() => { void navigateHistory('forward'); }}><ArrowRight size={18} /></button>
@@ -556,18 +613,20 @@ export function WorkspacePage() {
           <div className="toolbar-divider" />
           <form className="arxiv-form" onSubmit={submitImport}>
             <span className="arxiv-label">arXiv</span>
-            <input ref={arxivInputRef} value={arxivInput} onChange={(event) => setArxivInput(event.target.value)} aria-label="arXiv ID or URL" placeholder="Paper ID or arxiv.org link" autoComplete="off" spellCheck={false} />
+            <input ref={arxivInputRef} value={arxivInput} onChange={(event) => setArxivInput(event.target.value)} aria-label="arXiv ID or URL" placeholder="Paper ID or arxiv.org link" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
             <button type="submit" className="import-button" disabled={!arxivInput.trim() || Boolean(opening)} aria-label="Open arXiv paper">{opening ? <LoaderCircle size={15} className="spin" /> : <ArrowRight size={15} />}<span>Open</span></button>
           </form>
           <div className="toolbar-actions">
-            <button type="button" className={`icon-button ${inspectorOpen ? 'is-selected' : ''}`} onClick={() => setInspectorOpen((value) => !value)} aria-label={inspectorOpen ? 'Close references and notes panel' : 'Open references and notes panel'} title={inspectorOpen ? 'Close side panel' : 'Open side panel'}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
-            <button type="button" className="icon-button" aria-label="AI provider settings" title="AI provider settings" onClick={showSettings} disabled={!isDesktop}><Settings2 size={18} /></button>
+            <button type="button" className={`icon-button ${inspectorOpen ? 'is-selected' : ''}`} onClick={() => setInspectorOpen((value) => !value)} aria-controls="paper-inspector" aria-expanded={inspectorOpen} aria-label={inspectorOpen ? 'Close references and notes panel' : 'Open references and notes panel'} title={inspectorOpen ? 'Close side panel' : 'Open side panel'}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
+            <button type="button" className="icon-button" aria-label="AI provider settings" title="AI provider settings" onClick={showSettings} disabled={!isNative}><Settings2 size={18} /></button>
           </div>
         </header>
 
-        {!isDesktop && <div className="runtime-banner"><span className="status-dot" /><span>This is the web preview. Paper downloads, local storage, and AI need the desktop app.</span></div>}
+        {!isNative && <div className="runtime-banner"><span className="status-dot" /><span>This is the web preview. Paper downloads, local storage, and AI need the Papertrail app.</span></div>}
         {opening && <div className="operation-banner" role="status"><LoaderCircle size={15} className="spin" /><span>{progress?.message ?? `Opening ${opening.label}…`}</span>{progressPercent !== null && <span className="download-percent">{progressPercent}%</span>}<div className="operation-meter" style={{ width: `${progressPercent ?? 35}%` }} /></div>}
         {notice && <div className={`notice notice-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.tone === 'success' ? <Check size={15} /> : notice.tone === 'error' ? <CircleHelp size={15} /> : <CircleHelp size={15} />}<span>{notice.message}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={14} /></button></div>}
+
+        {compactLayout && selection && !inspectorOpen && <button type="button" className="mobile-selection-action" onClick={() => { setInspectorTab('notes'); setInspectorOpen(true); }}><Sparkles size={17} /><span>Ask AI or add a note to this passage</span><ChevronRight size={18} /></button>}
 
         <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">
@@ -593,7 +652,7 @@ export function WorkspacePage() {
             </div>}
           </section>
 
-          {inspectorOpen && <aside className="inspector" aria-label="References and annotations">
+          {inspectorOpen && <aside id="paper-inspector" className="inspector" aria-label="References and annotations">
             <div className="inspector-tabs" role="tablist" aria-label="Paper details">
               <button type="button" role="tab" id="references-tab" aria-controls="references-panel" aria-selected={inspectorTab === 'references'} className={inspectorTab === 'references' ? 'is-active' : ''} onClick={() => setInspectorTab('references')}><Link2 size={15} /> References {references.length > 0 && <span>{references.length}</span>}</button>
               <button type="button" role="tab" id="notes-tab" aria-controls="notes-panel" aria-selected={inspectorTab === 'notes'} className={inspectorTab === 'notes' ? 'is-active' : ''} onClick={() => setInspectorTab('notes')}><StickyNote size={15} /> Notes {annotations.length > 0 && <span>{annotations.length}</span>}</button>

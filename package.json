@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/copy-pdf-assets.ts",
-    "dev": "vite --host 127.0.0.1",
+    "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "ios:sim": "tauri ios build --debug --target aarch64-sim --no-sign",
+    "ios:build": "tauri ios build --debug --export-method debugging"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

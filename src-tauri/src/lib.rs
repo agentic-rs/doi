@@ -15,8 +15,16 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let builder = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(
+      tauri_plugin_opener::Builder::new()
+        .open_js_links_on_click(false)
+        .build(),
+    );
+  #[cfg(target_os = "ios")]
+  let builder = builder.plugin(tauri_plugin_papertrail_export::init());
+  builder
     .setup(|app| {
       let directory = app.path().app_data_dir()?;
       let state = state::AppState::initialize(directory).map_err(std::io::Error::other)?;

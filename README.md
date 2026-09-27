@@ -1,6 +1,6 @@
 # Papertrail
 
-A local desktop app for reading arXiv papers, following references, and saving AI explanations beside selected passages.
+A local desktop and iOS app for reading arXiv papers, following references, and saving AI explanations beside selected passages.
 
 Built with Tauri 2, Rust, React, TypeScript, and PDF.js. PDFs stay unchanged; annotations belong to the app and can be exported separately.
 
@@ -29,7 +29,24 @@ pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-`pnpm dev` displays the interface in a browser for layout development. Downloads, storage, and AI requests require the desktop runtime.
+`pnpm dev` displays the interface in a browser for layout development. Downloads, storage, and AI requests require the native app runtime.
+
+## Build for iOS
+
+Requires macOS, Xcode with iOS support, CocoaPods, XcodeGen, libimobiledevice, and the Rust iOS targets. The app supports iOS 18 or newer.
+
+```sh
+pnpm tauri ios init
+pnpm ios:sim
+```
+
+For an iPhone build, configure your Apple account/team in Xcode and run:
+
+```sh
+APPLE_DEVELOPMENT_TEAM=YOUR_TEAM_ID pnpm ios:build
+```
+
+See [iOS build and installation](docs/ios.md) for simulator installation, signed device installation, and development commands. The generated Xcode project and signing settings stay local; run `ios init` on each fresh checkout.
 
 ## Use
 

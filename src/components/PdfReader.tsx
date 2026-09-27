@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan } from 'lucide-react';
-import { getDocument, GlobalWorkerOptions, RenderingCancelledException, TextLayer } from 'pdfjs-dist';
-import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist';
-import worker_url from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { getDocument, GlobalWorkerOptions, RenderingCancelledException, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import worker_url from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { Annotation, PageAnchor, PdfReaderProps, ReadingLocation } from '../lib/types';
 import { anchorViewportPosition, clamp, quadToSvgPoints, safeReferenceUrl } from '../lib/pdf-geometry';
 import { extractReferences } from '../lib/pdf-references';
@@ -332,6 +332,8 @@ export function PdfReader(props: PdfReaderProps) {
   }, [active_page]);
 
   useEffect(() => {
+    let selection_timer: ReturnType<typeof setTimeout> | null = null;
+    const touch_selection = window.matchMedia?.('(pointer: coarse)').matches ?? false;
     const handleSelection = () => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed || !selection.rangeCount) {
@@ -348,14 +350,22 @@ export function PdfReader(props: PdfReaderProps) {
     // for every single character while a selection is being extended.
     scroll_root?.addEventListener('pointerup', handleSelection);
     scroll_root?.addEventListener('keyup', handleSelection);
-    const handleDeselect = () => {
-      if (window.getSelection()?.isCollapsed) callbacks.current.on_selection(null);
+    const handleSelectionChange = () => {
+      if (selection_timer) clearTimeout(selection_timer);
+      if (window.getSelection()?.isCollapsed) {
+        callbacks.current.on_selection(null);
+      } else if (touch_selection) {
+        // Native iOS selection handles can change a range without pointerup.
+        // Capture a settled range while leaving the selection UI undisturbed.
+        selection_timer = setTimeout(handleSelection, 250);
+      }
     };
-    document.addEventListener('selectionchange', handleDeselect);
+    document.addEventListener('selectionchange', handleSelectionChange);
     return () => {
+      if (selection_timer) clearTimeout(selection_timer);
       scroll_root?.removeEventListener('pointerup', handleSelection);
       scroll_root?.removeEventListener('keyup', handleSelection);
-      document.removeEventListener('selectionchange', handleDeselect);
+      document.removeEventListener('selectionchange', handleSelectionChange);
     };
   }, [scroll_root]);
 
@@ -464,7 +474,10 @@ export function PdfReader(props: PdfReaderProps) {
     const page = loaded?.pages[active_page - 1];
     if (!page || !scroll_root) return;
     const width = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 }).width;
-    changeView((scroll_root.clientWidth - 64) / width);
+    const pages = scroll_root.querySelector<HTMLElement>('.pdf-pages');
+    const style = pages ? getComputedStyle(pages) : null;
+    const padding = style ? parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) : 60;
+    changeView((scroll_root.clientWidth - padding - 4) / width);
   }
 
   const matching_annotations = annotations.filter((annotation) => annotation.target.paper_id === paper.paper_id && annotation.target.pdf_hash === paper.pdf_hash);

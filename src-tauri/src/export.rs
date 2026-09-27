@@ -2,6 +2,9 @@ use crate::{error::Result, models::Annotation, state::AppState, validation};
 use serde::Deserialize;
 use std::{collections::HashSet, path::Path};
 use tauri::AppHandle;
+#[cfg(target_os = "ios")]
+use tauri::Manager;
+#[cfg(not(target_os = "ios"))]
 use tauri_plugin_dialog::DialogExt;
 use tokio::io::AsyncWriteExt;
 
@@ -70,6 +73,15 @@ pub async fn save(
   if paper.pdf_hash != pdf_hash {
     return Err("These annotations belong to a different PDF revision.".into());
   }
+  save_validated(app, file_name, content).await
+}
+
+#[cfg(not(target_os = "ios"))]
+async fn save_validated(
+  app: &AppHandle,
+  file_name: String,
+  content: String,
+) -> Result<Option<String>> {
   let (sender, receiver) = tokio::sync::oneshot::channel();
   app
     .dialog()
@@ -91,6 +103,37 @@ pub async fn save(
     .map_err(|_| "Choose a local file for the annotation export.".to_string())?;
   write_atomic(&path, content.as_bytes()).await?;
   Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[cfg(target_os = "ios")]
+async fn save_validated(
+  app: &AppHandle,
+  file_name: String,
+  content: String,
+) -> Result<Option<String>> {
+  // A desktop save dialog returns a writable destination. iOS instead copies an
+  // existing file into Files, so the source must already contain the full JSON.
+  let directory = app
+    .path()
+    .app_cache_dir()
+    .map_err(|_| "Could not find the annotation export cache.".to_string())?
+    .join(format!("annotation-export-{}", uuid::Uuid::new_v4()));
+  tokio::fs::create_dir_all(&directory)
+    .await
+    .map_err(|_| "Could not create the annotation export cache.".to_string())?;
+  let path = directory.join(file_name);
+  let result = async {
+    write_atomic(&path, content.as_bytes()).await?;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+      tauri_plugin_papertrail_export::export_file(&app, path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|_| "Annotation export was interrupted.".to_string())?
+  }
+  .await;
+  let _ = tokio::fs::remove_dir_all(&directory).await;
+  result
 }
 
 async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {

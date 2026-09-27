@@ -5,7 +5,7 @@ import type {
   ReadingLocation, ReferenceCandidate,
 } from './types';
 
-export const desktopAvailable = isTauri;
+export const nativeAvailable = isTauri;
 export const listPapers = () => invoke<Paper[]>('list_papers');
 export const openArxivPaper = (input: string, request_id: string) =>
   invoke<Paper>('open_arxiv_paper', { input, request_id });

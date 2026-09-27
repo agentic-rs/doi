@@ -19,7 +19,7 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 740px; }
+body { margin: 0; min-width: 320px; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .45; }
@@ -37,8 +37,10 @@ svg { flex-shrink: 0; }
 ::-webkit-scrollbar-thumb { background: #c7cdc4; border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.mobile-library-toggle, .mobile-library-close { display: none; }
+.mobile-selection-action { display: none; }
 
-.app-shell { height: 100dvh; min-height: 480px; display: grid; grid-template-columns: 249px minmax(0, 1fr); overflow: hidden; }
+.app-shell { height: 100dvh; min-height: 480px; display: grid; grid-template-columns: 249px minmax(0, 1fr); overflow: hidden; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
 .library-sidebar { display: flex; flex-direction: column; background: #f0f2e9; border-right: 1px solid #e0e4d8; padding: 30px 16px 22px; min-height: 0; }
 .brand { display: flex; align-items: flex-start; gap: 11px; margin: 0 12px 32px; text-decoration: none; color: #264a42; font: 25px/1.1 Georgia, 'Times New Roman', serif; letter-spacing: -.9px; }
 .brand-mark { width: 34px; height: 35px; display: grid; place-items: center; border: 1px solid #adc1b2; border-radius: 5px 5px 10px 5px; color: #356e5f; background: #e5ece0; transform: rotate(-5deg); margin-top: 1px; }
@@ -242,8 +244,8 @@ svg { flex-shrink: 0; }
 .annotation-editor textarea { margin-top: 4px; font-size: 10px; }
 .annotation-editor > div { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 8px; }
 
-.modal-backdrop { position: fixed; inset: 0; background: #273d3357; backdrop-filter: blur(3px); z-index: 100; display: grid; place-items: center; padding: 25px; }
-.settings-dialog { width: min(100%, 440px); max-height: calc(100dvh - 50px); overflow-y: auto; background: #fcfdf7; border: 1px solid #d9e4cf; border-radius: 10px; padding: 25px 30px 28px; box-shadow: 0 18px 60px #1d3a3430; }
+.modal-backdrop { position: fixed; inset: 0; background: #273d3357; backdrop-filter: blur(3px); z-index: 100; display: grid; place-items: center; padding: calc(25px + env(safe-area-inset-top, 0px)) calc(25px + env(safe-area-inset-right, 0px)) calc(25px + env(safe-area-inset-bottom, 0px)) calc(25px + env(safe-area-inset-left, 0px)); }
+.settings-dialog { width: min(100%, 440px); max-height: calc(100dvh - 50px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; background: #fcfdf7; border: 1px solid #d9e4cf; border-radius: 10px; padding: 25px 30px 28px; box-shadow: 0 18px 60px #1d3a3430; }
 .dialog-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
 .dialog-symbol { display: grid; place-items: center; height: 40px; width: 40px; color: #74946e; background: #edf3e5; border: 1px solid #dde8d1; border-radius: 7px; }
 .settings-dialog h2 { font: 26px/1.3 Georgia, 'Times New Roman', serif; color: #4f6c46; margin: 0 0 8px; letter-spacing: -.7px; }
@@ -405,4 +407,82 @@ svg { flex-shrink: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  .app-shell {
+    display: flex;
+    min-height: 0;
+  }
+  .workbench { flex: 1; }
+  .library-sidebar { display: none; }
+  .library-is-open .library-sidebar {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    border: 0;
+    padding: calc(22px + env(safe-area-inset-top, 0px)) calc(18px + env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) calc(18px + env(safe-area-inset-left, 0px));
+  }
+  .mobile-library-toggle, .mobile-library-close { display: inline-flex; }
+  .mobile-library-close { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
+  .brand { font-size: 25px; margin-bottom: 24px; padding-right: 44px; }
+  .brand-caption { font-size: 9px; letter-spacing: 1px; }
+  .add-paper-button { margin-bottom: 22px; }
+  .add-paper-button kbd { display: none; }
+  .library-section-heading { font-size: 13px; }
+  .library-search { min-height: 46px; }
+  .library-search input { font-size: 16px; }
+  .paper-library-title { font-size: 17px; }
+  .paper-library-authors, .paper-library-meta, .library-footer { font-size: 12px; }
+  .library-paper { padding: 16px 12px; }
+  .workspace-toolbar { height: auto; min-height: 108px; flex-wrap: wrap; gap: 4px 8px; padding: 4px 10px 10px; }
+  .icon-button { width: 44px; height: 44px; }
+  .history-controls { gap: 0; }
+  .toolbar-actions { gap: 0; }
+  .arxiv-form { order: 2; max-width: none; height: 44px; gap: 8px; flex-basis: 100%; }
+  .arxiv-label { font-size: 15px; padding-right: 9px; }
+  .arxiv-form input { font-size: 16px; }
+  .import-button { min-width: 40px; min-height: 38px; padding: 8px; }
+  .reading-grid, .reading-grid.with-inspector { grid-template-columns: minmax(0, 1fr); }
+  .reading-grid.with-inspector .reading-surface { display: none; }
+  .inspector { border-left: 0; }
+  .inspector-tabs { min-height: 56px; padding: 0 20px; gap: 24px; }
+  .inspector-tabs > button { font-size: 14px; }
+  .inspector-tabs > button > span { font-size: 12px; }
+  .inspector-content { padding: 22px 20px; }
+  .inspector-intro p, .inspector-empty p, .reference-citation, .notes-intro p, .no-notes, .annotation-body, .annotation-question { font-size: 14px; }
+  .inspector-empty h3, .inspector-empty p, .notes-intro h2 { max-width: none; }
+  .list-eyebrow, .reference-number > span, .selection-heading > span, .selection-page, .annotation-meta, .annotation-page, .annotation-footer, .context-preview, .annotation-format-hint { font-size: 11px; }
+  .text-button, .composer-tabs > button, .annotation-edit { font-size: 13px; min-height: 44px; }
+  .reference-page, .annotation-page, .sidecar-controls .icon-button, .selection-heading .icon-button, .delete-button { min-width: 44px; min-height: 44px; }
+  .reference-candidate { font-size: 14px; min-height: 48px; }
+  .selection-composer blockquote, .annotation-quote { font-size: 14px; }
+  .selection-composer textarea, .annotation-editor textarea, .text-field { font-size: 16px; }
+  .composer-submit, .button { min-height: 44px; font-size: 14px; }
+  .mobile-selection-action { display: flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 8px 14px; background: #e4eee5; color: #2f7068; border-bottom: 1px solid #c9dbc9; font-size: 13px; }
+  .paper-heading { padding: 10px 16px; }
+  .paper-heading h1 { font-size: 17px; margin-bottom: 0; }
+  .paper-eyebrow, .paper-author-line { display: none; }
+  .reader-welcome { padding: 28px 18px; }
+  .reader-welcome h1 { font-size: 42px; }
+  .reader-welcome > p { font-size: 13px; }
+  .welcome-steps { flex-direction: row; flex-wrap: wrap; font-size: 11px; gap: 12px; }
+  .example-button { max-width: none; font-size: 12px; min-height: 48px; }
+  .example-button > span { font-size: 12px; }
+  .welcome-input-hint, .welcome-eyebrow { font-size: 11px; }
+  .runtime-banner, .operation-banner, .notice { font-size: 12px; padding: 9px 14px; }
+  .notice .icon-button { min-width: 44px; min-height: 44px; }
+  .modal-backdrop { padding: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px)); }
+  .settings-dialog { max-height: 100%; padding: 22px; }
+  .dialog-description { font-size: 14px; }
+  .field-label { font-size: 13px; }
+  .field-hint, .field-hint code, .credential-status, .privacy-note, .checkbox-label { font-size: 12px; }
+}
+
+@media (pointer: coarse) and (max-height: 500px) and (min-width: 761px) {
+  .workspace-toolbar { min-height: 56px; flex-wrap: nowrap; padding: 4px 10px; }
+  .arxiv-form { order: 0; flex: 1; flex-basis: auto; }
+  .paper-heading { padding: 6px 16px; }
+  .paper-heading h1 { font-size: 15px; -webkit-line-clamp: 1; }
 }

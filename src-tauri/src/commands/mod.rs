@@ -1,5 +1,6 @@
 use crate::{ai, arxiv, error::Result, export, models::*, references, state::AppState, validation};
 use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn open_arxiv_paper(
@@ -89,10 +90,13 @@ pub async fn resolve_reference(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn open_external(url: String) -> Result<()> {
+pub async fn open_external(app: AppHandle, url: String) -> Result<()> {
   let url = validation::external_url(&url)?.to_string();
   tauri::async_runtime::spawn_blocking(move || {
-    open::that(url).map_err(|_| "Could not open this link in your default browser.".to_string())
+    app
+      .opener()
+      .open_url(url, None::<&str>)
+      .map_err(|_| "Could not open this link in your default browser.".to_string())
   })
   .await
   .map_err(|_| "Opening the external link was interrupted.".to_string())?
