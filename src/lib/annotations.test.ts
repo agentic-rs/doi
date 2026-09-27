@@ -1,0 +1,37 @@
+import { describe, expect, it } from 'vitest';
+import { parseAnnotationSidecar, serializeAnnotations } from './annotations';
+import type { Annotation, Paper } from './types';
+
+const paper: Paper = {
+  paper_id: '1706.03762v7', arxiv_id: '1706.03762', arxiv_version: 7,
+  title: 'Example', authors: [], abstract: '', pdf_url: '', pdf_hash: 'a'.repeat(64),
+  downloaded_at: '2026-09-27T00:00:00Z', last_location: null,
+};
+const annotation: Annotation = {
+  schema_version: 1, annotation_id: 'test-id',
+  target: {
+    paper_id: paper.paper_id, pdf_hash: paper.pdf_hash,
+    page_anchors: [{ page_number: 2, quad_points: [[10, 30, 20, 30, 20, 10, 10, 10]],
+      text_quote: { exact_text: 'attention', prefix: 'use ', suffix: ' here', normalization_version: 1 } }],
+  },
+  body: { kind: 'note', content: 'A note' },
+  created_at: '2026-09-27T00:00:00Z', updated_at: '2026-09-27T00:00:00Z',
+};
+
+describe('app annotation sidecar', () => {
+  it('round trips coordinates and content independently of the renderer', () => {
+    expect(parseAnnotationSidecar(serializeAnnotations(paper, [annotation]), paper)).toEqual([annotation]);
+  });
+  it('rejects other PDF revisions and malformed geometry', () => {
+    const data = serializeAnnotations(paper, [annotation]);
+    expect(() => parseAnnotationSidecar(data, { ...paper, pdf_hash: 'b'.repeat(64) })).toThrow(/revision/);
+    const invalid = JSON.parse(data);
+    invalid.annotations[0].target.page_anchors[0].quad_points[0] = [0, 0];
+    expect(() => parseAnnotationSidecar(JSON.stringify(invalid), paper)).toThrow(/geometry/);
+  });
+  it('rejects unsupported versions, invalid JSON and duplicate IDs before saving', () => {
+    expect(() => parseAnnotationSidecar('{', paper)).toThrow(/JSON/);
+    expect(() => parseAnnotationSidecar(serializeAnnotations(paper, [annotation]).replace('"schema_version": 1', '"schema_version": 2'), paper)).toThrow(/Unsupported/);
+    expect(() => parseAnnotationSidecar(serializeAnnotations(paper, [annotation, annotation]), paper)).toThrow(/duplicate/);
+  });
+});

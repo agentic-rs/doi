@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-store/
+dist/
+public/pdfjs/
+src-tauri/target/
+src-tauri/gen/schemas/
+.DS_Store
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
