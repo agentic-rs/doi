@@ -107,7 +107,7 @@ Tap a page to show the reading overlay, then tap again or use its close button t
 
 Use **Landscape** or **Portrait** in the top overlay to switch the viewer's native screen orientation. This is separate from **Rotate clockwise**, which rotates the PDF pages without changing the phone's screen orientation. The reader keeps the current paper and reading location when its viewport changes.
 
-Pinch the PDF with two fingers to zoom the document while reading overlays keep their size. The previous page image stays visible until the updated render is ready.
+Pinch the PDF with two fingers to zoom the document while reading overlays keep their size. A page preview follows your fingers and sharpens after you release.
 
 **Fit page width** remains selected across page and citation jumps, reopening a paper, viewport and orientation changes, and PDF rotation. A PDF link with an explicit zoom level can override this. Pinching or using the + and − controls selects manual zoom. Older saved reading positions retain their numeric zoom until you select **Fit page width**.
 

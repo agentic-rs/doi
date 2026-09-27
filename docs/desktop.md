@@ -17,7 +17,7 @@ The command starts Vite at `http://127.0.0.1:1427`, builds the Rust backend, and
 
 Download a paper, click a PDF page to reveal the reading overlay, select text, and use references, annotations, or AI as in the installed app. Local desktop development does not need an iPhone, an iOS package installation, or Apple device signing.
 
-Pinch the Mac trackpad or hold Ctrl while scrolling to zoom the PDF. Reading overlays keep their size, and the previous page image stays visible until the updated render is ready.
+Pinch the Mac trackpad or hold Ctrl while scrolling to zoom the PDF. Reading overlays keep their size while a page preview follows the gesture and sharpens after release or a short pause in Ctrl+scroll.
 
 **Fit page width** stays selected when you jump to another page or citation, reopen the paper, resize the window, or rotate PDF pages. A PDF link with an explicit zoom level can override this. Pinching or using the + and − controls switches to manual zoom. Older saved reading positions keep their numeric zoom until you select **Fit page width**.
 

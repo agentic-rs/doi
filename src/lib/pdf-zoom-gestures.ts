@@ -9,7 +9,8 @@ export interface PdfZoomGestureOptions {
   maximum_zoom: number;
   on_start: (point: PdfZoomPoint) => boolean;
   on_zoom: (zoom: number, point: PdfZoomPoint) => void;
-  on_end: () => void;
+  // Detaching cancels the gesture; native endings retain their last valid scale.
+  on_end: (cancelled: boolean) => void;
 }
 
 type TouchPair = [Touch, Touch];
@@ -95,7 +96,7 @@ export function attachPdfZoomGestures(element: HTMLElement, options: PdfZoomGest
     cancelFrame();
     if (native_gesture) wheel_suppressed_until = Date.now() + native_wheel_suppression;
     flushUpdate();
-    options.on_end();
+    options.on_end(false);
   }
 
   function trackedTouches(touches: TouchList, ids: [number, number]): TouchPair | null {
@@ -252,6 +253,6 @@ export function attachPdfZoomGestures(element: HTMLElement, options: PdfZoomGest
     cancelFrame();
     clearWheelTimer();
     pending = null;
-    if (active) options.on_end();
+    if (active) options.on_end(true);
   };
 }

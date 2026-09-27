@@ -68,7 +68,7 @@ See [iOS build and installation](docs/ios.md) for simulator installation, signed
 6. Use Back and Forward in the reading overlay to restore earlier reading positions, including across papers. History navigation returns directly to the PDF without reopening the information sheet.
 7. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
 
-Pinch the PDF with two fingers, use a Mac trackpad pinch, or hold Ctrl while scrolling to zoom. Only the PDF scales; reading overlays keep their size. The previous page image stays visible until the updated render is ready.
+Pinch the PDF with two fingers, use a Mac trackpad pinch, or hold Ctrl while scrolling to zoom. Only the PDF scales; reading overlays keep their size. A page preview follows the gesture, then sharpens after release or a short pause in Ctrl+scroll.
 
 **Fit page width** remains selected across page and citation jumps, reopening a paper, viewport changes, and PDF rotation. A PDF link with an explicit zoom level can override this. Pinching or using the + and − buttons selects manual zoom. Older saved reading positions retain their numeric zoom until you select **Fit page width**.
 

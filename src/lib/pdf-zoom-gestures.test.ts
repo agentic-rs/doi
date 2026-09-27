@@ -102,7 +102,7 @@ describe('PDF zoom gestures', () => {
     expect(options.on_zoom).not.toHaveBeenCalled();
     dispatchTouch(element, 'touchend', [touch(4, 100)]);
     expect(options.on_zoom).toHaveBeenCalledExactlyOnceWith(2.5, { client_x: 225, client_y: 100 });
-    expect(options.on_end).toHaveBeenCalledOnce();
+    expect(options.on_end).toHaveBeenCalledExactlyOnceWith(false);
     expect(options.on_zoom.mock.invocationCallOrder[0]).toBeLessThan(options.on_end.mock.invocationCallOrder[0]);
     expect(frames.size).toBe(0);
     expect(dispatchTouch(element, 'touchmove', [touch(4, 120)]).defaultPrevented).toBe(false);
@@ -136,7 +136,7 @@ describe('PDF zoom gestures', () => {
     dispatchSafari(element, 'gestureend', 0.001);
     expect(options.on_zoom).toHaveBeenLastCalledWith(0.1, { client_x: 100, client_y: 100 });
     expect(options.on_start).toHaveBeenCalledOnce();
-    expect(options.on_end).toHaveBeenCalledOnce();
+    expect(options.on_end).toHaveBeenCalledExactlyOnceWith(false);
   });
 
   it('accumulates ctrl-wheel zoom and flushes the final update at the idle boundary', () => {
@@ -151,7 +151,7 @@ describe('PDF zoom gestures', () => {
     expect(options.on_end).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(options.on_zoom.mock.calls[1][0]).toBeCloseTo(Math.exp(0.3));
-    expect(options.on_end).toHaveBeenCalledOnce();
+    expect(options.on_end).toHaveBeenCalledExactlyOnceWith(false);
     expect(options.on_start).toHaveBeenCalledOnce();
     expect(frames.size).toBe(0);
   });
@@ -209,7 +209,7 @@ describe('PDF zoom gestures', () => {
     dispatchTouch(element, 'touchmove', [touch(1, 100), touch(2, 300)]);
     dispatchTouch(element, 'touchend', []);
     expect(options.on_start).toHaveBeenCalledOnce();
-    expect(options.on_end).toHaveBeenCalledOnce();
+    expect(options.on_end).toHaveBeenCalledExactlyOnceWith(false);
     expect(options.on_zoom).toHaveBeenLastCalledWith(3, { client_x: 200, client_y: 100 });
   });
 
@@ -219,7 +219,7 @@ describe('PDF zoom gestures', () => {
     dispatchTouch(touch_fixture.element, 'touchmove', [touch(1, 100), touch(2, 250)]);
     dispatchTouch(touch_fixture.element, 'touchcancel', []);
     expect(touch_fixture.options.on_zoom).toHaveBeenCalledExactlyOnceWith(1.5, { client_x: 175, client_y: 100 });
-    expect(touch_fixture.options.on_end).toHaveBeenCalledOnce();
+    expect(touch_fixture.options.on_end).toHaveBeenCalledExactlyOnceWith(false);
 
     const wheel_fixture = fixture();
     dispatchWheel(wheel_fixture.element, -100);
@@ -228,7 +228,7 @@ describe('PDF zoom gestures', () => {
     flushFrame();
     vi.advanceTimersByTime(1000);
     expect(wheel_fixture.options.on_zoom).not.toHaveBeenCalled();
-    expect(wheel_fixture.options.on_end).toHaveBeenCalledOnce();
+    expect(wheel_fixture.options.on_end).toHaveBeenCalledExactlyOnceWith(true);
     expect(dispatchWheel(wheel_fixture.element, -100).defaultPrevented).toBe(false);
     expect(wheel_fixture.options.on_start).toHaveBeenCalledOnce();
     expect(frames.size).toBe(0);

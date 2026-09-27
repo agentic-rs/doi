@@ -56,6 +56,7 @@ interface PdfPageProps {
   page: PDFPageProxy;
   zoom: number;
   rotation: number;
+  render_paused: boolean;
   scroll_root: HTMLDivElement | null;
   annotations: Annotation[];
   register_page: (page_number: number, data: SelectionPage | null) => void;
@@ -67,10 +68,11 @@ function readPageData(page: PDFPageProxy) {
   return Promise.all([readPdfTextContent(page), page.getAnnotations({ intent: 'display' })]);
 }
 
-function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page, on_link, on_error }: PdfPageProps) {
+function PdfPage({ page, zoom, rotation, render_paused, scroll_root, annotations, register_page, on_link, on_error }: PdfPageProps) {
   const page_ref = useRef<HTMLDivElement>(null);
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const text_ref = useRef<HTMLDivElement>(null);
+  const completed_page = useRef<SelectionPage | null>(null);
   const [visible, setVisible] = useState(page.pageNumber <= 2);
   const [rendered_viewport, setRenderedViewport] = useState<PageViewport | null>(null);
   const [links, setLinks] = useState<PdfLink[]>([]);
@@ -85,27 +87,37 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
 
   useEffect(() => {
     const element = page_ref.current;
-    if (!element || !scroll_root) return;
-    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
+    if (!element || !scroll_root || render_paused) return;
+    let observing = true;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (observing && entry && !scroll_root.hasAttribute('data-zoom-preview')) setVisible(entry.isIntersecting);
+    }, {
       root: scroll_root,
       rootMargin: '1000px 600px',
     });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [scroll_root]);
+    return () => { observing = false; observer.disconnect(); };
+  }, [scroll_root, render_paused]);
 
   useEffect(() => {
+    if (render_paused) return;
     let disposed = false;
     let render_task: RenderTask | undefined;
     let text_layer: TextLayer | undefined;
-    setLinks([]);
     const canvas = canvas_ref.current;
     const text_element = text_ref.current;
     const page_element = page_ref.current;
     if (!visible || !canvas || !text_element || !page_element) {
+      completed_page.current = null;
       setRenderedViewport(null);
       return;
     }
+    // A dismissed or unmoved pinch can reuse its already finished page.
+    if (completed_page.current?.viewport === viewport) {
+      register_page(page.pageNumber, completed_page.current);
+      return () => register_page(page.pageNumber, null);
+    }
+    setLinks([]);
     // Keep the last finished bitmap visible while PDF.js draws the new scale.
     // A cancelled render must never clear or overwrite the visible canvas.
     const buffer = document.createElement('canvas');
@@ -140,13 +152,15 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
       if (text_rotation === null) text_element!.removeAttribute('data-main-rotation');
       else text_element!.setAttribute('data-main-rotation', text_rotation);
       text_element!.replaceChildren(...text_buffer.childNodes);
-      register_page(page.pageNumber, {
+      const selection_page = {
         page_number: page.pageNumber,
         page_element: page_element!,
         text_layer: text_element!,
         viewport,
         text: pdfContentText(content),
-      });
+      };
+      completed_page.current = selection_page;
+      register_page(page.pageNumber, selection_page);
       setLinks(embedded_annotations.filter((annotation) => annotation.subtype === 'Link' && Array.isArray(annotation.rect))
         .map((annotation) => ({
           link_id: String(annotation.id),
@@ -180,9 +194,8 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
       if (render_task) void render_task.promise.then(releaseBuffer, releaseBuffer);
       else releaseBuffer();
       text_layer?.cancel();
-      text_element.replaceChildren();
     };
-  }, [page, visible, viewport, read_page_data, register_page, on_error]);
+  }, [page, visible, viewport, render_paused, read_page_data, register_page, on_error]);
 
   const page_annotations = annotations.flatMap((annotation) => annotation.target.page_anchors
     .filter((anchor) => anchor.page_number === page.pageNumber)
@@ -199,7 +212,7 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
       >
         {visible && <>
           <canvas ref={canvas_ref} className="pdf-page-canvas" aria-hidden="true" />
-          <div className="textLayer" ref={text_ref} hidden={rendered_viewport !== viewport} />
+          <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== viewport} />
           <svg className="pdf-highlight-layer" viewBox={`0 0 ${viewport.width} ${viewport.height}`} aria-hidden="true">
             {page_annotations.flatMap(({ annotation, anchor, anchor_index }) => anchor.quad_points.map((quad, index) => (
               <polygon
@@ -219,6 +232,7 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
                   key={link.link_id}
                   type="button"
                   className="pdf-embedded-link"
+                  disabled={render_paused}
                   style={{ left, top, width: Math.abs(rect[2] - rect[0]), height: Math.abs(rect[3] - rect[1]) }}
                   title={link.url ?? 'Follow citation'}
                   aria-label={link.url ? `Open ${link.url}` : 'Follow citation to its destination'}
@@ -239,6 +253,18 @@ function defaultLocation(paper_id: string): ReadingLocation {
   return { paper_id, page_number: 1, page_position: [0, 0], zoom: 1.1, zoom_mode: 'fit_width', rotation: 0 };
 }
 
+interface ZoomPreview {
+  pages: Array<{ element: HTMLElement; origin: PdfZoomPoint }>;
+  scroll_root: HTMLDivElement;
+  root_origin: PdfZoomPoint;
+  start_point: PdfZoomPoint;
+  anchor_offset: PdfZoomPoint;
+  point: PdfZoomPoint;
+  base_zoom: number;
+  zoom: number;
+  updated: boolean;
+}
+
 export function PdfReader(props: PdfReaderProps) {
   const { paper, pdf_data, annotations, target_location, navigation_key } = props;
   const callbacks = useRef(props);
@@ -256,11 +282,13 @@ export function PdfReader(props: PdfReaderProps) {
   const [scroll_root, setScrollRoot] = useState<HTMLDivElement | null>(null);
   const [view_revision, setViewRevision] = useState(0);
   const [show_tap_hint, setShowTapHint] = useState(false);
+  const [render_paused, setRenderPaused] = useState(false);
   const selection_pages = useRef(new Map<number, SelectionPage>());
   const pending_location = useRef<ReadingLocation | null>(null);
   const pending_anchor = useRef<PageAnchor | null>(null);
   const pending_view_point = useRef<[number, number] | null>(null);
   const zoom_anchor = useRef<{ page_number: number; page_position: [number, number] } | null>(null);
+  const zoom_preview = useRef<ZoomPreview | null>(null);
   const restoration_frame = useRef<number | null>(null);
   const current_location = useRef(defaultLocation(paper.paper_id));
   const current_paper_id = useRef(paper.paper_id);
@@ -295,6 +323,20 @@ export function PdfReader(props: PdfReaderProps) {
     tap_timer.current = null;
   }
 
+  function clearZoomPreview() {
+    const preview = zoom_preview.current;
+    if (preview) {
+      for (const { element } of preview.pages) {
+        element.style.removeProperty('transform');
+        element.removeAttribute('data-zoom-preview-page');
+      }
+      preview.scroll_root.removeAttribute('data-zoom-preview');
+    }
+    zoom_preview.current = null;
+    zoom_anchor.current = null;
+    setRenderPaused(false);
+  }
+
   function hasSelection() {
     const selected = window.getSelection();
     return Boolean(selected && !selected.isCollapsed && selected.rangeCount);
@@ -308,7 +350,7 @@ export function PdfReader(props: PdfReaderProps) {
     selection_pages.current.clear();
     cancelPendingTap();
     gesture.current = null;
-    zoom_anchor.current = null;
+    clearZoomPreview();
     pending_view_point.current = null;
     callbacks.current.on_selection(null);
     callbacks.current.on_references([]);
@@ -385,7 +427,7 @@ export function PdfReader(props: PdfReaderProps) {
     pending_location.current = { ...target, zoom_mode: zoom_mode.current };
     pending_anchor.current = callbacks.current.target_anchor ?? null;
     pending_view_point.current = null;
-    zoom_anchor.current = null;
+    clearZoomPreview();
     setZoom(clamp(target.zoom, minimum_zoom, maximum_zoom));
     setRotation(target.rotation);
     setActivePage(target.page_number);
@@ -406,6 +448,9 @@ export function PdfReader(props: PdfReaderProps) {
       setZoom(fitted_zoom);
     }
     if (zoom !== clamp(target.zoom, minimum_zoom, maximum_zoom) || rotation !== target.rotation) return;
+    // Commit the layout and remove the compositor preview in the same paint.
+    // Measuring while the transform is still applied would scale the anchor twice.
+    clearZoomPreview();
     const page_number = clamp(target.page_number, 1, loaded.pages.length);
     const anchor = pending_anchor.current;
     if (anchor?.page_number === page_number) {
@@ -444,6 +489,7 @@ export function PdfReader(props: PdfReaderProps) {
     if (!scroll_root || !loaded || scroll_root.clientWidth <= 0 || scroll_root.clientHeight <= 0) return;
     const size = { width: scroll_root.clientWidth, height: scroll_root.clientHeight };
     if (viewport_size.current?.width === size.width && viewport_size.current.height === size.height) return;
+    clearZoomPreview();
     viewport_size.current = size;
     // The saved page-relative point predates the resize. Reading it from the
     // shifted page DOM would lose the passage when the phone turns sideways.
@@ -469,7 +515,7 @@ export function PdfReader(props: PdfReaderProps) {
   useEffect(() => {
     if (!scroll_root || !loaded || !reading_active) return;
     return attachPdfZoomGestures(scroll_root, {
-      get_zoom: () => zoom_ref.current,
+      get_zoom: () => zoom_preview.current?.zoom ?? zoom_ref.current,
       minimum_zoom,
       maximum_zoom,
       on_start: (point: PdfZoomPoint) => {
@@ -492,6 +538,31 @@ export function PdfReader(props: PdfReaderProps) {
         if (!nearest) return false;
         const bounds = nearest.getBoundingClientRect();
         if (bounds.width <= 0 || bounds.height <= 0) return false;
+        const root_bounds = scroll_root.getBoundingClientRect();
+        // Promote only pages with a mounted bitmap, not the entire potentially
+        // hundred-page strip. Capture geometry once, before any transforms.
+        const preview_pages = pages.filter((page) => page.querySelector('canvas')).map((page) => {
+          const element = page.closest<HTMLElement>('.pdf-page-wrap')!;
+          const bounds = element.getBoundingClientRect();
+          return { element, origin: { client_x: bounds.left, client_y: bounds.top } };
+        });
+        zoom_preview.current = {
+          pages: preview_pages,
+          scroll_root,
+          root_origin: { client_x: root_bounds.left, client_y: root_bounds.top },
+          start_point: point,
+          anchor_offset: {
+            client_x: clamp(point.client_x, bounds.left, bounds.right) - point.client_x,
+            client_y: clamp(point.client_y, bounds.top, bounds.bottom) - point.client_y,
+          },
+          point,
+          base_zoom: zoom_ref.current,
+          zoom: zoom_ref.current,
+          updated: false,
+        };
+        for (const { element } of preview_pages) element.setAttribute('data-zoom-preview-page', 'true');
+        scroll_root.setAttribute('data-zoom-preview', 'true');
+        setRenderPaused(true);
         zoom_anchor.current = {
           page_number: Number(nearest.dataset.pageNumber),
           page_position: [clamp((point.client_x - bounds.left) / bounds.width, 0, 1), clamp((point.client_y - bounds.top) / bounds.height, 0, 1)],
@@ -504,31 +575,49 @@ export function PdfReader(props: PdfReaderProps) {
         return true;
       },
       on_zoom: (next_zoom, point) => {
-        const anchor = zoom_anchor.current;
-        if (!anchor) return;
-        const bounds = scroll_root.getBoundingClientRect();
-        zoom_mode.current = 'custom';
-        fit_pending.current = false;
-        pending_anchor.current = null;
-        pending_view_point.current = [point.client_x - bounds.left, point.client_y - bounds.top];
-        pending_location.current = {
-          paper_id: current_paper_id.current,
-          ...anchor,
-          zoom: next_zoom,
-          zoom_mode: 'custom',
-          rotation: rotation_ref.current,
-        };
-        setZoom(next_zoom);
-        setViewRevision((value) => value + 1);
+        const preview = zoom_preview.current;
+        if (!preview) return;
+        preview.zoom = next_zoom;
+        preview.point = point;
+        preview.updated = true;
+        const scale = next_zoom / preview.base_zoom;
+        for (const { element, origin } of preview.pages) {
+          const x = point.client_x - origin.client_x - scale * (preview.start_point.client_x - origin.client_x);
+          const y = point.client_y - origin.client_y - scale * (preview.start_point.client_y - origin.client_y);
+          element.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+        }
       },
-      on_end: () => {
-        zoom_anchor.current = null;
+      on_end: (cancelled) => {
+        const preview = zoom_preview.current;
+        const anchor = zoom_anchor.current;
+        if (!cancelled && preview?.updated && anchor) {
+          zoom_mode.current = 'custom';
+          fit_pending.current = false;
+          pending_anchor.current = null;
+          const scale = preview.zoom / preview.base_zoom;
+          pending_view_point.current = [
+            preview.point.client_x + preview.anchor_offset.client_x * scale - preview.root_origin.client_x,
+            preview.point.client_y + preview.anchor_offset.client_y * scale - preview.root_origin.client_y,
+          ];
+          pending_location.current = {
+            paper_id: paper.paper_id,
+            ...anchor,
+            zoom: preview.zoom,
+            zoom_mode: 'custom',
+            rotation: rotation_ref.current,
+          };
+          setZoom(preview.zoom);
+          setViewRevision((value) => value + 1);
+          setRenderPaused(false);
+        } else {
+          clearZoomPreview();
+        }
         gesture.current = null;
         cancelPendingTap();
         last_scroll_at.current = performance.now();
       },
     });
-  }, [scroll_root, loaded, reading_active]);
+  }, [scroll_root, loaded, reading_active, paper.paper_id]);
 
   useEffect(() => {
     if (!immersive || !reading_active || controls_visible || hinted_paper.current === paper.paper_id) return;
@@ -611,7 +700,7 @@ export function PdfReader(props: PdfReaderProps) {
   }
 
   function reportLocation() {
-    if (pending_location.current || restoration_frame.current !== null) return;
+    if (zoom_preview.current || pending_location.current || restoration_frame.current !== null) return;
     const location = readLocation();
     if (!location) return;
     current_location.current = location;
@@ -622,6 +711,7 @@ export function PdfReader(props: PdfReaderProps) {
   function handleScroll() {
     last_scroll_at.current = performance.now();
     cancelPendingTap();
+    if (zoom_preview.current) return;
     if (scroll_frame.current !== null) cancelAnimationFrame(scroll_frame.current);
     scroll_frame.current = requestAnimationFrame(() => {
       scroll_frame.current = null;
@@ -630,6 +720,7 @@ export function PdfReader(props: PdfReaderProps) {
   }
 
   function changeView(requested_zoom: number, next_rotation = rotation, next_mode: PdfZoomMode = 'custom') {
+    clearZoomPreview();
     reportLocation();
     const source = pending_location.current ?? current_location.current;
     zoom_mode.current = next_mode;
@@ -820,6 +911,7 @@ export function PdfReader(props: PdfReaderProps) {
             page={page}
             zoom={zoom}
             rotation={rotation}
+            render_paused={render_paused}
             scroll_root={scroll_root}
             annotations={matching_annotations}
             register_page={register_page}
