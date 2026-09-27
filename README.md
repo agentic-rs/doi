@@ -51,11 +51,12 @@ See [iOS build and installation](docs/ios.md) for simulator installation, signed
 ## Use
 
 1. Enter an arXiv ID or arXiv URL. Modern IDs, legacy IDs, and explicit versions are supported. Downloaded papers enter the local library.
-2. Read the original PDF, select text, and add a note or ask a question.
-3. Configure your AI service in Settings: an endpoint base URL, model ID, and optional API key. The endpoint must support the chat-completions request format; `/chat/completions` is appended to the base URL. Local services can be used without an API key.
-4. Follow PDF citation links or open detected arXiv references. For references that need matching, review the suggested papers before choosing one.
-5. Use Back and Forward to return to earlier reading positions, including across papers.
-6. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
+2. Opening a paper shows its full title, authors, arXiv ID/version, abstract, and cached date. Choose **Read paper** or **Resume reading** to dismiss the information sheet. The original PDF fills the app window.
+3. Tap a page to show or hide the reading controls. The overlay opens the library, **Info**, **Refs & notes**, and settings. On iOS, **Landscape** or **Portrait** changes the viewer's screen orientation; **Rotate clockwise** in the PDF controls separately rotates the PDF pages.
+4. Select text and add a note or ask a question. Configure your AI service in Settings: an endpoint base URL, model ID, and optional API key. The endpoint must support the chat-completions request format; `/chat/completions` is appended to the base URL. Local services can be used without an API key.
+5. Follow PDF citation links or open detected arXiv references. For references that need matching, review the suggested papers before choosing one.
+6. Use Back and Forward in the reading overlay to restore earlier reading positions, including across papers. History navigation returns directly to the PDF without reopening the information sheet.
+7. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
 
 PDFs, library metadata, positions, and annotations live in the platform's app data directory for `app.papertrail.reader`. Credentials use the native credential store, rather than the annotation file or frontend storage. Reading cached papers and notes works offline; paper downloads, reference lookup, and remote AI calls need a connection.
 

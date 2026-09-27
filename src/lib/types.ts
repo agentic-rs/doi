@@ -7,6 +7,12 @@ export interface ReadingLocation {
   rotation: number;
 }
 
+export type ReaderOrientation = 'portrait' | 'landscape';
+
+export interface ReaderCapabilities {
+  supports_orientation: boolean;
+}
+
 export interface Paper {
   paper_id: string;
   arxiv_id: string;
@@ -124,6 +130,11 @@ export interface PdfReaderProps {
   target_location: ReadingLocation | null;
   target_anchor?: PageAnchor | null;
   navigation_key: number;
+  controls_visible?: boolean;
+  on_toggle_controls?: () => void;
+  viewport_key?: number;
+  initial_fit_width?: boolean;
+  reading_active?: boolean;
   on_location_change: (location: ReadingLocation) => void;
   on_navigate: (target: ReaderTarget) => void;
   on_selection: (selection: SelectionContext | null) => void;

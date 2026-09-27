@@ -21,6 +21,64 @@
   color: #6a7778;
   user-select: none;
 }
+.pdf-toolbar[hidden] { display: none; }
+
+.pdf-reader-immersive { position: relative; }
+.pdf-reader-immersive .pdf-toolbar {
+  position: absolute;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(680px, calc(100% - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  min-height: 56px;
+  padding: 8px 14px;
+  border: 1px solid #d4ddd4;
+  border-radius: 14px;
+  background: #fcfcf6f5;
+  box-shadow: 0 8px 32px #203a3926;
+  backdrop-filter: blur(12px);
+}
+.pdf-reader-immersive .pdf-pages { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+.pdf-controls-accessible {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.pdf-controls-accessible:focus-visible {
+  top: calc(84px + env(safe-area-inset-top, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  z-index: 30;
+  width: auto;
+  height: auto;
+  padding: 12px 16px;
+  clip-path: none;
+  border-radius: 8px;
+  background: #fcfcf6;
+  color: #245b54;
+  box-shadow: 0 4px 20px #203a3926;
+}
+.pdf-tap-hint {
+  position: absolute;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  border-radius: 20px;
+  padding: 10px 16px;
+  background: #293b38e8;
+  color: #fff;
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
 
 .pdf-toolbar-group { display: flex; align-items: center; gap: 6px; }
 .pdf-toolbar button {
@@ -140,6 +198,8 @@
   .pdf-outline-select { min-width: 0; flex: 1; max-width: none; min-height: 38px; font-size: 16px; }
   .pdf-toolbar-divider { margin: 0 2px; }
   .pdf-pages { padding: 16px 10px 24px; }
+  .pdf-reader-immersive .pdf-toolbar { padding: 6px 8px; }
+  .pdf-reader-immersive .pdf-pages { padding-bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (pointer: coarse) and (max-height: 500px) and (min-width: 761px) {
   .pdf-toolbar { flex-wrap: nowrap; }

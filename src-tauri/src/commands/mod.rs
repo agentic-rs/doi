@@ -1,4 +1,6 @@
-use crate::{ai, arxiv, error::Result, export, models::*, references, state::AppState, validation};
+use crate::{
+  ai, arxiv, error::Result, export, models::*, reader, references, state::AppState, validation,
+};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -110,4 +112,17 @@ pub async fn save_annotation_file(
   content: String,
 ) -> Result<Option<String>> {
   export::save(&app, &state, file_name, content).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn reader_capabilities() -> reader::ReaderCapabilities {
+  reader::capabilities()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_reader_orientation(
+  app: AppHandle,
+  orientation: reader::ReaderOrientation,
+) -> Result<reader::ReaderOrientation> {
+  reader::set_orientation(app, orientation).await
 }

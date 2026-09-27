@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, FormEvent } from 'react';
+import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions, RenderingCancelledException, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -9,10 +9,16 @@ import { anchorViewportPosition, clamp, quadToSvgPoints, safeReferenceUrl } from
 import { extractReferences } from '../lib/pdf-references';
 import { selectionContext } from '../lib/pdf-selection';
 import { pdfContentText } from '../lib/pdf-text';
+import { readPdfTextContent } from '../lib/pdf-compatibility';
+import { interactiveReaderTarget, isReaderTap, moveReaderGesture, startReaderGesture } from '../lib/reader-gestures';
+import type { ReaderGesture } from '../lib/reader-gestures';
 import type { SelectionPage } from '../lib/pdf-selection';
 import './pdf-reader.css';
 
 GlobalWorkerOptions.workerSrc = worker_url;
+
+const minimum_zoom = 0.1;
+const maximum_zoom = 3;
 
 interface LoadedPdf {
   paper_id: string;
@@ -95,7 +101,7 @@ function PdfPage({ page, zoom, rotation, scroll_root, annotations, register_page
       // Cancellation can precede text extraction finishing. Mark the render
       // rejection handled immediately, then surface it in the combined await.
       void render_task.promise.catch(() => undefined);
-      const [content, embedded_annotations] = await Promise.all([page.getTextContent(), page.getAnnotations({ intent: 'display' })]);
+      const [content, embedded_annotations] = await Promise.all([readPdfTextContent(page), page.getAnnotations({ intent: 'display' })]);
       if (disposed) return;
       text_layer = new TextLayer({ textContentSource: content, container: text_element!, viewport });
       await Promise.all([render_task.promise, text_layer.render()]);
@@ -203,6 +209,8 @@ export function PdfReader(props: PdfReaderProps) {
   const [active_page, setActivePage] = useState(target_location?.page_number ?? 1);
   const [page_input, setPageInput] = useState(String(active_page));
   const [scroll_root, setScrollRoot] = useState<HTMLDivElement | null>(null);
+  const [view_revision, setViewRevision] = useState(0);
+  const [show_tap_hint, setShowTapHint] = useState(false);
   const selection_pages = useRef(new Map<number, SelectionPage>());
   const pending_location = useRef<ReadingLocation | null>(null);
   const pending_anchor = useRef<PageAnchor | null>(null);
@@ -211,6 +219,15 @@ export function PdfReader(props: PdfReaderProps) {
   const current_paper_id = useRef(paper.paper_id);
   current_paper_id.current = paper.paper_id;
   const scroll_frame = useRef<number | null>(null);
+  const fit_width_mode = useRef(false);
+  const initial_fit_pending = useRef(false);
+  const applied_navigation = useRef<{ paper_id: string; navigation_key: number } | null>(null);
+  const viewport_size = useRef<{ width: number; height: number } | null>(null);
+  const gesture = useRef<ReaderGesture | null>(null);
+  const tap_timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const last_scroll_at = useRef(Number.NEGATIVE_INFINITY);
+  const last_selection_at = useRef(Number.NEGATIVE_INFINITY);
+  const hinted_paper = useRef<string | null>(null);
   const zoom_ref = useRef(zoom);
   const rotation_ref = useRef(rotation);
   zoom_ref.current = zoom;
@@ -222,19 +239,38 @@ export function PdfReader(props: PdfReaderProps) {
   }, []);
   const report_error = useMemo(() => (message: string) => callbacks.current.on_error(message), []);
 
+  const immersive = Boolean(props.on_toggle_controls);
+  const controls_visible = props.controls_visible ?? true;
+  const reading_active = props.reading_active ?? true;
+
+  function cancelPendingTap() {
+    if (tap_timer.current) clearTimeout(tap_timer.current);
+    tap_timer.current = null;
+  }
+
+  function hasSelection() {
+    const selected = window.getSelection();
+    return Boolean(selected && !selected.isCollapsed && selected.rangeCount);
+  }
+
   useEffect(() => {
     let disposed = false;
     setLoaded(null);
     setError(null);
     setOutline([]);
     selection_pages.current.clear();
+    cancelPendingTap();
+    gesture.current = null;
     callbacks.current.on_selection(null);
     callbacks.current.on_references([]);
     const initial = callbacks.current.target_location ?? callbacks.current.paper.last_location ?? defaultLocation(paper.paper_id);
     pending_location.current = initial;
     pending_anchor.current = callbacks.current.target_anchor ?? null;
     current_location.current = initial;
-    setZoom(clamp(initial.zoom, 0.35, 3));
+    fit_width_mode.current = callbacks.current.initial_fit_width ?? (!callbacks.current.target_location && !callbacks.current.paper.last_location);
+    initial_fit_pending.current = fit_width_mode.current;
+    applied_navigation.current = { paper_id: paper.paper_id, navigation_key: callbacks.current.navigation_key };
+    setZoom(clamp(initial.zoom, minimum_zoom, maximum_zoom));
     setRotation(initial.rotation);
     setActivePage(initial.page_number);
     const asset_base = new URL(`${import.meta.env.BASE_URL}pdfjs/`, document.baseURI).href;
@@ -265,7 +301,7 @@ export function PdfReader(props: PdfReaderProps) {
       const reference_pages = pages.slice(-Math.min(25, Math.max(6, Math.ceil(pages.length * 0.45))));
       const text_pages = [];
       for (const page of reference_pages) {
-        const content = await page.getTextContent();
+        const content = await readPdfTextContent(page);
         if (disposed) return;
         text_pages.push({ page_number: page.pageNumber, text: pdfContentText(content) });
       }
@@ -287,9 +323,13 @@ export function PdfReader(props: PdfReaderProps) {
   useEffect(() => {
     const target = callbacks.current.target_location;
     if (!target || target.paper_id !== paper.paper_id) return;
+    if (applied_navigation.current?.paper_id === paper.paper_id && applied_navigation.current.navigation_key === navigation_key) return;
+    applied_navigation.current = { paper_id: paper.paper_id, navigation_key };
+    fit_width_mode.current = false;
+    initial_fit_pending.current = false;
     pending_location.current = target;
     pending_anchor.current = callbacks.current.target_anchor ?? null;
-    setZoom(clamp(target.zoom, 0.35, 3));
+    setZoom(clamp(target.zoom, minimum_zoom, maximum_zoom));
     setRotation(target.rotation);
     setActivePage(target.page_number);
   }, [navigation_key, paper.paper_id]);
@@ -297,7 +337,16 @@ export function PdfReader(props: PdfReaderProps) {
   useLayoutEffect(() => {
     if (!scroll_root || !loaded || !pending_location.current) return;
     let target = pending_location.current;
-    if (target.paper_id !== paper.paper_id || zoom !== clamp(target.zoom, 0.35, 3) || rotation !== target.rotation) return;
+    if (target.paper_id !== paper.paper_id) return;
+    if (initial_fit_pending.current) {
+      const fitted_zoom = fittedWidth(target.page_number, target.rotation);
+      if (fitted_zoom === null) return;
+      initial_fit_pending.current = false;
+      target = { ...target, zoom: fitted_zoom };
+      pending_location.current = target;
+      setZoom(fitted_zoom);
+    }
+    if (zoom !== clamp(target.zoom, minimum_zoom, maximum_zoom) || rotation !== target.rotation) return;
     const page_number = clamp(target.page_number, 1, loaded.pages.length);
     const anchor = pending_anchor.current;
     if (anchor?.page_number === page_number) {
@@ -325,7 +374,45 @@ export function PdfReader(props: PdfReaderProps) {
       restoration_frame.current = null;
       callbacks.current.on_location_change(current_location.current);
     });
-  }, [loaded, zoom, rotation, scroll_root, navigation_key, target_location, paper.paper_id]);
+  }, [loaded, zoom, rotation, scroll_root, navigation_key, target_location, paper.paper_id, view_revision]);
+
+  const resize_callback = useRef(() => {});
+  resize_callback.current = () => {
+    if (!scroll_root || !loaded || scroll_root.clientWidth <= 0 || scroll_root.clientHeight <= 0) return;
+    const size = { width: scroll_root.clientWidth, height: scroll_root.clientHeight };
+    if (viewport_size.current?.width === size.width && viewport_size.current.height === size.height) return;
+    viewport_size.current = size;
+    // The saved page-relative point predates the resize. Reading it from the
+    // shifted page DOM would lose the passage when the phone turns sideways.
+    const source = pending_location.current ?? current_location.current;
+    const next_zoom = fit_width_mode.current ? fittedWidth(source.page_number, source.rotation) ?? source.zoom : source.zoom;
+    pending_location.current = { ...source, zoom: next_zoom };
+    setZoom(next_zoom);
+    setViewRevision((value) => value + 1);
+  };
+
+  useEffect(() => {
+    if (!scroll_root || !loaded) return;
+    viewport_size.current = { width: scroll_root.clientWidth, height: scroll_root.clientHeight };
+    const observer = new ResizeObserver(() => resize_callback.current());
+    observer.observe(scroll_root);
+    return () => observer.disconnect();
+  }, [scroll_root, loaded]);
+
+  useLayoutEffect(() => {
+    resize_callback.current();
+  }, [props.viewport_key]);
+
+  useEffect(() => {
+    if (!immersive || !reading_active || controls_visible || hinted_paper.current === paper.paper_id) return;
+    hinted_paper.current = paper.paper_id;
+    setShowTapHint(true);
+    const timer = setTimeout(() => setShowTapHint(false), 4_000);
+    return () => {
+      clearTimeout(timer);
+      setShowTapHint(false);
+    };
+  }, [immersive, reading_active, controls_visible, paper.paper_id]);
 
   useEffect(() => {
     setPageInput(String(active_page));
@@ -354,7 +441,10 @@ export function PdfReader(props: PdfReaderProps) {
       if (selection_timer) clearTimeout(selection_timer);
       if (window.getSelection()?.isCollapsed) {
         callbacks.current.on_selection(null);
-      } else if (touch_selection) {
+      } else {
+        last_selection_at.current = performance.now();
+        cancelPendingTap();
+        if (!touch_selection) return;
         // Native iOS selection handles can change a range without pointerup.
         // Capture a settled range while leaving the selection UI undisturbed.
         selection_timer = setTimeout(handleSelection, 250);
@@ -372,10 +462,11 @@ export function PdfReader(props: PdfReaderProps) {
   useEffect(() => () => {
     if (scroll_frame.current !== null) cancelAnimationFrame(scroll_frame.current);
     if (restoration_frame.current !== null) cancelAnimationFrame(restoration_frame.current);
+    cancelPendingTap();
   }, []);
 
   function reportLocation() {
-    if (!scroll_root || pending_location.current || restoration_frame.current !== null) return;
+    if (!scroll_root || pending_location.current || restoration_frame.current !== null || scroll_root.clientWidth <= 0 || scroll_root.clientHeight <= 0) return;
     const root_bounds = scroll_root.getBoundingClientRect();
     const pages = [...scroll_root.querySelectorAll<HTMLElement>('[data-page-number]')];
     const page = pages.find((candidate) => candidate.getBoundingClientRect().bottom > root_bounds.top + 26);
@@ -385,7 +476,7 @@ export function PdfReader(props: PdfReaderProps) {
     const location: ReadingLocation = {
       paper_id: current_paper_id.current,
       page_number,
-      page_position: [clamp((root_bounds.left - bounds.left) / bounds.width, 0, 1), clamp((root_bounds.top + 20 - bounds.top) / bounds.height, 0, 1)],
+      page_position: [clamp((root_bounds.left + 20 - bounds.left) / bounds.width, 0, 1), clamp((root_bounds.top + 20 - bounds.top) / bounds.height, 0, 1)],
       zoom: zoom_ref.current,
       rotation: rotation_ref.current,
     };
@@ -395,6 +486,8 @@ export function PdfReader(props: PdfReaderProps) {
   }
 
   function handleScroll() {
+    last_scroll_at.current = performance.now();
+    cancelPendingTap();
     if (scroll_frame.current !== null) cancelAnimationFrame(scroll_frame.current);
     scroll_frame.current = requestAnimationFrame(() => {
       scroll_frame.current = null;
@@ -402,12 +495,24 @@ export function PdfReader(props: PdfReaderProps) {
     });
   }
 
-  function changeView(next_zoom: number, next_rotation = rotation) {
+  function changeView(next_zoom: number, next_rotation = rotation, keep_fit_mode = false) {
     reportLocation();
-    pending_location.current = { ...current_location.current, zoom: clamp(next_zoom, 0.35, 3), rotation: next_rotation };
+    if (!keep_fit_mode) fit_width_mode.current = false;
+    const source = pending_location.current ?? current_location.current;
+    const page = loaded?.pages[source.page_number - 1];
+    let page_position = source.page_position;
+    if (page && source.rotation !== next_rotation) {
+      const old_viewport = page.getViewport({ scale: source.zoom, rotation: (page.rotate + source.rotation) % 360 });
+      const pdf_point = old_viewport.convertToPdfPoint(source.page_position[0] * old_viewport.width, source.page_position[1] * old_viewport.height);
+      const next_viewport = page.getViewport({ scale: next_zoom, rotation: (page.rotate + next_rotation) % 360 });
+      const [x, y] = next_viewport.convertToViewportPoint(pdf_point[0], pdf_point[1]);
+      page_position = [clamp(x / next_viewport.width, 0, 1), clamp(y / next_viewport.height, 0, 1)];
+    }
+    pending_location.current = { ...source, page_position, zoom: clamp(next_zoom, minimum_zoom, maximum_zoom), rotation: next_rotation };
     pending_anchor.current = null;
     setZoom(pending_location.current.zoom);
     setRotation(next_rotation);
+    setViewRevision((value) => value + 1);
   }
 
   function navigatePage(page_number: number) {
@@ -441,7 +546,7 @@ export function PdfReader(props: PdfReaderProps) {
       const page = loaded.pages[index];
       if (!page) throw new Error('The citation points to an unavailable page.');
       const kind = (destination[1] as { name?: string })?.name;
-      const next_zoom = kind === 'XYZ' && typeof destination[4] === 'number' && destination[4] > 0 ? clamp(destination[4], 0.35, 3) : zoom;
+      const next_zoom = kind === 'XYZ' && typeof destination[4] === 'number' && destination[4] > 0 ? clamp(destination[4], minimum_zoom, maximum_zoom) : zoom;
       const viewport: PageViewport = page.getViewport({ scale: next_zoom, rotation: (page.rotate + rotation) % 360 });
       let x = page.view[0];
       let y = page.view[3];
@@ -470,21 +575,72 @@ export function PdfReader(props: PdfReaderProps) {
     else setPageInput(String(active_page));
   }
 
-  function fitWidth() {
-    const page = loaded?.pages[active_page - 1];
-    if (!page || !scroll_root) return;
-    const width = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 }).width;
+  function fittedWidth(page_number: number, page_rotation: number): number | null {
+    const page = loaded?.pages[clamp(page_number, 1, loaded.pages.length) - 1];
+    if (!page || !scroll_root || scroll_root.clientWidth <= 0) return null;
+    const width = page.getViewport({ scale: 1, rotation: (page.rotate + page_rotation) % 360 }).width;
     const pages = scroll_root.querySelector<HTMLElement>('.pdf-pages');
     const style = pages ? getComputedStyle(pages) : null;
-    const padding = style ? parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) : 60;
-    changeView((scroll_root.clientWidth - padding - 4) / width);
+    const padding = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 60;
+    return clamp((scroll_root.clientWidth - padding - 4) / width, minimum_zoom, maximum_zoom);
+  }
+
+  function fitWidth() {
+    const fitted_zoom = fittedWidth(active_page, rotation);
+    if (fitted_zoom === null) return;
+    fit_width_mode.current = true;
+    changeView(fitted_zoom, rotation, true);
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    cancelPendingTap();
+    if (!reading_active) {
+      gesture.current = null;
+      return;
+    }
+    if (gesture.current) {
+      gesture.current.cancelled = true;
+      return;
+    }
+    gesture.current = startReaderGesture({
+      pointer_id: event.pointerId, client_x: event.clientX, client_y: event.clientY,
+      timestamp: performance.now(), is_primary: event.isPrimary, button: event.button,
+      interactive_target: interactiveReaderTarget(event.target), has_selection: hasSelection(),
+    });
+  }
+
+  function handlePointerUp(event: PointerEvent<HTMLDivElement>) {
+    const completed = gesture.current;
+    gesture.current = null;
+    if (!callbacks.current.on_toggle_controls || !reading_active) return;
+    const pointer = {
+      pointer_id: event.pointerId, client_x: event.clientX, client_y: event.clientY,
+      timestamp: performance.now(), interactive_target: interactiveReaderTarget(event.target),
+      has_selection: hasSelection(), last_scroll_at: last_scroll_at.current, last_selection_at: last_selection_at.current,
+    };
+    if (!isReaderTap(completed, pointer)) return;
+    // A second tap can select a word; let WebKit settle its native selection
+    // before changing the overlay and cancel if another gesture starts.
+    tap_timer.current = setTimeout(() => {
+      tap_timer.current = null;
+      if (callbacks.current.reading_active === false || hasSelection() || last_selection_at.current > pointer.timestamp || last_scroll_at.current > pointer.timestamp) return;
+      callbacks.current.on_toggle_controls?.();
+    }, 180);
+  }
+
+  function handleReaderKey(event: KeyboardEvent<HTMLElement>) {
+    if (!immersive || !reading_active || event.metaKey || event.ctrlKey || event.altKey) return;
+    if ((event.key.toLowerCase() === 'f' && !interactiveReaderTarget(event.target)) || (event.key === 'Escape' && controls_visible)) {
+      event.preventDefault();
+      callbacks.current.on_toggle_controls?.();
+    }
   }
 
   const matching_annotations = annotations.filter((annotation) => annotation.target.paper_id === paper.paper_id && annotation.target.pdf_hash === paper.pdf_hash);
 
   return (
-    <section className="pdf-reader" aria-label="Paper reader">
-      <div className="pdf-toolbar">
+    <section className={`pdf-reader ${immersive ? 'pdf-reader-immersive' : ''}`} aria-label="Paper reader" onKeyDown={handleReaderKey}>
+      <div className="pdf-toolbar" hidden={!controls_visible} aria-label="PDF view controls">
         <div className="pdf-toolbar-group">
           <button type="button" title="Previous page" aria-label="Previous page" disabled={!loaded || active_page <= 1} onClick={() => navigatePage(active_page - 1)}><ChevronLeft size={16} /></button>
           <form className="pdf-page-picker" onSubmit={submitPage}>
@@ -501,15 +657,22 @@ export function PdfReader(props: PdfReaderProps) {
           </select>}
         </div>
         <div className="pdf-toolbar-group">
-          <button type="button" title="Zoom out" aria-label="Zoom out" disabled={!loaded || zoom <= 0.35} onClick={() => changeView(zoom - 0.15)}><Minus size={15} /></button>
+          <button type="button" title="Zoom out" aria-label="Zoom out" disabled={!loaded || zoom <= minimum_zoom} onClick={() => changeView(zoom - 0.15)}><Minus size={15} /></button>
           <span className="pdf-zoom-value">{Math.round(zoom * 100)}%</span>
-          <button type="button" title="Zoom in" aria-label="Zoom in" disabled={!loaded || zoom >= 3} onClick={() => changeView(zoom + 0.15)}><Plus size={15} /></button>
+          <button type="button" title="Zoom in" aria-label="Zoom in" disabled={!loaded || zoom >= maximum_zoom} onClick={() => changeView(zoom + 0.15)}><Plus size={15} /></button>
           <span className="pdf-toolbar-divider" />
           <button type="button" title="Fit page width" aria-label="Fit page width" disabled={!loaded} onClick={fitWidth}><Scan size={16} /></button>
           <button type="button" title="Rotate clockwise" aria-label="Rotate clockwise" disabled={!loaded} onClick={() => changeView(zoom, (rotation + 90) % 360)}><RotateCw size={16} /></button>
         </div>
       </div>
-      <div className="pdf-scroll" ref={setScrollRoot} onScroll={handleScroll} tabIndex={0} aria-label="Scrollable PDF pages">
+      {immersive && reading_active && <button type="button" className="pdf-controls-accessible" onClick={() => props.on_toggle_controls?.()}>{controls_visible ? 'Hide reading controls' : 'Show reading controls'}</button>}
+      {immersive && reading_active && !controls_visible && show_tap_hint && <div className="pdf-tap-hint" aria-hidden="true">Tap the page to show reading controls</div>}
+      <div className="pdf-scroll" ref={setScrollRoot} onScroll={handleScroll}
+        onPointerDown={handlePointerDown}
+        onPointerMove={(event) => moveReaderGesture(gesture.current, event.pointerId, event.clientX, event.clientY)}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => { gesture.current = null; cancelPendingTap(); }}
+        tabIndex={0} aria-label="Scrollable PDF pages">
         {!loaded && <div className="pdf-loading" role="status">{error ? <p>{error}</p> : <><LoaderCircle className="pdf-spinner" size={24} /><p>Opening paper…</p></>}</div>}
         {loaded && <div className="pdf-pages">
           {loaded.pages.map((page) => <PdfPage

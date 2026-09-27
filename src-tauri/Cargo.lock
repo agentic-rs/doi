@@ -2757,6 +2757,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-papertrail-export",
+ "tauri-plugin-papertrail-reader",
  "tempfile",
  "tokio",
  "url",
@@ -4221,6 +4222,15 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-papertrail-export"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-papertrail-reader"
 version = "0.1.0"
 dependencies = [
  "serde",

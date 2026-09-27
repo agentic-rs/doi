@@ -1,6 +1,6 @@
 # Reader engine and annotation ownership
 
-Status: PDF.js accepted and implemented with app-owned annotation storage and overlays. Geometry and selection behavior have automated coverage; a real arXiv PDF has been parsed and rendered. Native visual interaction and alternative-engine benchmarks remain unverified. See [verification notes](./verification.md).
+Status: PDF.js accepted and implemented with app-owned annotation storage and overlays. Geometry and selection behavior have automated coverage. Native simulator checks cover paper information, full-screen reading, portrait/landscape changes, reference following, and Back/Forward. Physical-device selection, highlight alignment, and alternative-engine benchmarks remain unverified. See [verification notes](./verification.md).
 
 ## Decision being considered
 
@@ -19,9 +19,19 @@ PDF.js remains the leading candidate for a Tauri/React reader. Prefer composing 
 | Annotation schema, migrations, and storage | App |
 | Highlight overlay and AI discussion UI | App |
 | Back/Forward across internal links and papers | App |
+| Paper information and reading controls | App |
+| Native screen orientation | Platform reader plugin |
 | Optional export into another format | App export adapter |
 
 Keep the adapter small and driven by actual needs. We need page metrics, selection anchors, link targets, coordinate conversion, and navigation events. We do not need a general plugin system or multiple working engines for the first release.
+
+## Immersive reading
+
+Explicit paper openings show metadata over an already mounted PDF. Closing the information sheet reveals the full reader; taps show controls without resizing or recreating the document. Back/Forward restores the destination directly. Taps on links, scrolling gestures, long presses, and active text selection do not toggle controls.
+
+The iOS plugin requests portrait or landscape through the foreground window scene. Screen orientation is independent of PDF page rotation and never changes annotation coordinates or the sidecar schema. Viewport changes preserve the normalized page position; fit-width mode refits automatically, while manually chosen or restored zoom remains stable.
+
+The text adapter consumes PDF.js text streams with `getReader()` because affected WebKit versions lack the asynchronous stream iteration used by `getTextContent()`. Both text layers and bibliography extraction use the same adapter. It retains chunk styles, language, cleanup, and the separate XFA path without modifying global stream prototypes or PDF.js internals.
 
 ## App-owned annotation proposal
 

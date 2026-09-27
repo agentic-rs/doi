@@ -38,6 +38,7 @@ keyring = "4.2"
 apple-native-keyring-store = { version = "1.0.2", features = ["protected"] }
 keyring-core = "1"
 tauri-plugin-papertrail-export = { path = "plugins/tauri-plugin-papertrail-export" }
+tauri-plugin-papertrail-reader = { path = "plugins/tauri-plugin-papertrail-reader" }
 
 [dev-dependencies]
 tempfile = "3"

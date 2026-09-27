@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AiAnswer, AiRequest, AiSettings, Annotation, OperationProgress, Paper,
-  ReadingLocation, ReferenceCandidate,
+  ReaderCapabilities, ReaderOrientation, ReadingLocation, ReferenceCandidate,
 } from './types';
 
 export const nativeAvailable = isTauri;
@@ -28,5 +28,8 @@ export const askSelection = (request: AiRequest) => invoke<AiAnswer>('ask_select
 export const resolveReference = (citation_text: string) =>
   invoke<ReferenceCandidate[]>('resolve_reference', { citation_text });
 export const openExternal = (url: string) => invoke<void>('open_external', { url });
+export const getReaderCapabilities = () => invoke<ReaderCapabilities>('reader_capabilities');
+export const setReaderOrientation = (orientation: ReaderOrientation) =>
+  invoke<ReaderOrientation>('set_reader_orientation', { orientation });
 export const onProgress = (handler: (progress: OperationProgress) => void) =>
   listen<OperationProgress>('operation-progress', (event) => handler(event.payload));

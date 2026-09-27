@@ -8,11 +8,15 @@ import {
   Sparkles, StickyNote, Trash2, Upload, WifiOff, X,
 } from 'lucide-react';
 import { PdfReader } from '../components/PdfReader';
+import { PaperInfoSheet } from '../components/PaperInfoSheet';
+import { ReaderOverlay } from '../components/ReaderOverlay';
 import { SettingsDialog } from '../components/SettingsDialog';
+import '../components/reading-workspace.css';
 import {
   askSelection, deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
   listAnnotations, listPapers, onProgress, openArxivPaper, openExternal,
   resolveReference, saveAnnotation, saveAnnotationFile, saveReadingPosition,
+  getReaderCapabilities, setReaderOrientation,
 } from '../lib/tauri';
 import {
   canGoBack, canGoForward, createHistory, currentLocation, goBack, goForward,
@@ -23,11 +27,13 @@ import { parseAnnotationSidecar, serializeAnnotations } from '../lib/annotations
 import type {
   AiSettings, Annotation, OperationProgress, PageAnchor, Paper, ReaderTarget, ReadingLocation,
   ReferenceCandidate, ReferenceItem, SelectionContext,
+  ReaderCapabilities, ReaderOrientation,
 } from '../lib/types';
 
 interface ActiveDocument {
   paper: Paper;
   pdf_data: Uint8Array;
+  initial_fit_width: boolean;
 }
 
 interface OpenOperation {
@@ -96,6 +102,12 @@ export function WorkspacePage() {
   const [isNative] = useState(nativeAvailable);
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia?.(compactLayoutQuery).matches ?? false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [paperInfoOpen, setPaperInfoOpen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const [readerCapabilities, setReaderCapabilities] = useState<ReaderCapabilities>({ supports_orientation: false });
+  const [readerOrientation, setReaderOrientationState] = useState<ReaderOrientation>(() => window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+  const [orientationPending, setOrientationPending] = useState(false);
+  const [viewportKey, setViewportKey] = useState(0);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [active, setActive] = useState<ActiveDocument | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -141,13 +153,49 @@ export function WorkspacePage() {
   const askInputRef = useRef<HTMLTextAreaElement>(null);
   const libraryButtonRef = useRef<HTMLButtonElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
+  const drawerLayout = compactLayout || Boolean(active);
+
+  useEffect(() => {
+    if (!isNative) return;
+    let cancelled = false;
+    void getReaderCapabilities().then((capabilities) => {
+      if (!cancelled) setReaderCapabilities(capabilities);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isNative]);
+
+  useEffect(() => {
+    function handleResize() {
+      setReaderOrientationState(window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+      setViewportKey((value) => value + 1);
+    }
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const focusArxivInput = useCallback(() => {
+    if (paperInfoOpen || settingsOpen) return;
+    if (activeRef.current) {
+      flushSync(() => setLibraryOpen(true));
+      arxivInputRef.current?.focus();
+      return;
+    }
     // Remove the drawer's inert state before focusing during this user gesture,
     // so iOS can open its keyboard for the arXiv field.
     if (libraryOpen) flushSync(() => setLibraryOpen(false));
     arxivInputRef.current?.focus();
-  }, [libraryOpen]);
+  }, [libraryOpen, paperInfoOpen, settingsOpen]);
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented || !active || paperInfoOpen || settingsOpen || libraryOpen) return;
+      setControlsVisible(false);
+      setInspectorOpen(false);
+      document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"]')?.focus({ preventScroll: true });
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [active, paperInfoOpen, settingsOpen, libraryOpen]);
 
   useEffect(() => {
     const media = window.matchMedia?.(compactLayoutQuery);
@@ -155,14 +203,14 @@ export function WorkspacePage() {
     function updateLayout(event: MediaQueryListEvent) {
       setCompactLayout(event.matches);
       setLibraryOpen(false);
-      setInspectorOpen(!event.matches);
+      if (!activeRef.current) setInspectorOpen(!event.matches);
     }
     media.addEventListener('change', updateLayout);
     return () => media.removeEventListener('change', updateLayout);
   }, []);
 
   useEffect(() => {
-    if (!compactLayout || !libraryOpen) return;
+    if (!drawerLayout || !libraryOpen) return;
     libraryRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
     function handleKey(event: KeyboardEvent) {
       if (event.key === 'Escape') setLibraryOpen(false);
@@ -184,7 +232,7 @@ export function WorkspacePage() {
       document.removeEventListener('keydown', handleKey);
       libraryButtonRef.current?.focus();
     };
-  }, [compactLayout, libraryOpen]);
+  }, [drawerLayout, libraryOpen]);
 
   const commitHistory = useCallback((next: NavigationHistory) => {
     historyRef.current = next;
@@ -250,9 +298,8 @@ export function WorkspacePage() {
     setSelection(next);
     setQuestion('');
     setNoteDraft('');
-    if (!compactLayout) setInspectorOpen(true);
     setInspectorTab('notes');
-  }, [compactLayout]);
+  }, []);
 
   function clearSelection() {
     selectionRef.current = null;
@@ -261,9 +308,50 @@ export function WorkspacePage() {
     setNoteDraft('');
   }
 
+  function hideReadingControls() {
+    setControlsVisible(false);
+    setInspectorOpen(false);
+  }
+
+  function toggleReadingControls() {
+    if (paperInfoOpen || settingsOpen || libraryOpen) return;
+    if (controlsVisible) hideReadingControls();
+    else setControlsVisible(true);
+  }
+
+  function closePaperInfo() {
+    setPaperInfoOpen(false);
+    hideReadingControls();
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"]')?.focus({ preventScroll: true }));
+  }
+
+  function showPaperInfo() {
+    setPaperInfoOpen(true);
+    hideReadingControls();
+  }
+
+  async function changeReaderDirection() {
+    if (orientationPending || !readerCapabilities.supports_orientation) return;
+    setOrientationPending(true);
+    try {
+      const next = readerOrientation === 'portrait' ? 'landscape' : 'portrait';
+      const actual = await setReaderOrientation(next);
+      if (mountedRef.current) {
+        setReaderOrientationState(actual);
+        setViewportKey((value) => value + 1);
+      }
+    } catch (cause) {
+      if (mountedRef.current) setNotice({ tone: 'error', message: `Could not change the viewing direction: ${String(cause)}` });
+    } finally {
+      if (mountedRef.current) setOrientationPending(false);
+    }
+  }
+
   function applyDocument(document: ActiveDocument, notes: Annotation[], nextHistory: NavigationHistory, location: ReadingLocation) {
     setLibraryOpen(false);
-    if (compactLayout) setInspectorOpen(false);
+    setInspectorOpen(false);
+    setPaperInfoOpen(false);
+    setControlsVisible(false);
     activeRef.current = document;
     setActive(document);
     setAnnotations(sortAnnotations(notes));
@@ -291,13 +379,22 @@ export function WorkspacePage() {
     setNotice(null);
     flushPosition();
     try {
-      const paper = cachedPaper ?? await openArxivPaper(input.trim(), operation.request_id);
+      const openedPaper = cachedPaper ?? await openArxivPaper(input.trim(), operation.request_id);
       if (sequence !== openSequenceRef.current || !mountedRef.current) return;
-      const [pdfData, notes] = await Promise.all([getPdfBytes(paper.paper_id), listAnnotations(paper.paper_id)]);
+      const [pdfData, notes] = await Promise.all([getPdfBytes(openedPaper.paper_id), listAnnotations(openedPaper.paper_id)]);
       if (sequence !== openSequenceRef.current || !mountedRef.current) return;
+      // Library buttons can retain a rendered snapshot while the latest passage
+      // is updated in the local cache. Resolve the resume position for every
+      // opening route after loading, including returning through a reference.
+      const cachedLocation = papersRef.current.find((paper) => paper.paper_id === openedPaper.paper_id)?.last_location;
+      const last_location = currentPositionRef.current?.paper_id === openedPaper.paper_id
+        ? currentPositionRef.current
+        : cachedLocation ?? openedPaper.last_location;
+      const paper = { ...openedPaper, last_location };
       const location = initialLocation(paper);
       const nextHistory = pushLocation(historyRef.current, location);
-      applyDocument({ paper, pdf_data: pdfData }, notes, nextHistory, location);
+      applyDocument({ paper, pdf_data: pdfData, initial_fit_width: !paper.last_location }, notes, nextHistory, location);
+      setPaperInfoOpen(true);
       storePapers([paper, ...papersRef.current.filter((existing) => existing.paper_id !== paper.paper_id)]);
       setArxivInput('');
       setLibraryError(null);
@@ -318,7 +415,8 @@ export function WorkspacePage() {
     if (!location || moved.current_index === historyRef.current.current_index) return;
     flushPosition();
     if (activeRef.current?.paper.paper_id === location.paper_id) {
-      if (compactLayout) setInspectorOpen(false);
+      hideReadingControls();
+      setPaperInfoOpen(false);
       commitHistory(moved);
       currentPositionRef.current = location;
       setTargetLocation(location);
@@ -341,7 +439,7 @@ export function WorkspacePage() {
     try {
       const [pdfData, notes] = await Promise.all([getPdfBytes(paper.paper_id), listAnnotations(paper.paper_id)]);
       if (sequence !== openSequenceRef.current || !mountedRef.current) return;
-      applyDocument({ paper, pdf_data: pdfData }, notes, { ...historyRef.current, current_index: moved.current_index }, location);
+      applyDocument({ paper, pdf_data: pdfData, initial_fit_width: false }, notes, { ...historyRef.current, current_index: moved.current_index }, location);
     } catch (cause) {
       if (sequence === openSequenceRef.current && mountedRef.current) setNotice({ tone: 'error', message: String(cause) });
     } finally {
@@ -355,7 +453,7 @@ export function WorkspacePage() {
 
   function jumpTo(location: ReadingLocation, anchor: PageAnchor | null = null) {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
-    if (compactLayout) setInspectorOpen(false);
+    hideReadingControls();
     flushPosition();
     commitHistory(pushLocation(historyRef.current, location));
     currentPositionRef.current = location;
@@ -581,19 +679,22 @@ export function WorkspacePage() {
   const pendingAnnotation = Boolean(annotationBusy || aiPending);
 
   return (
-    <div className={`app-shell ${libraryOpen ? 'library-is-open' : ''}`}>
-      <aside ref={libraryRef} id="paper-library" className="library-sidebar" aria-label="Paper library" role={compactLayout && libraryOpen ? 'dialog' : undefined} aria-modal={compactLayout && libraryOpen ? true : undefined}>
+    <div className={`app-shell ${active ? 'reading-mode' : ''} ${libraryOpen ? 'library-is-open' : ''} ${selection ? 'has-selection' : ''}`}>
+      <aside ref={libraryRef} id="paper-library" className="library-sidebar" aria-label="Paper library" role={drawerLayout && libraryOpen ? 'dialog' : undefined} aria-modal={drawerLayout && libraryOpen ? true : undefined} inert={paperInfoOpen || settingsOpen || (Boolean(active) && !libraryOpen)}>
         <button type="button" className="icon-button mobile-library-close" aria-label="Close paper library" onClick={() => setLibraryOpen(false)}><X size={20} /></button>
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); focusArxivInput(); }} aria-label="Papertrail, open a paper">
           <span className="brand-mark"><BookOpen size={21} strokeWidth={1.6} /></span>
           <span>Papertrail<span className="brand-caption">A place for curious minds</span></span>
         </a>
-        <button type="button" className="button add-paper-button" onClick={focusArxivInput}><Plus size={16} /> Add a paper <kbd>⌘ K</kbd></button>
+        {active ? <form className="library-import" onSubmit={submitImport}>
+          <label htmlFor="library-arxiv-input">Open another arXiv paper</label>
+          <div className="arxiv-form"><input id="library-arxiv-input" ref={arxivInputRef} value={arxivInput} onChange={(event) => setArxivInput(event.target.value)} aria-label="arXiv ID or URL" placeholder="Paper ID or arxiv.org link" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} /><button type="submit" className="import-button" disabled={!arxivInput.trim() || Boolean(opening)} aria-label="Open arXiv paper">{opening ? <LoaderCircle size={16} className="spin" /> : <ArrowRight size={16} />}</button></div>
+        </form> : <button type="button" className="button add-paper-button" onClick={focusArxivInput}><Plus size={16} /> Add a paper <kbd>⌘ K</kbd></button>}
         <div className="library-section-heading"><span>Your library</span><span className="count-pill">{papers.length}</span></div>
         <label className="library-search"><Search size={15} /><input type="search" placeholder="Find in your library" aria-label="Search your library" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} /></label>
         <div className="library-list">
           {libraryLoading ? <div className="sidebar-message"><LoaderCircle size={17} className="spin" /> Opening your library…</div> : libraryError ? <div className="library-error"><p>{libraryError}</p><button type="button" className="text-button" onClick={() => { void retryLibrary(); }}>Try again</button></div> : papers.length === 0 ? <div className="library-empty"><FolderOpen size={27} strokeWidth={1.4} /><p>A little room for<br />your next big idea.</p><span>Papers you open will live here.</span></div> : visiblePapers.length === 0 ? <p className="sidebar-message">No papers match “{searchInput}”.</p> : visiblePapers.map((paper) => (
-            <button type="button" key={paper.paper_id} className={`library-paper ${active?.paper.paper_id === paper.paper_id ? 'is-active' : ''}`} onClick={() => { void openPaper(paper.arxiv_id, { ...paper, last_location: currentPositionRef.current?.paper_id === paper.paper_id ? currentPositionRef.current : paper.last_location }); }} aria-current={active?.paper.paper_id === paper.paper_id ? 'page' : undefined}>
+            <button type="button" key={paper.paper_id} className={`library-paper ${active?.paper.paper_id === paper.paper_id ? 'is-active' : ''}`} onClick={() => { void openPaper(paper.arxiv_id, paper); }} aria-current={active?.paper.paper_id === paper.paper_id ? 'page' : undefined}>
               <span className="paper-library-title">{paper.title}</span>
               <span className="paper-library-authors">{authorLine(paper)}</span>
               <span className="paper-library-meta"><FileText size={11} /> {paper.arxiv_id} <span>v{paper.arxiv_version}</span></span>
@@ -603,8 +704,8 @@ export function WorkspacePage() {
         <div className="library-footer"><span className="local-dot" />{isNative ? 'Your library stays on this device' : 'App preview'}<span className="footer-detail"><WifiOff size={12} /> Cached papers are available offline</span></div>
       </aside>
 
-      <main className="workbench" inert={compactLayout && libraryOpen}>
-        <header className="workspace-toolbar">
+      <main className="workbench" inert={(drawerLayout && libraryOpen) || paperInfoOpen || settingsOpen}>
+        {!active && <header className="workspace-toolbar">
           <button ref={libraryButtonRef} type="button" className="icon-button mobile-library-toggle" aria-label="Open paper library" aria-controls="paper-library" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(true)}><Library size={20} /></button>
           <div className="history-controls">
             <button type="button" className="icon-button" aria-label="Go back to previous reading location" title="Back" disabled={!canGoBack(history) || Boolean(opening)} onClick={() => { void navigateHistory('back'); }}><ArrowLeft size={18} /></button>
@@ -620,24 +721,21 @@ export function WorkspacePage() {
             <button type="button" className={`icon-button ${inspectorOpen ? 'is-selected' : ''}`} onClick={() => setInspectorOpen((value) => !value)} aria-controls="paper-inspector" aria-expanded={inspectorOpen} aria-label={inspectorOpen ? 'Close references and notes panel' : 'Open references and notes panel'} title={inspectorOpen ? 'Close side panel' : 'Open side panel'}>{inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}</button>
             <button type="button" className="icon-button" aria-label="AI provider settings" title="AI provider settings" onClick={showSettings} disabled={!isNative}><Settings2 size={18} /></button>
           </div>
-        </header>
+        </header>}
+
+        {active && controlsVisible && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening)} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={() => { setInspectorOpen(false); setLibraryOpen(true); }} on_info={showPaperInfo} on_inspector={() => setInspectorOpen((value) => !value)} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_hide={hideReadingControls} />}
 
         {!isNative && <div className="runtime-banner"><span className="status-dot" /><span>This is the web preview. Paper downloads, local storage, and AI need the Papertrail app.</span></div>}
         {opening && <div className="operation-banner" role="status"><LoaderCircle size={15} className="spin" /><span>{progress?.message ?? `Opening ${opening.label}…`}</span>{progressPercent !== null && <span className="download-percent">{progressPercent}%</span>}<div className="operation-meter" style={{ width: `${progressPercent ?? 35}%` }} /></div>}
         {notice && <div className={`notice notice-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.tone === 'success' ? <Check size={15} /> : notice.tone === 'error' ? <CircleHelp size={15} /> : <CircleHelp size={15} />}<span>{notice.message}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
-        {compactLayout && selection && !inspectorOpen && <button type="button" className="mobile-selection-action" onClick={() => { setInspectorTab('notes'); setInspectorOpen(true); }}><Sparkles size={17} /><span>Ask AI or add a note to this passage</span><ChevronRight size={18} /></button>}
+        {active && selection && !inspectorOpen && !paperInfoOpen && <button type="button" className="mobile-selection-action" onClick={() => { setInspectorTab('notes'); setControlsVisible(true); setInspectorOpen(true); }}><Sparkles size={17} /><span>Ask AI or add a note to this passage</span><ChevronRight size={18} /></button>}
 
         <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">
-            {active ? <>
-              <div className="paper-heading">
-                <div className="paper-eyebrow"><span className="local-dot" /> In your library <span>arXiv:{active.paper.arxiv_id}v{active.paper.arxiv_version}</span></div>
-                <h1 title={active.paper.title}>{active.paper.title}</h1>
-                <div className="paper-author-line" title={active.paper.authors.join(', ')}>{authorLine(active.paper)}</div>
-              </div>
-              <div className="pdf-reader-mount"><PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} on_location_change={handleLocationChange} on_navigate={handleNavigate} on_selection={handleSelection} on_references={(items) => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) setReferences(items); }} on_error={(message) => setNotice({ tone: 'error', message })} /></div>
-            </> : <div className="reader-welcome">
+            {active ?
+              <div className="pdf-reader-mount" inert={inspectorOpen}><PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={toggleReadingControls} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!paperInfoOpen && !libraryOpen && !settingsOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={handleNavigate} on_selection={handleSelection} on_references={(items) => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) setReferences(items); }} on_error={(message) => setNotice({ tone: 'error', message })} /></div>
+            : <div className="reader-welcome">
               <div className="welcome-eyebrow"><span /> FOLLOW A THOUGHT</div>
               <h1>One paper.<br />A world of ideas.</h1>
               <p>Read a paper, follow its references,<br className="wide-break" /> and make the important passages your own.</p>
@@ -692,6 +790,7 @@ export function WorkspacePage() {
           </aside>}
         </div>
       </main>
+      {paperInfoOpen && active && <PaperInfoSheet paper={active.paper} resume={Boolean(active.paper.last_location)} on_close={closePaperInfo} on_open_source={() => { void openExternal(`https://arxiv.org/abs/${active.paper.arxiv_id}v${active.paper.arxiv_version}`).catch((cause) => setNotice({ tone: 'error', message: String(cause) })); }} />}
       {settingsOpen && <SettingsDialog settings={settings} on_close={closeSettings} on_saved={(saved) => { setSettings(saved); setSettingsOpen(false); setNotice({ tone: 'success', message: 'AI provider settings saved.' }); }} />}
     </div>
   );

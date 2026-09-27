@@ -18,6 +18,8 @@ The initializer creates `src-tauri/gen/apple/papertrail.xcodeproj`. That project
 
 The minimum OS is set in `src-tauri/tauri.ios.conf.json`. The reader uses PDF.js's legacy bundle, which includes compatibility polyfills; current PDF.js lists Safari 18+ support for this bundle in its [browser support guide](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions#which-browsersenvironments-are-supported).
 
+A scoped PDF text-stream adapter uses the stream reader API supported by Safari 18 instead of the async iteration required by PDF.js's ordinary text extraction path. It supplies the selectable text layer and bibliography parser without modifying browser stream APIs globally.
+
 ## Simulator
 
 Build the Apple Silicon simulator package:
@@ -78,13 +80,26 @@ xcrun devicectl device install app --device DEVICE_ID /private/tmp/papertrail-ip
 
 Use the device identifier from the first command. Direct installation does not publish an app to the App Store or TestFlight. Distribution through those services is a separate signing and submission workflow.
 
+If the phone asks you to trust the developer after installation, open Settings → General → VPN & Device Management, select the signing account under Developer App, and follow the trust prompts. Developer trust and Developer Mode are separate steps; complete whichever the phone requests before reopening Papertrail.
+
 ## Packages built on this Mac
 
 - Simulator: `src-tauri/gen/apple/build/arm64-sim/Papertrail.app`, installed and launch-tested on the iPhone 16 simulator.
-- iPhone: `src-tauri/gen/apple/build/iphone/Papertrail.ipa`, signed for the paired iPhone 16. Use this package in place of the generic `arm64` path in the installation commands above.
-- The current development provisioning profile expires on October 4, 2026. Rebuild and reinstall with renewed provisioning after expiry. This package is not signed for arbitrary other phones.
+- iPhone: `src-tauri/gen/apple/build/iphone/Papertrail.ipa`. Use this package in place of the generic `arm64` path in the installation commands above. Development packages are restricted to the devices covered by their provisioning profile and must be rebuilt and reinstalled when that profile expires.
 
-The physical phone has not been modified or used for interaction testing by this build task.
+The updated simulator build was installed without uninstalling the app, and its cached library survived. Native simulator checks verified the immersive flow with real papers, portrait/landscape changes, reference following, and Back/Forward. The updated signed IPA contains the current frontend assets and passes strict signature verification. Physical-device installation and interaction testing were not performed for this update.
+
+## Reading on iPhone
+
+Opening a paper from an arXiv ID, the library, or a reference presents its title, full author list, arXiv ID and version, abstract, and the date the local copy was cached. The cached date is not a publication date. Tap **Read paper** or **Resume reading** to close this sheet and read with the PDF filling the screen.
+
+Tap a page to show the reading overlay, then tap again or use its close button to hide it. Scrolling, following a PDF link, and selecting text retain their normal behavior. The overlay provides the library, **Info**, **Refs & notes**, AI settings, and Back/Forward. The bottom PDF controls provide page navigation, zoom, fit width, and PDF rotation.
+
+Use **Landscape** or **Portrait** in the top overlay to switch the viewer's native screen orientation. This is separate from **Rotate clockwise**, which rotates the PDF pages without changing the phone's screen orientation. The reader keeps the current paper and reading location when its viewport changes.
+
+Back and Forward return directly to the saved PDF location, including across papers; they do not show the paper information sheet again. Use **Info** whenever you want to revisit the abstract or metadata.
+
+Long-press PDF text, adjust the native selection handles, and tap **Ask AI or add a note to this passage**. References and notes open over the reader. Close that panel or hide the reading controls to continue reading. The PDF stays loaded while information and controls are shown.
 
 ## Development and storage
 
@@ -94,4 +109,4 @@ The phone has its own sandboxed library; desktop papers are not automatically co
 
 For AI, configure an HTTPS endpoint reachable from the phone. `127.0.0.1` on an iPhone refers to the iPhone, not your Mac. The existing provider policy permits HTTP only for loopback addresses, so a Mac's plain HTTP LAN endpoint is not currently accepted.
 
-On a phone, open the library from the top-left button. References and notes occupy the reader area when their panel is open. Long-press PDF text, adjust the native selection handles, and tap “Ask AI or add a note to this passage”. Close the panel to return to reading.
+To open another paper while reading, tap a page to reveal the controls and use the top-left library button.

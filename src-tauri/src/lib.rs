@@ -6,6 +6,7 @@ mod error;
 mod export;
 mod http;
 mod models;
+mod reader;
 mod references;
 mod state;
 mod storage;
@@ -23,7 +24,9 @@ pub fn run() {
         .build(),
     );
   #[cfg(target_os = "ios")]
-  let builder = builder.plugin(tauri_plugin_papertrail_export::init());
+  let builder = builder
+    .plugin(tauri_plugin_papertrail_export::init())
+    .plugin(tauri_plugin_papertrail_reader::init());
   builder
     .setup(|app| {
       let directory = app.path().app_data_dir()?;
@@ -45,6 +48,8 @@ pub fn run() {
       commands::resolve_reference,
       commands::open_external,
       commands::save_annotation_file,
+      commands::reader_capabilities,
+      commands::set_reader_orientation,
     ])
     .run(tauri::generate_context!())
     .expect("Could not start Papertrail");
