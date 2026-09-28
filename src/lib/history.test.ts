@@ -39,4 +39,45 @@ describe('paper navigation', () => {
     expect(goForward(history)).toBe(history);
     expect(currentLocation(createHistory())).toBeNull();
   });
+
+  it('returns from an original-PDF jump to the reordered reading block and forward again', () => {
+    const reading: ReadingLocation = {
+      ...location('a', 6), reader_mode: 'reading', reading_block_id: 'page-6-figure-2',
+      page_position: [0.1, 0.3], zoom_mode: 'fit_width',
+    };
+    const original: ReadingLocation = {
+      ...location('a', 6), reader_mode: 'pdf', reading_block_id: null,
+      page_position: [0.2, 0.75], zoom: 1.8, zoom_mode: 'custom', rotation: 90,
+    };
+    let history = createHistory(reading);
+    history = pushLocation(history, original);
+    const scrolledOriginal = { ...original, page_position: [0.25, 0.8] as [number, number] };
+    history = updateCurrent(history, scrolledOriginal);
+    history = goBack(history);
+    expect(currentLocation(history)).toEqual(reading);
+    expect(currentLocation(goForward(history))).toEqual(scrolledOriginal);
+    original.page_position[0] = 1;
+    reading.page_position[0] = 1;
+    expect(currentLocation(history)?.page_position).toEqual([0.1, 0.3]);
+  });
+
+  it('preserves each paper’s reader mode and block through citation navigation', () => {
+    const reading: ReadingLocation = {
+      ...location('a', 8), reader_mode: 'reading', reading_block_id: 'page-8-text-3',
+    };
+    const citation: ReadingLocation = {
+      ...location('b', 3), reader_mode: 'reading', reading_block_id: 'page-3-text-1',
+    };
+    let history = pushLocation(createHistory(reading), citation);
+    history = pushLocation(history, { ...location('c'), reader_mode: 'pdf' });
+    history = goBack(history);
+    expect(currentLocation(history)).toEqual(citation);
+    expect(currentLocation(goBack(history))).toEqual(reading);
+
+    const laterPassage: ReadingLocation = { ...citation, reading_block_id: 'page-3-text-2' };
+    history = updateCurrent(history, laterPassage);
+    history = goForward(history);
+    expect(currentLocation(history)?.reader_mode).toBe('pdf');
+    expect(currentLocation(goBack(history))).toEqual(laterPassage);
+  });
 });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AiAnswer, Paper, PdfReaderProps, SelectionContext } from '../lib/types';
+import type { AiAnswer, Paper, PdfReaderProps, ReadingLocation, SelectionContext } from '../lib/types';
 import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
@@ -79,6 +79,18 @@ async function openFirst() {
 function openSelection() {
   fireEvent.click(screen.getByRole('button', { name: 'Select passage' }));
   fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+}
+
+async function openReadingBlock(): Promise<ReadingLocation> {
+  await openFirst();
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to Reading view' }));
+  const location: ReadingLocation = {
+    paper_id: first.paper_id, page_number: 6, page_position: [0.15, 0.7],
+    zoom: 1.4, zoom_mode: 'custom', rotation: 0,
+    reader_mode: 'reading', reading_block_id: 'page-6-figure-2',
+  };
+  act(() => lastReader.on_location_change(location));
+  return location;
 }
 
 describe('assembled paper workspace', () => {
@@ -213,6 +225,98 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Go forward to next reading location' }));
     expect(lastReader.target_location?.page_number).toBe(12);
+  });
+
+  it('restores Reading view blocks and original PDF positions with Back and Forward', async () => {
+    const readingLocation = await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to original PDF' }));
+    expect(lastReader.target_location).toMatchObject({
+      reader_mode: 'pdf', reading_block_id: null,
+      page_number: 6, page_position: readingLocation.page_position, zoom_mode: 'fit_width',
+    });
+    expect(backend.saveReadingPosition).toHaveBeenCalledWith(readingLocation);
+    const originalLocation: ReadingLocation = {
+      ...readingLocation, reader_mode: 'pdf', reading_block_id: null,
+      page_position: [0.2, 0.8], zoom: 1.8, rotation: 90,
+    };
+    act(() => lastReader.on_location_change(originalLocation));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location).toEqual(readingLocation);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect(screen.getByRole('button', { name: 'Switch to original PDF' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Go forward to next reading location' }));
+    expect(lastReader.target_location).toEqual(originalLocation);
+  });
+
+  it('ignores delayed location reports from the previous reader mode', async () => {
+    const readingLocation = await openReadingBlock();
+    const stalePdfReport: ReadingLocation = {
+      ...readingLocation, reader_mode: 'pdf', reading_block_id: null, page_number: 99,
+    };
+    act(() => lastReader.on_location_change(stalePdfReport));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to original PDF' }));
+    expect(lastReader.target_location?.page_number).toBe(6);
+    const target = lastReader.target_location;
+    act(() => lastReader.on_location_change({ ...readingLocation, page_number: 98 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect(screen.getByRole('button', { name: 'Switch to Reading view' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location).toEqual(readingLocation);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go forward to next reading location' }));
+    expect(lastReader.target_location).toEqual(target);
+  });
+
+  it('returns to a Reading view block after following a citation to another paper', async () => {
+    const readingLocation = await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    expect(lastReader.target_location).toEqual(readingLocation);
+    expect(screen.queryByRole('dialog', { name: 'First paper' })).toBeNull();
+  });
+
+  it('clears the old Reading view block when jumping to a saved annotation', async () => {
+    const readingLocation = await openReadingBlock();
+    openSelection();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a note' }));
+    fireEvent.change(screen.getByLabelText('Note for this selection'), { target: { value: 'A reading-view note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await screen.findByText('A reading-view note');
+    fireEvent.click(screen.getByRole('button', { name: /Selected passage/ }));
+    expect(lastReader.target_location).toMatchObject({
+      reader_mode: 'reading', reading_block_id: null, page_number: 4, page_position: [0, 0],
+    });
+    expect(lastReader.target_anchor).toEqual(selection.page_anchors[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location).toEqual(readingLocation);
+    expect(lastReader.target_anchor).toBeNull();
+  });
+
+  it('clears the old Reading view block when jumping to a bibliography page', async () => {
+    const readingLocation = await openReadingBlock();
+    act(() => lastReader.on_references([{
+      reference_id: 'reference-12', citation_text: 'An interesting related paper',
+      page_number: 12, arxiv_id: null, doi: null, url: null,
+    }]));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to reference on page 12' }));
+    expect(lastReader.target_location).toMatchObject({
+      reader_mode: 'reading', reading_block_id: null, page_number: 12, page_position: [0, 0],
+    });
+    expect(lastReader.target_anchor).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location).toEqual(readingLocation);
   });
 
   it('keeps the current paper and history when a destination fails', async () => {

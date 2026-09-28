@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PdfReaderProps, ReadingLocation } from '../lib/types';
+import type { PdfReaderProps, ReadingLayout, ReadingLocation } from '../lib/types';
 import { PdfReader } from './PdfReader';
 
 interface MockRenderRequest {
@@ -29,6 +29,16 @@ const pdf_fixture = vi.hoisted(() => ({
   text_requests: [] as Array<{ page_number: number; complete: () => void }>,
   text_layer_starts: [] as Array<{ scale: number; rotation: number }>,
   canvas_copies: [] as CanvasCopy[],
+  text_content: new Map<number, Array<{ str: string; transform: number[]; width: number; height: number; fontName: string; dir: string; hasEOL: boolean }>>(),
+}));
+
+const reading_fixture = vi.hoisted(() => ({ layout: null as ReadingLayout | null }));
+
+vi.mock('../lib/use-reading-layout', () => ({
+  useReadingLayout: (pages: unknown, _hash: string, _paper_id: string, enabled: boolean) => ({
+    layout: pages && enabled ? reading_fixture.layout : null,
+    progress: { completed: 0, total: 4 }, error: null, retry: vi.fn(),
+  }),
 }));
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
@@ -36,10 +46,15 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
     GlobalWorkerOptions: {},
     RenderingCancelledException: class extends Error {},
     TextLayer: class {
-      constructor({ container, viewport }: { container: HTMLElement; viewport: { scale: number; rotation: number } }) {
+      constructor({ container, viewport, textContentSource }: { container: HTMLElement; viewport: { scale: number; rotation: number }; textContentSource: { items: Array<{ str: string }> } }) {
         pdf_fixture.text_layer_starts.push({ scale: viewport.scale, rotation: viewport.rotation });
         container.style.setProperty('--min-font-size', '1.4');
         container.setAttribute('data-main-rotation', String(viewport.rotation));
+        for (const item of textContentSource.items) {
+          const span = document.createElement('span');
+          span.textContent = item.str;
+          container.append(span);
+        }
       }
       render() { return Promise.resolve(); }
       cancel() {}
@@ -47,20 +62,24 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
     getDocument: () => {
       const pages = pdf_fixture.page_sizes.map(({ width, height }, index) => ({
         pageNumber: index + 1, rotate: 0, userUnit: 1, view: [0, 0, width, height],
-        getViewport: ({ scale, rotation = 0 }: { scale: number; rotation?: number }) => {
+        getViewport: ({ scale, rotation = 0, offsetX = 0, offsetY = 0 }: { scale: number; rotation?: number; offsetX?: number; offsetY?: number }) => {
           const pointToViewport = (x: number, y: number): [number, number] => {
+            let point: [number, number];
             switch (rotation) {
-              case 90: return [y * scale, x * scale];
-              case 180: return [(width - x) * scale, y * scale];
-              case 270: return [(height - y) * scale, (width - x) * scale];
-              default: return [x * scale, (height - y) * scale];
+              case 90: point = [y * scale, x * scale]; break;
+              case 180: point = [(width - x) * scale, y * scale]; break;
+              case 270: point = [(height - y) * scale, (width - x) * scale]; break;
+              default: point = [x * scale, (height - y) * scale];
             }
+            return [point[0] + offsetX, point[1] + offsetY];
           };
           return {
             width: (rotation % 180 ? height : width) * scale,
             height: (rotation % 180 ? width : height) * scale,
             scale, rotation,
             convertToPdfPoint: (x: number, y: number) => {
+              x -= offsetX;
+              y -= offsetY;
               switch (rotation) {
                 case 90: return [y / scale, x / scale];
                 case 180: return [width - x / scale, y / scale];
@@ -75,7 +94,7 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
         getTextContent: async () => ({ items: [], styles: {} }),
         streamTextContent: () => new ReadableStream({
           start(controller) {
-            const complete = () => { controller.enqueue({ items: [], styles: {}, lang: null }); controller.close(); };
+            const complete = () => { controller.enqueue({ items: pdf_fixture.text_content.get(index + 1) ?? [], styles: {}, lang: null }); controller.close(); };
             pdf_fixture.text_requests.push({ page_number: index + 1, complete });
             if (!pdf_fixture.defer_text) complete();
           },
@@ -169,6 +188,8 @@ beforeEach(() => {
   pdf_fixture.text_requests = [];
   pdf_fixture.text_layer_starts = [];
   pdf_fixture.canvas_copies = [];
+  pdf_fixture.text_content.clear();
+  reading_fixture.layout = null;
   vi.stubGlobal('devicePixelRatio', 1);
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
     return { drawImage: (source: HTMLCanvasElement) => {
@@ -191,7 +212,13 @@ beforeEach(() => {
       this.isPrimary = options.isPrimary ?? true;
     }
   });
-  vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} });
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) {
+      if (reading_fixture.layout) this.callback([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+    }
+    disconnect() {}
+  });
   vi.stubGlobal('ResizeObserver', class {
     callback: () => void;
     constructor(callback: () => void) { this.callback = callback; resize_callbacks.add(callback); }
@@ -329,6 +356,143 @@ async function advancePreviewFrame(duration = 16) {
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
 }
 
+function readingProps(block_id = 'p1-body'): PdfReaderProps {
+  reading_fixture.layout = {
+    layout_version: 1, pdf_hash: 'a'.repeat(64), page_count: 4,
+    blocks: [
+      { block_id: 'p1-intro', page_number: 1, source_rect: [60, 540, 300, 740], kind: 'text', text: 'Introduction', figure_label: null },
+      { block_id: 'p2-figure', page_number: 2, source_rect: [60, 380, 540, 700], kind: 'figure', text: 'Figure 1', figure_label: 'Figure 1' },
+      { block_id: 'p1-body', page_number: 1, source_rect: [320, 100, 560, 700], kind: 'text', text: 'Body paragraph', figure_label: null },
+      { block_id: 'p2-body', page_number: 2, source_rect: [60, 80, 300, 330], kind: 'text', text: 'Later paragraph', figure_label: null },
+      { block_id: 'p3-original', page_number: 3, source_rect: [0, 0, 600, 800], kind: 'original', text: '', figure_label: null },
+    ],
+  };
+  return readerProps({
+    paper_id: '1706.03762v7', page_number: 1, reader_mode: 'reading', reading_block_id: block_id,
+    page_position: block_id === 'p1-body' ? [320 / 600, 0.5] : [60 / 600, 60 / 800],
+    zoom: 1, zoom_mode: 'fit_width', rotation: 0,
+  });
+}
+
+function readingBlock(block_id: string): HTMLElement {
+  return document.querySelector<HTMLElement>(`[data-block-id="${block_id}"]`)!;
+}
+
+function croppedPdfPointAt(block_id: string, client_x: number, client_y: number): [number, number] {
+  const bounds = readingBlock(block_id).getBoundingClientRect();
+  const [left, bottom, right, top] = reading_fixture.layout!.blocks.find((block) => block.block_id === block_id)!.source_rect;
+  return [left + (client_x - bounds.left) / bounds.width * (right - left), top - (client_y - bounds.top) / bounds.height * (top - bottom)];
+}
+
+describe('optional Reading view', () => {
+  it('restores a specific crop when a moved figure separates two blocks from the same page', async () => {
+    const props = readingProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props)).toMatchObject({ reader_mode: 'reading', reading_block_id: 'p1-body', page_number: 1, zoom_mode: 'fit_width' }));
+    expect(latestLocation(props).page_position[1]).toBeCloseTo(0.5);
+    const blocks = [...screen.getByLabelText('Scrollable reading view').querySelectorAll<HTMLElement>('[data-block-id]')];
+    expect(blocks.map((block) => block.dataset.blockId)).toEqual(['p1-intro', 'p2-figure', 'p1-body', 'p2-body', 'p3-original']);
+    expect(parseFloat(readingBlock('p1-body').style.width)).toBeCloseTo(336);
+
+    const reports = vi.mocked(props.on_location_change).mock.calls.length;
+    resizeViewport(840);
+    await waitFor(() => expect(vi.mocked(props.on_location_change).mock.calls.length).toBeGreaterThan(reports));
+    expect(latestLocation(props)).toMatchObject({ reader_mode: 'reading', reading_block_id: 'p1-body', page_number: 1, zoom: 1 });
+    expect(latestLocation(props).page_position[1]).toBeCloseTo(0.5);
+    expect(parseFloat(readingBlock('p1-body').style.width)).toBeCloseTo(760);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('opens the figure source in PDF and restores the same reading block through history', async () => {
+    const props = readingProps();
+    const view = render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+    const reading_location = latestLocation(props);
+    fireEvent.click(screen.getByRole('button', { name: 'View Figure 1 in PDF on page 2' }));
+    const navigation = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
+    if (navigation.kind !== 'internal') throw new Error('Expected an original-PDF destination');
+    expect(navigation.location).toMatchObject({ reader_mode: 'pdf', reading_block_id: null, page_number: 2, page_position: [0.1, 0.125], zoom_mode: 'fit_width' });
+    view.rerender(<PdfReader {...props} target_location={navigation.location} navigation_key={2} />);
+    await waitFor(() => expect(latestLocation(props)).toMatchObject({ reader_mode: 'pdf', page_number: 2 }));
+    expect(screen.getByLabelText('Scrollable PDF pages')).toBeTruthy();
+    expect(latestLocation(props).page_position[1]).toBeCloseTo(0.125);
+
+    view.rerender(<PdfReader {...props} target_location={reading_location} navigation_key={3} />);
+    await waitFor(() => expect(latestLocation(props)).toMatchObject({ reader_mode: 'reading', page_number: 1, reading_block_id: 'p1-body' }));
+    expect(latestLocation(props).page_position[1]).toBeCloseTo(reading_location.page_position[1]);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('previews a cropped-block pinch without PDF work and commits its source anchor sharply', async () => {
+    const props = readingProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+    const page = readingBlock('p1-body');
+    await waitFor(() => expect(page.querySelector<HTMLElement>('.textLayer')!.hidden).toBe(false));
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    const anchor = croppedPdfPointAt('p1-body', 180, 180);
+    const baseline = heavyWork(props);
+    const canvas = page.querySelector<HTMLCanvasElement>('canvas')!;
+    const original_pixels = canvas.width;
+    vi.useFakeTimers();
+    dispatchTouch(scroll, 'touchstart', [{ identifier: 1, clientX: 140, clientY: 180 }, { identifier: 2, clientX: 220, clientY: 180 }]);
+    for (let index = 1; index <= 20; index += 1) {
+      const distance = 80 * (1 + index / 40);
+      dispatchTouch(scroll, 'touchmove', [{ identifier: 1, clientX: 180 - distance / 2, clientY: 180 }, { identifier: 2, clientX: 180 + distance / 2, clientY: 180 }]);
+      await advancePreviewFrame();
+      expect(heavyWork(props)).toEqual(baseline);
+      const point = croppedPdfPointAt('p1-body', 180, 180);
+      expect(point[0]).toBeCloseTo(anchor[0]);
+      expect(point[1]).toBeCloseTo(anchor[1]);
+    }
+    dispatchTouch(scroll, 'touchend', []);
+    await advancePreviewFrame();
+    expect(latestLocation(props)).toMatchObject({ reader_mode: 'reading', reading_block_id: 'p1-body', zoom: 1.5, zoom_mode: 'custom' });
+    const point = croppedPdfPointAt('p1-body', 180, 180);
+    expect(point[0]).toBeCloseTo(anchor[0]);
+    expect(point[1]).toBeCloseTo(anchor[1]);
+    expect(canvas.width).toBeGreaterThan(original_pixels);
+    expect(canvas.width).toBe(Math.floor(parseFloat(page.style.width)));
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('anchors a cross-block selection in display order without losing repeated source pages', async () => {
+    const props = readingProps('p1-intro');
+    const item = (str: string, x: number, y: number) => ({ str, transform: [10, 0, 0, 10, x, y], width: 100, height: 10, fontName: 'body', dir: 'ltr', hasEOL: false });
+    pdf_fixture.text_content.set(1, [item('Introduction', 80, 650), item('Body paragraph', 340, 650)]);
+    pdf_fixture.text_content.set(2, [item('Figure 1', 100, 500)]);
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(readingBlock('p1-body')?.querySelector('.textLayer')?.textContent).toBe('Body paragraph'));
+    const range = document.createRange();
+    const first = readingBlock('p1-intro').querySelector('.textLayer span')!.firstChild!;
+    const last = readingBlock('p1-body').querySelector('.textLayer span')!.firstChild!;
+    range.setStart(first, 0);
+    range.setEnd(last, last.textContent!.length);
+    const original_rects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects');
+    Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: function (this: Range) {
+      const element = this.startContainer instanceof HTMLElement ? this.startContainer : this.startContainer.parentElement!;
+      const bounds = element.closest<HTMLElement>('[data-block-id]')!.getBoundingClientRect();
+      return [{ left: bounds.left + 20, top: bounds.top + 20, right: bounds.left + 120, bottom: bounds.top + 30 }];
+    } });
+    try {
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      fireEvent.keyUp(screen.getByLabelText('Scrollable reading view'), { key: 'Shift' });
+      const selected = vi.mocked(props.on_selection).mock.calls.at(-1)![0];
+      expect(selected?.selected_text).toBe('Introduction\nFigure 1\nBody paragraph');
+      expect(selected?.page_anchors.map((anchor) => anchor.page_number)).toEqual([1, 2, 1]);
+      expect(selected?.page_anchors[0].quad_points[0][0]).toBeLessThan(300);
+      expect(selected?.page_anchors[2].quad_points[0][0]).toBeGreaterThan(320);
+      selection.removeAllRanges();
+    } finally {
+      if (original_rects) Object.defineProperty(Range.prototype, 'getClientRects', original_rects);
+      else delete (Range.prototype as Partial<Range>).getClientRects;
+    }
+  });
+});
+
 describe('immersive PDF view', () => {
   it('fits a new paper, refits on resize, and preserves manual zoom', async () => {
     // Location reports run after layout in an animation frame. Drive those
@@ -382,7 +546,7 @@ describe('immersive PDF view', () => {
     const saved: ReadingLocation = { paper_id: '1706.03762v7', page_number: 2, page_position: [0.2, 0.5], zoom: 1.4, rotation: 0 };
     const props = readerProps(saved);
     render(<PdfReader {...props} />);
-    await waitFor(() => expect(latestLocation(props)).toEqual({ ...saved, zoom_mode: 'custom' }));
+    await waitFor(() => expect(latestLocation(props)).toEqual({ ...saved, zoom_mode: 'custom', reader_mode: 'pdf' }));
     const reports_before_resize = vi.mocked(props.on_location_change).mock.calls.length;
     resizeViewport(840);
     await waitFor(() => expect(vi.mocked(props.on_location_change).mock.calls.length).toBeGreaterThan(reports_before_resize));

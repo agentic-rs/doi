@@ -1,0 +1,83 @@
+.reading-pages { background: #f4f3ed; gap: 12px; }
+.reading-block { position: relative; flex: none; margin-inline: auto; max-width: none; background: white; }
+.reading-block .pdf-page { box-shadow: none; }
+.reading-block .pdf-page-label { display: none; }
+.reading-block-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 8px;
+  color: #677872;
+  font-size: 11px;
+  user-select: none;
+}
+.reading-block-actions > span { margin-right: auto; }
+.reading-block-actions button, .figure-dialog-toolbar button, .pdf-loading button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 5px;
+  min-height: 44px;
+  min-width: 44px;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: #245b54;
+  background: #f8f8f3;
+  font: inherit;
+  cursor: pointer;
+}
+.reading-block-actions button:hover, .figure-dialog-toolbar button:hover, .pdf-loading button:hover { background: #e3ede5; }
+.reading-block-actions button:focus-visible, .figure-dialog-toolbar button:focus-visible { outline: 2px solid #2c8179; outline-offset: 2px; }
+.figure-dialog {
+  position: fixed;
+  inset: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+  width: calc(100% - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  max-width: 1200px;
+  height: calc(100% - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-height: 100%;
+  margin: auto;
+  padding: 0;
+  border: 1px solid #cdd8d0;
+  border-radius: 14px;
+  color: #344548;
+  background: #f8f8f3;
+  box-shadow: 0 20px 80px #132d3944;
+  touch-action: pan-x pan-y;
+}
+.figure-dialog[open] { display: flex; flex-direction: column; }
+.figure-dialog::backdrop { background: #142c36b3; }
+.figure-dialog-toolbar { display: flex; flex: none; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid #d8ded8; }
+.figure-dialog-toolbar strong { margin-right: auto; font-size: 14px; }
+.figure-dialog-toolbar small { font-size: 11px; font-weight: normal; }
+.figure-dialog-toolbar button:disabled { opacity: .4; cursor: default; }
+.figure-dialog-scroll { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 16px; touch-action: pan-x pan-y; overflow-anchor: none; }
+.figure-dialog-scroll[data-zoom-preview] { overflow: hidden; }
+.figure-dialog-scroll[data-zoom-preview] .pdf-page-wrap { pointer-events: none; }
+.figure-dialog-scroll .pdf-page-label { display: none; }
+@media (max-width: 480px) {
+  .figure-dialog-toolbar button span { display: none; }
+  .reading-block-actions { gap: 2px; padding-inline: 0; }
+}
+/* Keep cropped prose continuous; its source action appears with the reader
+   controls or keyboard focus without adding a toolbar between paragraphs. */
+.reading-block:not(.reading-block-figure) .reading-block-actions {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  border-radius: 8px;
+  background: #f8f8f3f5;
+  box-shadow: 0 2px 8px #203a391a;
+  opacity: 0;
+  pointer-events: none;
+}
+.reading-block:not(.reading-block-figure) .reading-block-actions > span { display: none; }
+.reading-pages-controls .reading-block .reading-block-actions,
+.reading-block:focus-within .reading-block-actions { opacity: 1; pointer-events: auto; }
+@media (hover: hover) {
+  .reading-block:hover .reading-block-actions { opacity: 1; pointer-events: auto; }
+}

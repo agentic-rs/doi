@@ -91,3 +91,7 @@ Accept PDF.js if these checks pass. Consider a native-engine comparison if a con
 - [PDFium rendering and threading contract](https://pdfium.googlesource.com/pdfium/+/refs/heads/main/public/fpdfview.h)
 - [MuPDF structured text and quadrilaterals](https://mupdf.readthedocs.io/en/latest/reference/javascript/types/StructuredText.html)
 - [MuPDF licensing](https://mupdf.com/releases)
+
+## Reading view
+
+The optional Reading view crops and rearranges PDF source rectangles while retaining original annotation coordinates. See [layout decisions](reader-decisions.md) for detection, caching, figure placement, and fallback behavior.

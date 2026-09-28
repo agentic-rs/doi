@@ -1,4 +1,24 @@
 export type PdfZoomMode = 'fit_width' | 'custom';
+export type ReaderMode = 'pdf' | 'reading';
+
+// Source rectangles are [left, bottom, right, top] in PDF user space.
+export type PdfSourceRect = [number, number, number, number];
+
+export interface ReadingBlock {
+  block_id: string;
+  page_number: number;
+  source_rect: PdfSourceRect;
+  kind: 'text' | 'figure' | 'original';
+  text: string;
+  figure_label: string | null;
+}
+
+export interface ReadingLayout {
+  layout_version: 1;
+  pdf_hash: string;
+  page_count: number;
+  blocks: ReadingBlock[];
+}
 
 export interface ReadingLocation {
   paper_id: string;
@@ -9,6 +29,8 @@ export interface ReadingLocation {
   // Older saved locations have only a numeric zoom and retain custom scaling.
   zoom_mode?: PdfZoomMode;
   rotation: number;
+  reader_mode?: ReaderMode;
+  reading_block_id?: string | null;
 }
 
 export type ReaderOrientation = 'portrait' | 'landscape';

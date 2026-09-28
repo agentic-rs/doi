@@ -7,6 +7,7 @@ mod export;
 mod http;
 mod models;
 mod reader;
+mod reading_layout;
 mod references;
 mod state;
 mod storage;
@@ -39,6 +40,8 @@ pub fn run() {
       commands::list_papers,
       commands::get_pdf_bytes,
       commands::save_reading_position,
+      commands::get_reading_layout,
+      commands::save_reading_layout,
       commands::list_annotations,
       commands::save_annotation,
       commands::delete_annotation,

@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AiAnswer, AiRequest, AiSettings, Annotation, OperationProgress, Paper,
-  ReaderCapabilities, ReaderOrientation, ReadingLocation, ReferenceCandidate,
+  ReaderCapabilities, ReaderOrientation, ReadingLayout, ReadingLocation, ReferenceCandidate,
 } from './types';
 
 export const nativeAvailable = isTauri;
@@ -13,6 +13,10 @@ export const getPdfBytes = async (paper_id: string) =>
   new Uint8Array(await invoke<ArrayBuffer>('get_pdf_bytes', { paper_id }));
 export const saveReadingPosition = (location: ReadingLocation) =>
   invoke<void>('save_reading_position', { location });
+export const getReadingLayout = (paper_id: string, layout_version: number) =>
+  invoke<ReadingLayout | null>('get_reading_layout', { paper_id, layout_version });
+export const saveReadingLayout = (paper_id: string, layout: ReadingLayout) =>
+  invoke<void>('save_reading_layout', { paper_id, layout });
 export const listAnnotations = (paper_id: string) =>
   invoke<Annotation[]>('list_annotations', { paper_id });
 export const saveAnnotation = (annotation: Annotation) =>

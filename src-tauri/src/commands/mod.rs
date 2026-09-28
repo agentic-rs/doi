@@ -39,6 +39,27 @@ pub async fn save_reading_position(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn get_reading_layout(
+  state: State<'_, AppState>,
+  paper_id: String,
+  layout_version: u32,
+) -> Result<Option<ReadingLayout>> {
+  state
+    .database
+    .get_reading_layout(paper_id, layout_version)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn save_reading_layout(
+  state: State<'_, AppState>,
+  paper_id: String,
+  layout: ReadingLayout,
+) -> Result<()> {
+  state.database.save_reading_layout(paper_id, layout).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn list_annotations(
   state: State<'_, AppState>,
   paper_id: String,

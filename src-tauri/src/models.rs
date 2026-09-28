@@ -8,6 +8,14 @@ pub enum PdfZoomMode {
   Custom,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReaderMode {
+  #[default]
+  Pdf,
+  Reading,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ReadingLocation {
   pub paper_id: String,
@@ -17,6 +25,37 @@ pub struct ReadingLocation {
   #[serde(default)]
   pub zoom_mode: PdfZoomMode,
   pub rotation: i32,
+  #[serde(default)]
+  pub reader_mode: ReaderMode,
+  #[serde(default)]
+  pub reading_block_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingBlockKind {
+  Text,
+  Figure,
+  Original,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ReadingBlock {
+  pub block_id: String,
+  pub page_number: u32,
+  /// [left, bottom, right, top] in the original PDF's user space.
+  pub source_rect: [f64; 4],
+  pub kind: ReadingBlockKind,
+  pub text: String,
+  pub figure_label: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ReadingLayout {
+  pub layout_version: u32,
+  pub pdf_hash: String,
+  pub page_count: u32,
+  pub blocks: Vec<ReadingBlock>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -136,6 +175,8 @@ mod tests {
     });
     let location: ReadingLocation = serde_json::from_value(legacy.clone()).unwrap();
     assert_eq!(location.zoom_mode, PdfZoomMode::Custom);
+    assert_eq!(location.reader_mode, ReaderMode::Pdf);
+    assert_eq!(location.reading_block_id, None);
     assert_eq!(location.zoom, 1.35);
     assert_eq!(
       serde_json::to_value(location).unwrap()["zoom_mode"],

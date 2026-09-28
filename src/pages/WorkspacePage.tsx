@@ -192,7 +192,7 @@ export function WorkspacePage() {
       if (event.key !== 'Escape' || event.defaultPrevented || !active || paperInfoOpen || settingsOpen || libraryOpen) return;
       setControlsVisible(false);
       setInspectorOpen(false);
-      document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"]')?.focus({ preventScroll: true });
+      document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"], [aria-label="Scrollable reading view"]')?.focus({ preventScroll: true });
     }
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
@@ -284,6 +284,7 @@ export function WorkspacePage() {
 
   const handleLocationChange = useCallback((location: ReadingLocation) => {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
+    if ((location.reader_mode ?? 'pdf') !== (currentPositionRef.current?.reader_mode ?? 'pdf')) return;
     currentPositionRef.current = location;
     commitHistory(updateCurrent(historyRef.current, location));
     papersRef.current = papersRef.current.map((paper) => paper.paper_id === location.paper_id ? { ...paper, last_location: location } : paper);
@@ -323,7 +324,7 @@ export function WorkspacePage() {
   function closePaperInfo() {
     setPaperInfoOpen(false);
     hideReadingControls();
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"]')?.focus({ preventScroll: true }));
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"], [aria-label="Scrollable reading view"]')?.focus({ preventScroll: true }));
   }
 
   function showPaperInfo() {
@@ -597,7 +598,7 @@ export function WorkspacePage() {
     const location = currentLocation(historyRef.current);
     const anchor = annotation.target.page_anchors[0];
     if (!location || !anchor) return;
-    jumpTo({ ...location, page_number: anchor.page_number, page_position: [0, 0] }, anchor);
+    jumpTo({ ...location, page_number: anchor.page_number, page_position: [0, 0], reading_block_id: null }, anchor);
   }
 
   async function exportAnnotations() {
@@ -724,7 +725,10 @@ export function WorkspacePage() {
           </div>
         </header>}
 
-        {active && controlsVisible && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening)} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={() => { setInspectorOpen(false); setLibraryOpen(true); }} on_info={showPaperInfo} on_inspector={() => setInspectorOpen((value) => !value)} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_hide={hideReadingControls} />}
+        {active && controlsVisible && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening)} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={() => { setInspectorOpen(false); setLibraryOpen(true); }} on_info={showPaperInfo} on_inspector={() => setInspectorOpen((value) => !value)} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_hide={hideReadingControls} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
+          const source = currentPositionRef.current ?? current;
+          if (source) jumpTo({ ...source, reader_mode: source.reader_mode === 'reading' ? 'pdf' : 'reading', reading_block_id: null, zoom: 1, zoom_mode: 'fit_width' });
+        }} />}
 
         {!isNative && <div className="runtime-banner"><span className="status-dot" /><span>This is the web preview. Paper downloads, local storage, and AI need the Papertrail app.</span></div>}
         {opening && <div className="operation-banner" role="status"><LoaderCircle size={15} className="spin" /><span>{progress?.message ?? `Opening ${opening.label}…`}</span>{progressPercent !== null && <span className="download-percent">{progressPercent}%</span>}<div className="operation-meter" style={{ width: `${progressPercent ?? 35}%` }} /></div>}
@@ -764,7 +768,7 @@ export function WorkspacePage() {
                 return <article className="reference-card" key={reference.reference_id}>
                   <div className="reference-number">{String(index + 1).padStart(2, '0')} <span>p. {reference.page_number}</span></div>
                   <p className="reference-citation">{reference.citation_text}</p>
-                  <div className="reference-actions">{canOpen ? <button type="button" className="text-button" onClick={() => openReference(reference)} disabled={Boolean(opening)}>{reference.arxiv_id ? 'Read paper' : reference.doi ? 'Open DOI' : 'Open link'}<ArrowUpRight size={13} /></button> : <button type="button" className="text-button" onClick={() => { void findReference(reference); }} disabled={resolution?.busy}>{resolution?.busy ? <LoaderCircle size={13} className="spin" /> : <Search size={13} />} {resolution?.busy ? 'Finding matches…' : 'Find a match'}</button>}<button type="button" className="reference-page" onClick={() => { if (current) jumpTo({ ...current, page_number: reference.page_number, page_position: [0, 0] }); }} aria-label={`Go to reference on page ${reference.page_number}`} title="Show in paper"><ChevronRight size={15} /></button></div>
+                  <div className="reference-actions">{canOpen ? <button type="button" className="text-button" onClick={() => openReference(reference)} disabled={Boolean(opening)}>{reference.arxiv_id ? 'Read paper' : reference.doi ? 'Open DOI' : 'Open link'}<ArrowUpRight size={13} /></button> : <button type="button" className="text-button" onClick={() => { void findReference(reference); }} disabled={resolution?.busy}>{resolution?.busy ? <LoaderCircle size={13} className="spin" /> : <Search size={13} />} {resolution?.busy ? 'Finding matches…' : 'Find a match'}</button>}<button type="button" className="reference-page" onClick={() => { if (current) jumpTo({ ...current, page_number: reference.page_number, page_position: [0, 0], reading_block_id: null }); }} aria-label={`Go to reference on page ${reference.page_number}`} title="Show in paper"><ChevronRight size={15} /></button></div>
                   {resolution && !resolution.busy && <div className="reference-results">{resolution.error ? <p className="inline-error">{resolution.error}</p> : resolution.candidates.length ? <><span className="candidate-label">Choose a possible match</span>{resolution.candidates.map((candidate, candidateIndex) => <button type="button" className="reference-candidate" key={`${candidate.url}-${candidateIndex}`} onClick={() => openReference(candidate)} disabled={Boolean(opening)}><span>{candidate.title}</span><ArrowUpRight size={13} /></button>)}</> : <p className="field-hint">No match found. You can open an arXiv ID directly above.</p>}</div>}
                 </article>;
               })}</div></> : <div className="inspector-empty"><span className="empty-symbol"><Link2 size={24} strokeWidth={1.4} /></span><h3>{active ? 'Looking for connections' : 'The next idea is a citation away.'}</h3><p>{active ? 'Embedded paper links and detected bibliography entries appear here as the PDF loads. You can also follow links directly on a page.' : 'Open a paper to explore its references. Follow a link, then use Back to pick up where you left off.'}</p><div className="navigation-demo" aria-hidden="true"><span>Paper</span><span className="demo-arrow">↔</span><span>Reference</span></div></div>}

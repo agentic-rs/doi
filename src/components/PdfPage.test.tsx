@@ -1,0 +1,83 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { SelectionPage } from '../lib/pdf-selection';
+import { PdfPage } from './PdfPage';
+
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+  RenderingCancelledException: class extends Error {},
+  TextLayer: class {
+    constructor({ textContentSource, container }: { textContentSource: { items: Array<{ str: string }> }; container: HTMLElement }) {
+      for (const item of textContentSource.items) {
+        const span = document.createElement('span');
+        span.textContent = item.str;
+        container.append(span);
+      }
+    }
+    render() { return Promise.resolve(); }
+    cancel() {}
+  },
+}));
+
+function pageFixture() {
+  const render_page = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+  const text = (str: string, y: number) => ({ str, transform: [10, 0, 0, 10, 100, y], width: 90, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
+  const page = {
+    pageNumber: 3, rotate: 0, userUnit: 1,
+    getViewport: ({ scale, offsetX = 0, offsetY = 0 } = { scale: 1 }) => {
+      const toViewport = (x: number, y: number) => [x * scale + offsetX, (800 - y) * scale + offsetY];
+      return {
+        width: 600 * scale, height: 800 * scale, scale, rotation: 0,
+        convertToViewportPoint: toViewport,
+        convertToViewportRectangle: (rect: number[]) => [...toViewport(rect[0], rect[1]), ...toViewport(rect[2], rect[3])],
+        convertToPdfPoint: (x: number, y: number) => [(x - offsetX) / scale, 800 - (y - offsetY) / scale],
+      } as PageViewport;
+    },
+    streamTextContent: () => new ReadableStream({ start(controller) {
+      controller.enqueue({ items: [text('Inside crop', 450), text('Outside crop', 650)], styles: {}, lang: null });
+      controller.close();
+    } }),
+    getAnnotations: async () => [
+      { subtype: 'Link', id: 'inside', rect: [180, 430, 260, 450], url: 'https://example.com/inside' },
+      { subtype: 'Link', id: 'outside', rect: [180, 630, 260, 650], url: 'https://example.com/outside' },
+    ],
+    render: render_page,
+  } as unknown as PDFPageProxy;
+  return { page, render_page };
+}
+
+beforeEach(() => {
+  vi.stubGlobal('devicePixelRatio', 1);
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(element: Element) { this.callback([{ target: element, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+    disconnect() {}
+  });
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+});
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe('PDF region rendering', () => {
+  it('renders only the crop canvas and registers matching source coordinates and text', async () => {
+    const { page, render_page } = pageFixture();
+    const register_page = vi.fn<(id: string, selection: SelectionPage | null) => void>();
+    const result = render(<PdfPage page={page} source_rect={[80, 400, 220, 500]} block_id="p3-figure1" zoom={2} rotation={0}
+      render_paused={false} scroll_root={document.createElement('div')} annotations={[]}
+      register_page={register_page} on_link={vi.fn()} on_error={vi.fn()} />);
+    await waitFor(() => expect(register_page).toHaveBeenCalledWith('p3-figure1', expect.any(Object)));
+    const selection = register_page.mock.calls.find(([, value]) => value)?.[1];
+    expect(selection?.text).toBe('Inside crop\n');
+    expect(selection?.viewport.convertToPdfPoint(40, 100)).toEqual([100, 450]);
+    expect(result.container.querySelector('.textLayer')?.textContent).toBe('Inside crop');
+    const canvas = result.container.querySelector('canvas');
+    expect([canvas?.width, canvas?.height]).toEqual([280, 200]);
+    const viewport = (render_page.mock.calls[0] as unknown as [{ viewport: PageViewport }])[0].viewport;
+    expect(viewport.convertToViewportPoint(100, 450)).toEqual([40, 100]);
+    const link = screen.getByRole('button', { name: 'Open https://example.com/inside' });
+    expect([link.style.left, link.style.top, link.style.width, link.style.height]).toEqual(['200px', '100px', '80px', '40px']);
+    expect(screen.queryByRole('button', { name: 'Open https://example.com/outside' })).toBeNull();
+    expect(result.container.querySelector('.pdf-page-label')).toBeNull();
+  });
+});

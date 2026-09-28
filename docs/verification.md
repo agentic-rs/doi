@@ -69,3 +69,14 @@ Workspace integration tests use a mocked reader and command boundary; DOM select
 - Plain-text reference extraction is heuristic; uncertain matches are presented as candidates. The app reads arXiv targets internally and opens other source links externally.
 - The iOS packages are development builds. The immersive flow is verified in the native simulator; the updated package was not installed or interaction-tested on a physical phone by this task. Physical-device interaction with Keychain, Files export, PDF selection, and AI remains unverified. iOS 18 is the minimum supported version. See [installation steps](ios.md).
 - Windows, Linux, Android, and older macOS versions have not been built or tested.
+
+
+## Optional Reading view (2026-09-28)
+
+- 123 frontend tests pass, including cropped selection geometry, multiple blocks from the same page, display-order selections across moved figures, mode/history restoration, cancelled/stale analysis, cache failures, and deferred sharp rendering after pinch gestures in both the main reader and figure dialog.
+- All 19 Rust tests pass. Derived layouts validate PDF hash, extractor version, geometry, identifiers, payload size, and coverage of every source page. SQLite v1 libraries migrate to v2, retaining notes and legacy PDF positions.
+- Independent full-resolution raster coverage checks retain every ink pixel across Attention Is All You Need (15 pages), Layer Normalization (14 pages), and BERT (16 pages). BERT supplies a real two-column case: left-column/right-column reading order and full-width figure grouping were visually checked. A column-gutter safety margin prevents clipping italic glyph tails.
+- Attention and BERT each expose all five figures. LayerNorm exposes five of six; the prose-wrapped figure stays intact in its original region. These checks do not establish universal figure detection accuracy.
+- Native desktop checks confirm saved Reading view reopening, visible sharp cropped text, figure enlargement with complete caption, zoom controls, source-PDF navigation, and Back returning to the Reading view. Text source actions no longer add vertical space between paragraphs.
+- Final desktop bundle, simulator build, and signed physical-iPhone build succeed. The simulator build is installed over the existing iPhone 16 library and launches. Simulator coordinate input was unreliable during this pass, so the new Reading-mode interactions on iPhone remain unverified; native desktop interaction and automated phone-sized geometry/gesture tests provide the current coverage. The prior landscape checks above still describe the previous feature's verification.
+- The signed iPhone app has not been installed on the physical device and the older IPA has not been re-exported. The existing Xcode helper remains running.

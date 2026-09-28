@@ -1,7 +1,7 @@
 use crate::{
   error::{storage_error, Result},
   models::*,
-  validation,
+  reading_layout, validation,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
@@ -23,7 +23,7 @@ impl Database {
     let version: u32 = connection
       .query_row("PRAGMA user_version", [], |row| row.get(0))
       .map_err(storage_error)?;
-    if version > 1 {
+    if version > 2 {
       return Err("The library was created by a newer Papertrail version.".into());
     }
     connection
@@ -48,7 +48,13 @@ impl Database {
        );
        CREATE INDEX IF NOT EXISTS annotations_by_paper ON annotations(paper_id, created_at);
        CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-       PRAGMA user_version=1;
+       CREATE TABLE IF NOT EXISTS reading_layouts (
+         paper_id TEXT PRIMARY KEY REFERENCES papers(paper_id) ON DELETE CASCADE,
+         pdf_hash TEXT NOT NULL,
+         layout_version INTEGER NOT NULL,
+         data TEXT NOT NULL
+       );
+       PRAGMA user_version=2;
        COMMIT;",
       )
       .map_err(storage_error)?;
@@ -167,6 +173,66 @@ impl Database {
         if affected == 0 {
           return Err("That paper is not in the local library.".into());
         }
+        Ok(())
+      })
+      .await
+  }
+
+  pub async fn get_reading_layout(
+    &self,
+    paper_id: String,
+    layout_version: u32,
+  ) -> Result<Option<ReadingLayout>> {
+    validation::validate_id(&paper_id)?;
+    if layout_version != reading_layout::LAYOUT_VERSION {
+      return Ok(None);
+    }
+    self
+      .run(move |connection| {
+        let cached: Option<(String, String)> = connection
+          .query_row(
+            "SELECT layouts.data, papers.pdf_hash FROM reading_layouts AS layouts
+             JOIN papers ON papers.paper_id=layouts.paper_id
+             WHERE layouts.paper_id=?1 AND layouts.layout_version=?2
+               AND layouts.pdf_hash=papers.pdf_hash
+               AND length(CAST(layouts.data AS BLOB))<=?3",
+            params![paper_id, layout_version, reading_layout::MAX_LAYOUT_BYTES],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+          )
+          .optional()
+          .map_err(storage_error)?;
+        Ok(cached.and_then(|(data, hash)| reading_layout::decode(&data, &hash)))
+      })
+      .await
+  }
+
+  pub async fn save_reading_layout(&self, paper_id: String, layout: ReadingLayout) -> Result<()> {
+    validation::validate_id(&paper_id)?;
+    self
+      .run(move |connection| {
+        let data = reading_layout::encode(&layout)?;
+        let transaction = connection.transaction().map_err(storage_error)?;
+        let hash: Option<String> = transaction
+          .query_row(
+            "SELECT pdf_hash FROM papers WHERE paper_id=?1",
+            [&paper_id],
+            |row| row.get(0),
+          )
+          .optional()
+          .map_err(storage_error)?;
+        if hash.as_deref() != Some(&layout.pdf_hash) {
+          return Err("The reading layout does not match this cached PDF revision.".into());
+        }
+        transaction
+          .execute(
+            "INSERT INTO reading_layouts (paper_id, pdf_hash, layout_version, data)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(paper_id) DO UPDATE SET pdf_hash=excluded.pdf_hash,
+               layout_version=excluded.layout_version, data=excluded.data",
+            params![paper_id, layout.pdf_hash, layout.layout_version, data],
+          )
+          .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)?;
         Ok(())
       })
       .await
@@ -347,6 +413,8 @@ mod tests {
         zoom: 1.2,
         zoom_mode: PdfZoomMode::FitWidth,
         rotation: 90,
+        reader_mode: ReaderMode::Reading,
+        reading_block_id: Some("page-2-text-1".into()),
       };
       db.save_location(location.clone()).await.unwrap();
       let mut imported = fixture_annotation(&paper);
@@ -415,6 +483,8 @@ mod tests {
         .last_location
         .unwrap();
       assert_eq!(loaded.zoom_mode, PdfZoomMode::Custom);
+      assert_eq!(loaded.reader_mode, ReaderMode::Pdf);
+      assert_eq!(loaded.reading_block_id, None);
       assert_eq!(loaded.zoom, 1.6);
       assert_eq!(loaded.page_number, 3);
       assert_eq!(loaded.page_position, [0.1, 0.7]);
@@ -428,5 +498,107 @@ mod tests {
     assert!(validation::validate_annotation(&annotation).is_err());
     annotation.target.page_anchors[0].quad_points = vec![[f64::NAN; 8]];
     assert!(validation::validate_annotation(&annotation).is_err());
+  }
+
+  #[test]
+  fn reading_layout_cache_is_revision_bound_and_disposable() {
+    tauri::async_runtime::block_on(async {
+      let directory = tempfile::tempdir().unwrap();
+      let path = directory.path().join("library.sqlite");
+      let db = Database::initialize(&path).unwrap();
+      let paper = db.save_paper(fixture_paper()).await.unwrap();
+      let layout = reading_layout::tests::fixture_layout(paper.pdf_hash.clone());
+      assert!(db
+        .get_reading_layout(paper.paper_id.clone(), 1)
+        .await
+        .unwrap()
+        .is_none());
+      db.save_reading_layout(paper.paper_id.clone(), layout.clone())
+        .await
+        .unwrap();
+      let reopened = Database::initialize(&path).unwrap();
+      assert_eq!(
+        reopened
+          .get_reading_layout(paper.paper_id.clone(), 1)
+          .await
+          .unwrap(),
+        Some(layout.clone())
+      );
+      assert!(db
+        .get_reading_layout(paper.paper_id.clone(), 2)
+        .await
+        .unwrap()
+        .is_none());
+      let mut wrong_revision = layout.clone();
+      wrong_revision.pdf_hash = "b".repeat(64);
+      assert!(db
+        .save_reading_layout(paper.paper_id.clone(), wrong_revision)
+        .await
+        .is_err());
+      assert!(db
+        .save_reading_layout("missing-paper".into(), layout.clone())
+        .await
+        .is_err());
+
+      for corrupt_data in [
+        "{broken".into(),
+        serde_json::to_string(&ReadingLayout {
+          layout_version: 2,
+          ..layout.clone()
+        })
+        .unwrap(),
+        serde_json::to_string(&ReadingLayout {
+          pdf_hash: "b".repeat(64),
+          ..layout.clone()
+        })
+        .unwrap(),
+      ] {
+        db.connect()
+          .unwrap()
+          .execute(
+            "UPDATE reading_layouts SET data=?1 WHERE paper_id=?2",
+            params![corrupt_data, paper.paper_id],
+          )
+          .unwrap();
+        assert!(db
+          .get_reading_layout(paper.paper_id.clone(), 1)
+          .await
+          .unwrap()
+          .is_none());
+      }
+      db.save_reading_layout(paper.paper_id.clone(), layout.clone())
+        .await
+        .unwrap();
+      db.connect()
+        .unwrap()
+        .execute("UPDATE reading_layouts SET pdf_hash=?1", ["b".repeat(64)])
+        .unwrap();
+      assert!(db
+        .get_reading_layout(paper.paper_id, 1)
+        .await
+        .unwrap()
+        .is_none());
+    });
+  }
+
+  #[test]
+  fn existing_libraries_gain_an_empty_derived_layout_cache() {
+    tauri::async_runtime::block_on(async {
+      let directory = tempfile::tempdir().unwrap();
+      let path = directory.path().join("library.sqlite");
+      let db = Database::initialize(&path).unwrap();
+      let paper = db.save_paper(fixture_paper()).await.unwrap();
+      db.connect()
+        .unwrap()
+        .execute_batch("DROP TABLE reading_layouts; PRAGMA user_version=1;")
+        .unwrap();
+      let upgraded = Database::initialize(&path).unwrap();
+      assert_eq!(upgraded.list_papers().await.unwrap().len(), 1);
+      assert!(upgraded
+        .get_reading_layout(paper.paper_id, 1)
+        .await
+        .unwrap()
+        .is_none());
+    });
   }
 }

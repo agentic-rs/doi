@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import { ArrowLeft, ArrowRight, Info, Library, LoaderCircle, PanelRightClose, PanelRightOpen, Settings2, Smartphone, RectangleHorizontal, X } from 'lucide-react';
-import type { Paper, ReaderOrientation } from '../lib/types';
+import { ArrowLeft, ArrowRight, BookOpen, FileText, Info, Library, LoaderCircle, PanelRightClose, PanelRightOpen, Settings2, Smartphone, RectangleHorizontal, X } from 'lucide-react';
+import type { Paper, ReaderOrientation, ReaderMode } from '../lib/types';
 import './reader-overlay.css';
 
 interface ReaderOverlayProps {
@@ -21,6 +21,8 @@ interface ReaderOverlayProps {
   on_settings: () => void;
   on_direction: () => void;
   on_hide: () => void;
+  reader_mode?: ReaderMode;
+  on_mode?: () => void;
 }
 
 export function ReaderOverlay(props: ReaderOverlayProps) {
@@ -34,6 +36,7 @@ export function ReaderOverlay(props: ReaderOverlayProps) {
       <button className="icon-button" type="button" aria-label="Hide reading controls" onClick={props.on_hide}><X size={20} /></button>
     </div>
     <div className="reader-overlay-actions">
+      {props.on_mode && <button className="reader-mode-toggle" type="button" aria-label={props.reader_mode === 'reading' ? 'Switch to original PDF' : 'Switch to Reading view'} aria-pressed={props.reader_mode === 'reading'} onClick={props.on_mode}>{props.reader_mode === 'reading' ? <FileText size={17} /> : <BookOpen size={17} />}<span>{props.reader_mode === 'reading' ? 'Original PDF' : 'Reading view'}</span></button>}
       <button type="button" aria-label="Show paper information" onClick={props.on_info}><Info size={17} /><span>Info</span></button>
       <button type="button" aria-controls="paper-inspector" aria-expanded={props.inspector_open} aria-label={props.inspector_open ? 'Close references and notes panel' : 'Open references and notes panel'} onClick={props.on_inspector}>{props.inspector_open ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}<span>Refs & notes</span></button>
       {props.supports_orientation && <button type="button" aria-label={`Switch viewer to ${next_direction}`} disabled={props.orientation_pending} onClick={props.on_direction}>{props.orientation_pending ? <LoaderCircle className="spin" size={17} /> : next_direction === 'landscape' ? <RectangleHorizontal size={17} /> : <Smartphone size={17} />}<span>{next_direction === 'landscape' ? 'Landscape' : 'Portrait'}</span></button>}

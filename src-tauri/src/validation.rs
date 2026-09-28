@@ -12,6 +12,9 @@ pub fn validate_id(id: &str) -> Result<()> {
 
 pub fn validate_location(location: &ReadingLocation) -> Result<()> {
   validate_id(&location.paper_id)?;
+  if let Some(block_id) = &location.reading_block_id {
+    validate_id(block_id)?;
+  }
   if location.page_number == 0
     || location.page_number > 100_000
     || location
@@ -184,6 +187,8 @@ mod tests {
       zoom: 1.2,
       zoom_mode: PdfZoomMode::Custom,
       rotation: 90,
+      reader_mode: ReaderMode::Pdf,
+      reading_block_id: None,
     };
     assert!(validate_location(&location).is_ok());
     location.page_position[1] = f64::NAN;
