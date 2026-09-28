@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { ReadingBlock } from '../lib/types';
 import { FigureDialog } from './FigureDialog';
@@ -20,6 +21,9 @@ let viewport_height = 480;
 const resize_callbacks = new Set<() => void>();
 const scroll_descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo');
 const show_descriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+let styles: HTMLStyleElement;
+const figure_styles = ['pdf-reader.css', 'reading-view.css']
+  .map((name) => readFileSync(new URL(name, import.meta.url), 'utf8')).join('\n');
 
 function viewport(scale: number, offset_x = 0, offset_y = 0): PageViewport {
   const point = (x: number, y: number) => [x * scale + offset_x, (800 - y) * scale + offset_y];
@@ -58,23 +62,39 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return { left, top, right: left + width, bottom: top + height, width, height, x: left, y: top, toJSON: () => ({}) };
 }
 
-function pageBounds(element: HTMLElement): DOMRect {
+function figureLayout(element: HTMLElement) {
   const scroll = element.closest<HTMLElement>('.figure-dialog-scroll')!;
   const page = element.classList.contains('pdf-page') ? element : element.querySelector<HTMLElement>('.pdf-page')!;
   const width = Number.parseFloat(page.style.width);
   const height = Number.parseFloat(page.style.height);
-  const left = 30 + 16 + Math.max(0, (viewport_width - 32 - width) / 2) - scroll.scrollLeft;
-  const top = 70 + 16 - scroll.scrollTop;
   const wrapper = page.parentElement!;
+  const style = getComputedStyle(wrapper);
+  const available_width = viewport_width - 32;
+  // jsdom has no layout engine. Model this column-flex layout from its actual
+  // CSS, including the negative overflow of a centered oversized child.
+  const wrapper_width = style.width === 'max-content'
+    ? Math.max(width, style.minWidth === '100%' ? available_width : 0) : available_width;
+  const page_offset = style.alignItems === 'center' ? (wrapper_width - width) / 2 : 0;
+  const left = 30 + 16 + Math.max(0, (available_width - wrapper_width) / 2) - scroll.scrollLeft;
+  const top = 70 + 16 - scroll.scrollTop;
+  return { page, wrapper, width, height, wrapper_width, page_offset, left, top };
+}
+
+function pageBounds(element: HTMLElement): DOMRect {
+  const { page, wrapper, width, height, wrapper_width, page_offset, left, top } = figureLayout(element);
   const match = /translate3d\(([-\d.e+]+)px, ([-\d.e+]+)px, 0\) scale\(([-\d.e+]+)\)/.exec(wrapper.style.transform);
-  return match ? rect(left + Number(match[1]), top + Number(match[2]), width * Number(match[3]), height * Number(match[3]))
-    : rect(left, top, width, height);
+  const scale = match ? Number(match[3]) : 1;
+  return rect(left + (match ? Number(match[1]) : 0) + (element === page ? page_offset * scale : 0),
+    top + (match ? Number(match[2]) : 0), (element === page ? width : wrapper_width) * scale, height * scale);
 }
 
 beforeEach(() => {
   viewport_width = 640;
   viewport_height = 480;
   jobs.text = 0;
+  styles = document.createElement('style');
+  styles.textContent = figure_styles;
+  document.head.append(styles);
   vi.stubGlobal('devicePixelRatio', 1);
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16));
   vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
@@ -103,13 +123,16 @@ beforeEach(() => {
   Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value(this: HTMLElement, options: ScrollToOptions) {
     const page = this.querySelector<HTMLElement>('.pdf-page');
-    this.scrollLeft = Math.min(Math.max(0, Number.parseFloat(page?.style.width ?? '0') + 32 - viewport_width), Math.max(0, options.left ?? this.scrollLeft));
+    const layout = page ? figureLayout(page) : null;
+    const content_width = layout ? Math.max(layout.wrapper_width, layout.page_offset + layout.width) : 0;
+    this.scrollLeft = Math.min(Math.max(0, content_width + 32 - viewport_width), Math.max(0, options.left ?? this.scrollLeft));
     this.scrollTop = Math.min(Math.max(0, Number.parseFloat(page?.style.height ?? '0') + 32 - viewport_height), Math.max(0, options.top ?? this.scrollTop));
   } });
 });
 
 afterEach(() => {
   cleanup();
+  styles.remove();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -142,8 +165,10 @@ describe('enlarged PDF figures', () => {
     render(<FigureDialog {...props} />);
     await ready();
     const page = screen.getByLabelText('Page 2');
+    expect(getComputedStyle(page.parentElement!).alignItems).toBe('center');
     expect(Number.parseFloat(page.style.height)).toBeCloseTo(viewport_height - 32);
     expect(Number.parseFloat(page.style.width)).toBeLessThan(viewport_width - 32);
+    expect((page.getBoundingClientRect().left + page.getBoundingClientRect().right) / 2).toBeCloseTo(350);
     const point = sourcePoint(350, 310);
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in figure' }));
     await ready();
@@ -186,8 +211,28 @@ describe('enlarged PDF figures', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open https://arxiv.org/abs/1706.03762' }));
     expect(props.on_link).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'https://arxiv.org/abs/1706.03762' }), 2);
     expect(props.on_source).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'View in PDF' }));
+    const source_button = screen.getByRole('button', { name: 'View in PDF' });
+    expect(source_button.textContent).toBe('');
+    expect(source_button.title).toBe('View in PDF');
+    fireEvent.click(source_button);
     expect(props.on_source).toHaveBeenCalledOnce();
+  });
+
+  it('allows both horizontal edges to be reached after the figure exceeds the viewport', async () => {
+    render(<FigureDialog {...fixture()} />);
+    await ready();
+    const scroll = screen.getByLabelText('Enlarged figure');
+    const page = screen.getByLabelText('Page 2');
+    for (let count = 0; count < 6; count++) fireEvent.click(screen.getByRole('button', { name: 'Zoom in figure' }));
+    expect(Number.parseFloat(page.style.width)).toBeGreaterThan(viewport_width * 3);
+
+    act(() => scroll.scrollTo({ left: 0 }));
+    expect(page.getBoundingClientRect().left).toBeCloseTo(scroll.getBoundingClientRect().left + 16);
+    act(() => scroll.scrollTo({ left: 100_000 }));
+    expect(scroll.scrollLeft).toBeGreaterThan(viewport_width);
+    expect(page.getBoundingClientRect().right).toBeCloseTo(scroll.getBoundingClientRect().right - 16);
+    act(() => scroll.scrollTo({ left: 0 }));
+    expect(page.getBoundingClientRect().left).toBeCloseTo(scroll.getBoundingClientRect().left + 16);
   });
 
   it('keeps the same source point when a centered zoomed figure starts overflowing after resize', async () => {

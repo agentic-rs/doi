@@ -10,6 +10,7 @@ import {
 import { PdfReader } from '../components/PdfReader';
 import { PaperInfoSheet } from '../components/PaperInfoSheet';
 import { ReaderOverlay } from '../components/ReaderOverlay';
+import { FloatingSelectionAction } from '../components/FloatingSelectionAction';
 import { SettingsDialog } from '../components/SettingsDialog';
 import '../components/reading-workspace.css';
 import {
@@ -681,7 +682,7 @@ export function WorkspacePage() {
   const pendingAnnotation = Boolean(annotationBusy || aiPending);
 
   return (
-    <div className={`app-shell ${active ? 'reading-mode' : ''} ${libraryOpen ? 'library-is-open' : ''} ${selection ? 'has-selection' : ''}`}>
+    <div className={`app-shell ${active ? 'reading-mode' : ''} ${libraryOpen ? 'library-is-open' : ''}`}>
       <aside ref={libraryRef} id="paper-library" className="library-sidebar" aria-label="Paper library" role={drawerLayout && libraryOpen ? 'dialog' : undefined} aria-modal={drawerLayout && libraryOpen ? true : undefined} inert={paperInfoOpen || settingsOpen || (Boolean(active) && !libraryOpen)}>
         <button type="button" className="icon-button mobile-library-close" aria-label="Close paper library" onClick={() => setLibraryOpen(false)}><X size={20} /></button>
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); focusArxivInput(); }} aria-label="Papertrail, open a paper">
@@ -734,7 +735,12 @@ export function WorkspacePage() {
         {opening && <div className="operation-banner" role="status"><LoaderCircle size={15} className="spin" /><span>{progress?.message ?? `Opening ${opening.label}…`}</span>{progressPercent !== null && <span className="download-percent">{progressPercent}%</span>}<div className="operation-meter" style={{ width: `${progressPercent ?? 35}%` }} /></div>}
         {notice && <div className={`notice notice-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.tone === 'success' ? <Check size={15} /> : notice.tone === 'error' ? <CircleHelp size={15} /> : <CircleHelp size={15} />}<span>{notice.message}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
-        {active && selection && !inspectorOpen && !paperInfoOpen && <button type="button" className="mobile-selection-action" onClick={() => { setInspectorTab('notes'); setControlsVisible(true); setInspectorOpen(true); }}><Sparkles size={17} /><span>Ask AI or add a note to this passage</span><ChevronRight size={18} /></button>}
+        <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !inspectorOpen && !paperInfoOpen && !libraryOpen && !settingsOpen)} on_activate={() => {
+          setComposerKind('ai');
+          setInspectorTab('notes');
+          setControlsVisible(true);
+          setInspectorOpen(true);
+        }} />
 
         <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">

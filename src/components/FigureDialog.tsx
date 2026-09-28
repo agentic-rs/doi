@@ -214,7 +214,7 @@ export function FigureDialog(props: FigureDialogProps) {
       <strong>{props.block.figure_label ? `Figure ${props.block.figure_label}` : 'Figure'} <small>· p. {props.block.page_number}</small></strong>
       <button type="button" aria-label="Zoom out figure" disabled={zoom <= 1} onClick={() => changeZoom(zoom - 0.5)}><Minus size={18} /></button>
       <button type="button" aria-label="Zoom in figure" disabled={zoom >= 4} onClick={() => changeZoom(zoom + 0.5)}><Plus size={18} /></button>
-      <button type="button" aria-label="View in PDF" onClick={props.on_source}><FileText size={18} /><span>View in PDF</span></button>
+      <button type="button" aria-label="View in PDF" title="View in PDF" onClick={props.on_source}><FileText size={18} /></button>
       <button type="button" autoFocus aria-label="Close enlarged figure" onClick={props.on_close}><X size={20} /></button>
     </div>
     <div className="figure-dialog-scroll" ref={setScrollRoot} onScroll={rememberCenter} tabIndex={0} aria-label="Enlarged figure">

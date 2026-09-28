@@ -30,6 +30,7 @@
   font: inherit;
   cursor: pointer;
 }
+.reading-block-actions .reading-source-button { width: 44px; height: 44px; padding: 0; border-radius: 50%; background: transparent; }
 .reading-block-actions button:hover, .figure-dialog-toolbar button:hover, .pdf-loading button:hover { background: #e3ede5; }
 .reading-block-actions button:focus-visible, .figure-dialog-toolbar button:focus-visible { outline: 2px solid #2c8179; outline-offset: 2px; }
 .figure-dialog {
@@ -55,11 +56,13 @@
 .figure-dialog-toolbar small { font-size: 11px; font-weight: normal; }
 .figure-dialog-toolbar button:disabled { opacity: .4; cursor: default; }
 .figure-dialog-scroll { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 16px; touch-action: pan-x pan-y; overflow-anchor: none; }
+/* An oversized centered child overflows to the unreachable left of a narrow
+   wrapper. Grow the scroll content first, then center figures that still fit. */
+.figure-dialog-scroll > .pdf-page-wrap { width: max-content; min-width: 100%; }
 .figure-dialog-scroll[data-zoom-preview] { overflow: hidden; }
 .figure-dialog-scroll[data-zoom-preview] .pdf-page-wrap { pointer-events: none; }
 .figure-dialog-scroll .pdf-page-label { display: none; }
 @media (max-width: 480px) {
-  .figure-dialog-toolbar button span { display: none; }
   .reading-block-actions { gap: 2px; padding-inline: 0; }
 }
 /* Keep cropped prose continuous; its source action appears with the reader
@@ -70,8 +73,6 @@
   bottom: 0;
   z-index: 4;
   border-radius: 8px;
-  background: #f8f8f3f5;
-  box-shadow: 0 2px 8px #203a391a;
   opacity: 0;
   pointer-events: none;
 }

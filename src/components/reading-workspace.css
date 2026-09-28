@@ -35,31 +35,6 @@
   border-radius: 9px;
   box-shadow: 0 4px 20px #23382c18;
 }
-.reading-mode .mobile-selection-action {
-  display: flex;
-  position: absolute;
-  z-index: 42;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
-  left: calc(env(safe-area-inset-left, 0px) + 14px);
-  right: calc(env(safe-area-inset-right, 0px) + 14px);
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 12px 15px;
-  min-height: 48px;
-  border: 1px solid #c9dbc9;
-  border-radius: 12px;
-  background: #e4eee5f5;
-  color: #2f7068;
-  box-shadow: 0 6px 26px #23382c20;
-  font-size: 13px;
-}
-.reading-mode.has-selection .pdf-reader-immersive .pdf-toolbar {
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
-}
-.reading-mode.has-selection .pdf-reader-immersive .pdf-pages { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 220px); }
 .library-import { margin: 10px 0 24px; }
 .library-import label { display: block; margin-bottom: 8px; font-size: 12px; color: #526851; }
 .library-import .arxiv-form { height: 46px; max-width: none; }
@@ -85,7 +60,4 @@
   .reading-mode .notes-intro { margin-bottom: 12px; }
   .reading-mode .notes-list-heading { margin: 12px 0; }
   .reading-mode .inspector-footer { display: none; }
-  .reading-mode .mobile-selection-action { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); min-height: 44px; padding: 8px 12px; }
-  .reading-mode.has-selection .pdf-reader-immersive .pdf-toolbar { bottom: calc(env(safe-area-inset-bottom, 0px) + 60px); }
-  .reading-mode.has-selection .pdf-reader-immersive .pdf-pages { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 132px); }
 }

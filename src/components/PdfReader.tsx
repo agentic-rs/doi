@@ -771,7 +771,7 @@ export function PdfReader(props: PdfReaderProps) {
             <div className="reading-block-actions">
               <span>{(block.figure_label ? `Figure ${block.figure_label}` : null) ?? (block.kind === 'original' ? 'Original layout' : 'Source')} · p. {block.page_number}</span>
               {block.kind === 'figure' && <button type="button" aria-label={`Enlarge ${block.figure_label ? `Figure ${block.figure_label}` : 'figure'}`} onClick={() => { reportLocation(); setEnlargedFigure(block); }}><Expand size={15} /> Enlarge</button>}
-              <button type="button" onClick={() => viewOriginal(block)} aria-label={`View ${block.figure_label ?? 'block'} in PDF on page ${block.page_number}`}><FileText size={15} /> View in PDF</button>
+              <button type="button" className="reading-source-button" title="View in PDF" onClick={() => viewOriginal(block)} aria-label={`View ${block.figure_label ?? 'block'} in PDF on page ${block.page_number}`}><FileText size={16} aria-hidden="true" /></button>
             </div>
           </article>) :
           loaded.pages.map((page) => <PdfPage
