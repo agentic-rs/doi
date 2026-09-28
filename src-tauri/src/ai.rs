@@ -1,7 +1,9 @@
 use crate::{credentials, error::Result, models::*, state::AppState, validation};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
+mod cancellation;
 mod provider;
+pub use cancellation::RequestRegistry;
 
 pub async fn get_settings(state: &AppState) -> Result<AiSettings> {
   let _guard = state.settings_lock.lock().await;
@@ -32,12 +34,17 @@ pub async fn save_settings(
 
 pub async fn ask(state: &AppState, app: &AppHandle, request: AiRequest) -> Result<AiAnswer> {
   validation::validate_id(&request.request_id)?;
+  let mut active = state.ai_requests.register(&request.request_id)?;
+  active.run(ask_inner(state, app, &request)).await
+}
+
+async fn ask_inner(state: &AppState, app: &AppHandle, request: &AiRequest) -> Result<AiAnswer> {
   validation::require_text(&request.selected_text, "selection", 32 * 1024)?;
   validation::bound_text(&request.context_text, "context", validation::MAX_TEXT_BYTES)?;
   validation::require_text(&request.question, "question", 8192)?;
   let paper = state
     .database
-    .get_paper(request.paper_id)
+    .get_paper(request.paper_id.clone())
     .await?
     .ok_or_else(|| "That paper is not in the local library.".to_string())?;
   let (settings, api_key) = {
@@ -68,7 +75,18 @@ pub async fn ask(state: &AppState, app: &AppHandle, request: AiRequest) -> Resul
     0,
     None,
   );
-  let answer = provider::complete(state.ai_http()?, &settings, api_key, &user_content).await?;
+  let emit = |kind, text: &str| {
+    let _ = app.emit(
+      "ai-stream",
+      AiStreamEvent {
+        request_id: request.request_id.clone(),
+        kind,
+        text: text.to_owned(),
+      },
+    );
+  };
+  let completion =
+    provider::complete(state.ai_http()?, &settings, api_key, &user_content, &emit).await?;
   state.progress(
     app,
     &request.request_id,
@@ -78,7 +96,10 @@ pub async fn ask(state: &AppState, app: &AppHandle, request: AiRequest) -> Resul
     None,
   );
   Ok(AiAnswer {
-    answer,
+    answer: completion.answer,
+    thinking: completion.thinking,
+    note_proposal: completion.note_proposal,
+    proposal_warning: completion.proposal_warning,
     provider_id: settings.base_url,
     model_id: settings.model_id,
     context_text: user_content,

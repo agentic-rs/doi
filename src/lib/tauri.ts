@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
-  AiAnswer, AiModel, AiRequest, AiSettings, Annotation, OperationProgress, Paper,
+  AiAnswer, AiModel, AiRequest, AiSettings, AiStreamEvent, Annotation, OperationProgress, Paper,
   ReaderCapabilities, ReaderOrientation, ReadingLayout, ReadingLocation, ReferenceCandidate,
 } from './types';
 
@@ -31,6 +31,9 @@ export const saveSettings = (settings: AiSettings, api_key: string | null) =>
 export const listAiModels = (settings: AiSettings, api_key: string | null) =>
   invoke<AiModel[]>('list_ai_models', { settings, api_key });
 export const askSelection = (request: AiRequest) => invoke<AiAnswer>('ask_selection', { request });
+export const cancelAiRequest = (request_id: string) => invoke<void>('cancel_ai_request', { request_id });
+export const onAiStream = (handler: (event: AiStreamEvent) => void) =>
+  listen<AiStreamEvent>('ai-stream', (event) => handler(event.payload));
 export const resolveReference = (citation_text: string) =>
   invoke<ReferenceCandidate[]>('resolve_reference', { citation_text });
 export const openExternal = (url: string) => invoke<void>('open_external', { url });

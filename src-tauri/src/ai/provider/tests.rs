@@ -1,4 +1,16 @@
 use super::*;
+use serde_json::json;
+
+async fn complete(
+  client: &reqwest::Client,
+  settings: &AiSettings,
+  api_key: Option<String>,
+  user_content: &str,
+) -> Result<String> {
+  super::complete(client, settings, api_key, user_content, &|_, _| {})
+    .await
+    .map(|completion| completion.answer)
+}
 use std::{
   io::{Read, Write},
   net::TcpListener,
@@ -7,7 +19,7 @@ use std::{
   time::Duration,
 };
 
-struct MockProvider {
+pub(super) struct MockProvider {
   base_url: String,
   request: Receiver<Vec<u8>>,
   server: JoinHandle<()>,
@@ -15,48 +27,67 @@ struct MockProvider {
 
 impl MockProvider {
   fn start(status: &str, body: String) -> Self {
+    Self::sequence(vec![(status.to_owned(), "application/json".into(), body)])
+  }
+
+  pub(super) fn sequence(responses: Vec<(String, String, String)>) -> Self {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base_url = format!("http://{}/proxy/v1", listener.local_addr().unwrap());
-    let status = status.to_owned();
     let (sender, request) = mpsc::channel();
+    listener.set_nonblocking(true).unwrap();
     let server = thread::spawn(move || {
-      let (mut socket, _) = listener.accept().unwrap();
-      socket
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-      let mut bytes = Vec::new();
-      let mut buffer = [0; 4096];
-      let (header_end, content_length) = loop {
-        let count = socket.read(&mut buffer).unwrap();
-        assert!(count > 0);
-        bytes.extend_from_slice(&buffer[..count]);
-        if let Some(index) = bytes.windows(4).position(|slice| slice == b"\r\n\r\n") {
-          let headers = String::from_utf8_lossy(&bytes[..index]);
-          let length: usize = headers
-            .lines()
-            .find_map(|line| {
-              line
-                .to_ascii_lowercase()
-                .strip_prefix("content-length:")
-                .map(|value| value.trim().parse().unwrap())
-            })
-            .unwrap_or(0);
-          break (index + 4, length);
+      for (status, content_type, body) in responses {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let (mut socket, _) = loop {
+          match listener.accept() {
+            Ok(connection) => break connection,
+            Err(error)
+              if error.kind() == std::io::ErrorKind::WouldBlock
+                && std::time::Instant::now() < deadline =>
+            {
+              thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => panic!("mock provider did not receive request: {error}"),
+          }
+        };
+        socket.set_nonblocking(false).unwrap();
+        socket
+          .set_read_timeout(Some(Duration::from_secs(5)))
+          .unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 4096];
+        let (header_end, content_length) = loop {
+          let count = socket.read(&mut buffer).unwrap();
+          assert!(count > 0);
+          bytes.extend_from_slice(&buffer[..count]);
+          if let Some(index) = bytes.windows(4).position(|slice| slice == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&bytes[..index]);
+            let length: usize = headers
+              .lines()
+              .find_map(|line| {
+                line
+                  .to_ascii_lowercase()
+                  .strip_prefix("content-length:")
+                  .map(|value| value.trim().parse().unwrap())
+              })
+              .unwrap_or(0);
+            break (index + 4, length);
+          }
+        };
+        while bytes.len() < header_end + content_length {
+          let count = socket.read(&mut buffer).unwrap();
+          assert!(count > 0);
+          bytes.extend_from_slice(&buffer[..count]);
         }
-      };
-      while bytes.len() < header_end + content_length {
-        let count = socket.read(&mut buffer).unwrap();
-        assert!(count > 0);
-        bytes.extend_from_slice(&buffer[..count]);
+        sender.send(bytes).unwrap();
+        // Redirect failures must never follow this address or forward the key.
+        let location = if status.starts_with("302") {
+          "Location: http://127.0.0.1:1/leak\r\n"
+        } else {
+          ""
+        };
+        let _ = write!(socket, "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{location}Connection: close\r\n\r\n{body}", body.len());
       }
-      sender.send(bytes).unwrap();
-      // Redirect failures must never follow this address or forward the key.
-      let location = if status.starts_with("302") {
-        "Location: http://127.0.0.1:1/leak\r\n"
-      } else {
-        ""
-      };
-      let _ = write!(socket, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{location}Connection: close\r\n\r\n{body}", body.len());
     });
     Self {
       base_url,
@@ -65,7 +96,7 @@ impl MockProvider {
     }
   }
 
-  fn settings(&self, provider_kind: AiProviderKind) -> AiSettings {
+  pub(super) fn settings(&self, provider_kind: AiProviderKind) -> AiSettings {
     AiSettings {
       provider_kind,
       base_url: self.base_url.clone(),
@@ -75,26 +106,35 @@ impl MockProvider {
   }
 
   fn captured(self) -> (String, Value) {
+    self.captured_all().pop().unwrap()
+  }
+
+  pub(super) fn captured_all(self) -> Vec<(String, Value)> {
     self.server.join().unwrap();
-    let bytes = self.request.recv().unwrap();
-    let boundary = bytes
-      .windows(4)
-      .position(|slice| slice == b"\r\n\r\n")
-      .unwrap();
-    let headers = String::from_utf8_lossy(&bytes[..boundary]).to_ascii_lowercase();
-    let body = &bytes[boundary + 4..];
-    (
-      headers,
-      if body.is_empty() {
-        Value::Null
-      } else {
-        serde_json::from_slice(body).unwrap()
-      },
-    )
+    self
+      .request
+      .into_iter()
+      .map(|bytes| {
+        let boundary = bytes
+          .windows(4)
+          .position(|slice| slice == b"\r\n\r\n")
+          .unwrap();
+        let headers = String::from_utf8_lossy(&bytes[..boundary]).to_ascii_lowercase();
+        let body = &bytes[boundary + 4..];
+        (
+          headers,
+          if body.is_empty() {
+            Value::Null
+          } else {
+            serde_json::from_slice(body).unwrap()
+          },
+        )
+      })
+      .collect()
   }
 }
 
-fn client() -> reqwest::Client {
+pub(super) fn client() -> reqwest::Client {
   reqwest::Client::builder()
     .no_proxy()
     .timeout(Duration::from_secs(5))
@@ -118,7 +158,7 @@ fn embedded_drivers_preserve_context_and_apply_provider_transforms() {
   tauri::async_runtime::block_on(async {
     for kind in PROVIDERS {
       let server = MockProvider::start("200 OK", json!({
-        "choices": [{ "message": { "content": "A grounded answer.", "reasoning_content": "Do not include this." } }]
+        "choices": [{ "finish_reason": "stop", "message": { "content": "A grounded answer.", "reasoning_content": "Do not include this." } }]
       }).to_string());
       let answer = complete(
         &client(),
@@ -133,17 +173,21 @@ fn embedded_drivers_preserve_context_and_apply_provider_transforms() {
       assert!(headers.contains("authorization: bearer test-only-token"));
       assert!(headers.contains("content-type: application/json"));
       assert_eq!(payload["model"], "glm-test-model");
-      assert_eq!(payload["stream"], false);
+      assert_eq!(payload["stream"], true);
+      assert_eq!(payload["tool_choice"], "auto");
+      assert_eq!(
+        payload["tools"][0]["function"]["name"],
+        "propose_annotation"
+      );
       assert_eq!(payload["messages"][0]["content"], SYSTEM_PROMPT);
       assert!(payload["messages"][1]["content"]
         .as_str()
         .unwrap()
         .contains("Selected passage"));
-      if kind == AiProviderKind::Deepseek {
-        assert_eq!(payload["thinking"]["type"], "disabled");
-      } else if matches!(
+      if matches!(
         kind,
-        AiProviderKind::Zai
+        AiProviderKind::Deepseek
+          | AiProviderKind::Zai
           | AiProviderKind::ZaiCodingPlan
           | AiProviderKind::Zhipu
           | AiProviderKind::ZhipuCodingPlan
@@ -160,7 +204,7 @@ fn compatible_provider_omits_authorization_when_key_is_empty() {
   tauri::async_runtime::block_on(async {
     for key in [None, Some("  ".into())] {
       let server = MockProvider::start("200 OK", json!({
-        "choices": [{ "message": { "content": [{ "type": "text", "text": "First" }, { "type": "text", "text": "Second" }] } }]
+        "choices": [{ "finish_reason": "stop", "message": { "content": [{ "type": "text", "text": "First" }, { "type": "text", "text": "Second" }] } }]
       }).to_string());
       let answer = complete(
         &client(),
@@ -270,7 +314,7 @@ fn discovery_and_completion_bound_bodies_and_hide_upstream_errors() {
         ("200 OK", "not-json-secret-key".into(), "compatible"),
         (
           "200 OK",
-          "x".repeat(MAX_RESPONSE_BYTES + 1),
+          "x".repeat(stream::MAX_STREAM_BYTES + 1),
           "too much data",
         ),
       ] {
@@ -354,26 +398,6 @@ fn missing_keys_and_invalid_keys_fail_before_network_access() {
       assert!(build_provider(&settings, Some(key)).is_err());
     }
   }
-}
-
-#[test]
-fn content_parser_never_substitutes_reasoning_for_an_answer() {
-  for content in [
-    Value::Null,
-    json!(" "),
-    json!([{ "type": "reasoning", "text": "hidden" }]),
-  ] {
-    assert!(answer_text(&json!({ "choices": [{ "message": {
-      "content": content, "reasoning_content": "hidden"
-    } }] }))
-    .is_err());
-  }
-  let truncated = json!({ "choices": [{
-    "finish_reason": "length", "message": { "content": "An unfinished answer" }
-  }] });
-  assert!(answer_text(&truncated)
-    .unwrap_err()
-    .contains("response limit"));
 }
 
 #[test]

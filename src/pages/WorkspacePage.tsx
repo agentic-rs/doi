@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import {
@@ -12,9 +12,11 @@ import { PaperInfoSheet } from '../components/PaperInfoSheet';
 import { ReaderOverlay } from '../components/ReaderOverlay';
 import { FloatingSelectionAction } from '../components/FloatingSelectionAction';
 import { SettingsDialog } from '../components/SettingsDialog';
+import { AiAnswerDraft } from '../components/AiAnswerDraft';
+import { useAiDrafts } from '../lib/useAiDrafts';
 import '../components/reading-workspace.css';
 import {
-  askSelection, deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
+  deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
   listAnnotations, listPapers, onProgress, openArxivPaper, openExternal,
   resolveReference, saveAnnotation, saveAnnotationFile, saveReadingPosition,
   getReaderCapabilities, setReaderOrientation,
@@ -126,7 +128,6 @@ export function WorkspacePage() {
   const [composerKind, setComposerKind] = useState<'ai' | 'note'>('ai');
   const [question, setQuestion] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
-  const [aiPending, setAiPending] = useState<string | null>(null);
   const [annotationBusy, setAnnotationBusy] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -148,9 +149,21 @@ export function WorkspacePage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const arxivInputRef = useRef<HTMLInputElement>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
+  const annotationChangesRef = useRef(new Map<string, { paper_id: string; pdf_hash: string; annotation: Annotation | null }>());
   const libraryButtonRef = useRef<HTMLButtonElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
   const drawerLayout = compactLayout || Boolean(active);
+  const readerActionsRef = useRef({ handleNavigate, toggleReadingControls });
+  readerActionsRef.current = { handleNavigate, toggleReadingControls };
+  const aiDrafts = useAiDrafts(storeAnnotation);
+
+  function storeAnnotation(saved: Annotation) {
+    annotationChangesRef.current.set(saved.annotation_id, { paper_id: saved.target.paper_id, pdf_hash: saved.target.pdf_hash, annotation: saved });
+    const paper = activeRef.current?.paper;
+    if (mountedRef.current && paper?.paper_id === saved.target.paper_id && paper.pdf_hash === saved.target.pdf_hash) {
+      setAnnotations((existing) => sortAnnotations([saved, ...existing.filter((item) => item.annotation_id !== saved.annotation_id)]));
+    }
+  }
 
   useEffect(() => {
     if (!isNative) return;
@@ -352,7 +365,15 @@ export function WorkspacePage() {
     setControlsVisible(false);
     activeRef.current = document;
     setActive(document);
-    setAnnotations(sortAnnotations(notes));
+    // A save can finish after the annotation read, while the PDF is still
+    // loading. Preserve every local write (including deletes) over that snapshot.
+    const mergedNotes = new Map(notes.map((annotation) => [annotation.annotation_id, annotation]));
+    for (const [id, change] of annotationChangesRef.current) {
+      if (change.paper_id !== document.paper.paper_id || change.pdf_hash !== document.paper.pdf_hash) continue;
+      if (change.annotation) mergedNotes.set(id, change.annotation);
+      else mergedNotes.delete(id);
+    }
+    setAnnotations(sortAnnotations([...mergedNotes.values()]));
     setReferences([]);
     setResolutions({});
     setEditId(null);
@@ -497,7 +518,19 @@ export function WorkspacePage() {
     event.preventDefault();
     const paper = activeRef.current?.paper;
     const capturedSelection = selectionRef.current;
-    if (!paper || !capturedSelection || aiPending || annotationBusy) return;
+    if (!paper || !capturedSelection || annotationBusy) return;
+    if (composerKind === 'ai') {
+      if (!question.trim()) return;
+      const requestId = aiDrafts.ask(paper, capturedSelection, question);
+      setQuestion('');
+      askInputRef.current?.blur();
+      requestAnimationFrame(() => {
+        if (activeRef.current?.paper.paper_id !== paper.paper_id) return;
+        document.getElementById(`ai-response-${requestId}`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      });
+      return;
+    }
+    if (!noteDraft.trim()) return;
     const capturedKey = selectionKey(capturedSelection);
     const now = new Date().toISOString();
     const annotation: Annotation = {
@@ -512,48 +545,20 @@ export function WorkspacePage() {
       created_at: now,
       updated_at: now,
     };
-    const capturedQuestion = question.trim();
-    const kind = composerKind;
-    if (kind === 'note' && !noteDraft.trim()) return;
-    if (kind === 'ai' && !capturedQuestion) return;
     setNotice(null);
-    if (kind === 'ai') setAiPending(annotation.annotation_id);
-    else setAnnotationBusy(annotation.annotation_id);
+    setAnnotationBusy(annotation.annotation_id);
     try {
-      if (kind === 'ai') {
-        const answer = await askSelection({
-          request_id: annotation.annotation_id,
-          paper_id: paper.paper_id,
-          selected_text: capturedSelection.selected_text,
-          context_text: capturedSelection.context_text,
-          question: capturedQuestion,
-        });
-        annotation.body = {
-          kind: 'ai_answer',
-          question: capturedQuestion,
-          answer: answer.answer,
-          provider_id: answer.provider_id,
-          model_id: answer.model_id,
-          context_text: answer.context_text,
-        };
-      }
       const saved = await saveAnnotation(annotation);
       if (!mountedRef.current) return;
+      storeAnnotation(saved);
       if (activeRef.current?.paper.paper_id === paper.paper_id) {
-        setAnnotations((existing) => sortAnnotations([saved, ...existing.filter((item) => item.annotation_id !== saved.annotation_id)]));
-        if (selectionRef.current && selectionKey(selectionRef.current) === capturedKey) {
-          if (kind === 'ai') setQuestion('');
-          else setNoteDraft('');
-        }
+        if (selectionRef.current && selectionKey(selectionRef.current) === capturedKey) setNoteDraft('');
       }
-      setNotice({ tone: 'success', message: activeRef.current?.paper.paper_id === paper.paper_id ? `${kind === 'ai' ? 'Answer' : 'Note'} saved to this passage.` : `${kind === 'ai' ? 'Answer' : 'Note'} saved to “${paper.title}”.` });
+      setNotice({ tone: 'success', message: activeRef.current?.paper.paper_id === paper.paper_id ? 'Note saved to this passage.' : `Note saved to “${paper.title}”.` });
     } catch (cause) {
-      if (mountedRef.current) setNotice({ tone: 'error', message: `${kind === 'ai' ? 'Could not get and save an answer' : 'Could not save your note'}: ${String(cause)}` });
+      if (mountedRef.current) setNotice({ tone: 'error', message: `Could not save your note: ${String(cause)}` });
     } finally {
-      if (mountedRef.current) {
-        if (kind === 'ai') setAiPending(null);
-        else setAnnotationBusy(null);
-      }
+      if (mountedRef.current) setAnnotationBusy(null);
     }
   }
 
@@ -561,6 +566,8 @@ export function WorkspacePage() {
     setAnnotationBusy(annotation.annotation_id);
     try {
       await deleteAnnotation(annotation.annotation_id);
+      aiDrafts.dismiss(annotation.annotation_id);
+      annotationChangesRef.current.set(annotation.annotation_id, { paper_id: annotation.target.paper_id, pdf_hash: annotation.target.pdf_hash, annotation: null });
       if (activeRef.current?.paper.paper_id === annotation.target.paper_id) setAnnotations((existing) => existing.filter((item) => item.annotation_id !== annotation.annotation_id));
       if (editId === annotation.annotation_id) setEditId(null);
     } catch (cause) {
@@ -576,11 +583,11 @@ export function WorkspacePage() {
     try {
       const updated = await saveAnnotation({
         ...annotation,
-        body: annotation.body.kind === 'note' ? { ...annotation.body, content: editDraft.trim() } : { ...annotation.body, answer: editDraft.trim() },
+        body: annotation.body.kind === 'note' ? { ...annotation.body, content: editDraft.trim() } : { ...annotation.body, note_content: editDraft.trim() },
         updated_at: new Date().toISOString(),
       });
+      storeAnnotation(updated);
       if (activeRef.current?.paper.paper_id === annotation.target.paper_id) {
-        setAnnotations((existing) => existing.map((item) => item.annotation_id === updated.annotation_id ? updated : item));
         setEditId(null);
       }
     } catch (cause) {
@@ -623,7 +630,7 @@ export function WorkspacePage() {
       for (const annotation of records) {
         const saved = await saveAnnotation(annotation);
         importedCount += 1;
-        if (activeRef.current?.paper.paper_id === paper.paper_id) setAnnotations((existing) => sortAnnotations([saved, ...existing.filter((item) => item.annotation_id !== saved.annotation_id)]));
+        storeAnnotation(saved);
       }
       setNotice({ tone: 'success', message: `Imported ${importedCount} annotation${importedCount === 1 ? '' : 's'}.` });
     } catch (cause) {
@@ -674,7 +681,12 @@ export function WorkspacePage() {
   const selectedPages = selection?.page_anchors.map((anchor) => anchor.page_number).join(', ');
   const progressPercent = progress?.total_bytes ? Math.round(progress.received_bytes / progress.total_bytes * 100) : null;
   const current = currentLocation(history);
-  const pendingAnnotation = Boolean(annotationBusy || aiPending);
+  const pendingAnnotation = Boolean(annotationBusy);
+  const paperDrafts = aiDrafts.drafts.filter((draft) => draft.paper.paper_id === active?.paper.paper_id && draft.paper.pdf_hash === active.paper.pdf_hash);
+  // Keep PDF rendering independent of streamed text and note editing. Event
+  // actions read their latest implementation without invalidating this element.
+  const reader = useMemo(() => active ? <PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!paperInfoOpen && !libraryOpen && !settingsOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection} on_references={(items) => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) setReferences(items); }} on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
+    [active, annotations, targetLocation, targetAnchor, navigationKey, controlsVisible, inspectorOpen, viewportKey, paperInfoOpen, libraryOpen, settingsOpen, handleLocationChange, handleSelection]);
 
   return (
     <div className={`app-shell ${active ? 'reading-mode' : ''} ${libraryOpen ? 'library-is-open' : ''}`}>
@@ -740,7 +752,7 @@ export function WorkspacePage() {
         <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">
             {active ?
-              <div className="pdf-reader-mount" inert={inspectorOpen}><PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={toggleReadingControls} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!paperInfoOpen && !libraryOpen && !settingsOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={handleNavigate} on_selection={handleSelection} on_references={(items) => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) setReferences(items); }} on_error={(message) => setNotice({ tone: 'error', message })} /></div>
+              <div className="pdf-reader-mount" inert={inspectorOpen}>{reader}</div>
             : <div className="reader-welcome">
               <div className="welcome-eyebrow"><span /> FOLLOW A THOUGHT</div>
               <h1>One paper.<br />A world of ideas.</h1>
@@ -779,16 +791,18 @@ export function WorkspacePage() {
                 <div className="selection-heading"><span><span className="selection-dot" /> SELECTED PASSAGE</span><button type="button" className="icon-button" onClick={clearSelection} aria-label="Dismiss selected passage"><X size={14} /></button></div>
                 <blockquote>{selection.selected_text}</blockquote><span className="selection-page">Page {selectedPages}</span>
                 <div className="composer-tabs"><button type="button" className={composerKind === 'ai' ? 'is-active' : ''} onClick={() => { setComposerKind('ai'); askInputRef.current?.focus(); }}><Sparkles size={14} /> Ask AI</button><button type="button" className={composerKind === 'note' ? 'is-active' : ''} onClick={() => setComposerKind('note')}><StickyNote size={14} /> Add a note</button></div>
-                {composerKind === 'ai' ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} disabled={Boolean(aiPending)} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}>{aiPending ? <LoaderCircle size={15} className="spin" /> : <Sparkles size={15} />}{aiPending ? 'Thinking and saving…' : 'Ask & save answer'}</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
+                {composerKind === 'ai' ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}><Sparkles size={15} />Ask</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
               </form> : <div className="notes-intro"><span className="empty-symbol"><MessageSquare size={23} strokeWidth={1.5} /></span><h2>Make room for a thought.</h2><p>Select a passage to ask a question or leave a note beside it.</p></div>}
+              {paperDrafts.length > 0 && <div className="ai-draft-list">{paperDrafts.map((draft) => <AiAnswerDraft key={draft.request_id} draft={draft} on_stop={() => aiDrafts.stop(draft.request_id)} on_edit={(content) => aiDrafts.editNote(draft.request_id, content)} on_save={() => { void aiDrafts.save(draft.request_id); }} on_dismiss={() => aiDrafts.dismiss(draft.request_id)} />)}</div>}
               <div className="notes-list-heading"><span className="list-eyebrow">SAVED NOTES <span>{annotations.length}</span></span>{active && <div className="sidecar-controls"><button type="button" className="icon-button" onClick={() => { void exportAnnotations(); }} aria-label="Export annotations as JSON" title="Export annotation sidecar JSON" disabled={exporting}>{exporting ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}</button><button type="button" className="icon-button" onClick={() => importInputRef.current?.click()} aria-label="Import annotation JSON" title="Import annotation sidecar JSON" disabled={importing}>{importing ? <LoaderCircle size={15} className="spin" /> : <Upload size={15} />}</button><input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { void importAnnotations(event); }} /></div>}</div>
               {annotations.length ? <div className="annotation-list">{annotations.map((annotation) => <article className="annotation-card" key={annotation.annotation_id}>
                 <div className="annotation-meta"><span>{annotation.body.kind === 'ai_answer' ? <Sparkles size={13} /> : <StickyNote size={13} />}{annotation.body.kind === 'ai_answer' ? 'AI answer' : 'Your note'}</span><button type="button" className="annotation-page" onClick={() => jumpToAnnotation(annotation)}>p. {annotation.target.page_anchors[0]?.page_number} <ArrowUpRight size={11} /></button></div>
                 <button type="button" className="annotation-quote" onClick={() => jumpToAnnotation(annotation)} title="Go to annotated passage">“{annotationQuote(annotation)}”</button>
                 {annotation.body.kind === 'ai_answer' && <h3 className="annotation-question">{annotation.body.question}</h3>}
-                {editId === annotation.annotation_id ? <div className="annotation-editor"><label className="sr-only" htmlFor={`edit-${annotation.annotation_id}`}>Edit {annotation.body.kind === 'ai_answer' ? 'answer' : 'note'}</label><textarea id={`edit-${annotation.annotation_id}`} value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={6} /><div><button type="button" className="text-button" onClick={() => setEditId(null)}>Cancel</button><button type="button" className="button button-primary button-small" onClick={() => { void updateAnnotation(annotation); }} disabled={Boolean(annotationBusy) || !editDraft.trim()}>Save</button></div></div> : <div className="annotation-body">{annotation.body.kind === 'note' ? annotation.body.content : annotation.body.answer}</div>}
+                {editId === annotation.annotation_id ? <div className="annotation-editor"><label className="sr-only" htmlFor={`edit-${annotation.annotation_id}`}>Edit note</label><textarea id={`edit-${annotation.annotation_id}`} value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={6} /><div><button type="button" className="text-button" onClick={() => setEditId(null)}>Cancel</button><button type="button" className="button button-primary button-small" onClick={() => { void updateAnnotation(annotation); }} disabled={Boolean(annotationBusy) || !editDraft.trim()}>Save</button></div></div> : <div className="annotation-body">{annotation.body.kind === 'note' ? annotation.body.content : annotation.body.note_content ?? annotation.body.answer}</div>}
+                {annotation.body.kind === 'ai_answer' && annotation.body.note_content !== undefined && annotation.body.note_content !== annotation.body.answer && <details className="annotation-full-answer"><summary>Full answer <ChevronRight size={12} /></summary><div className="annotation-body">{annotation.body.answer}</div></details>}
                 {annotation.body.kind === 'ai_answer' && <div className="annotation-model">{annotation.body.model_id}</div>}
-                <div className="annotation-footer"><span>{new Date(annotation.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{annotation.updated_at !== annotation.created_at ? ' · edited' : ''}</span><div><button type="button" className="text-button annotation-edit" onClick={() => { setEditId(annotation.annotation_id); setEditDraft(annotation.body.kind === 'note' ? annotation.body.content : annotation.body.answer); }} disabled={Boolean(annotationBusy)}>Edit</button><button type="button" className="icon-button delete-button" onClick={() => { void removeAnnotation(annotation); }} aria-label="Delete annotation" title="Delete annotation" disabled={Boolean(annotationBusy)}>{annotationBusy === annotation.annotation_id ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}</button></div></div>
+                <div className="annotation-footer"><span>{new Date(annotation.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{annotation.updated_at !== annotation.created_at ? ' · edited' : ''}</span><div><button type="button" className="text-button annotation-edit" onClick={() => { setEditId(annotation.annotation_id); setEditDraft(annotation.body.kind === 'note' ? annotation.body.content : annotation.body.note_content ?? annotation.body.answer); }} disabled={Boolean(annotationBusy)}>Edit</button><button type="button" className="icon-button delete-button" onClick={() => { void removeAnnotation(annotation); }} aria-label="Delete annotation" title="Delete annotation" disabled={Boolean(annotationBusy)}>{annotationBusy === annotation.annotation_id ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}</button></div></div>
               </article>)}</div> : <p className="no-notes">Your questions and observations will collect here, anchored to the original passage.</p>}
               {active && <p className="annotation-format-hint"><FileText size={12} /> Your notes use a portable JSON sidecar.</p>}
             </div>}

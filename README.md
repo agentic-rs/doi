@@ -6,7 +6,7 @@ Built with Tauri 2, Rust, React, TypeScript, and PDF.js. PDFs stay unchanged; an
 
 ## Run locally
 
-Prerequisites: Node.js 22.18 or newer, pnpm, Rust 1.88 or newer, and your platform's [Tauri development prerequisites](https://v2.tauri.app/start/prerequisites/).
+Prerequisites: Node.js 22.18 or newer, pnpm, Rust 1.90 or newer, and your platform's [Tauri development prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```sh
 pnpm install
@@ -63,7 +63,7 @@ See [iOS build and installation](docs/ios.md) for simulator installation, signed
 1. Enter an arXiv ID or arXiv URL. Modern IDs, legacy IDs, and explicit versions are supported. Downloaded papers enter the local library.
 2. Opening a paper shows its full title, authors, arXiv ID/version, abstract, and cached date. Choose **Read paper** or **Resume reading** to dismiss the information sheet. The saved reading view fills the app window; new papers start in the original PDF.
 3. Tap a page to show or hide the reading controls. The overlay opens the library, **Info**, **Refs & notes**, and settings. On iOS, **Landscape** or **Portrait** changes the viewer's screen orientation; **Rotate clockwise** in the PDF controls separately rotates the PDF pages.
-4. Select text, then tap the floating sparkle icon to ask AI or add a note. Drag the icon to move it out of the way. In Settings, choose your AI provider, enter your own API key, and use **Load models** to choose a model. You can also enter its ID manually. Tokn's Rust provider components run inside the app on desktop and iOS. See [AI setup](docs/ai.md).
+4. Select text, then tap the floating sparkle icon to ask AI or add a note. Drag the icon to move it out of the way. **Ask** streams the answer and any provider-exposed thinking. Review and edit the model's suggested note, then use **Save note** to keep it beside the passage. In Settings, choose your AI provider, enter your own API key, and use **Load models** to choose a model. You can also enter its ID manually. Tokn's Rust provider components run inside the app on desktop and iOS. See [AI setup](docs/ai.md).
 5. Follow PDF citation links or open detected arXiv references. For references that need matching, review the suggested papers before choosing one.
 6. Use Back and Forward in the reading overlay to restore earlier reading positions, including across papers. History navigation restores the view mode and passage without reopening the information sheet.
 7. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.

@@ -18,7 +18,9 @@ Each record contains:
 - `body`: a typed note or AI answer.
 - `created_at` and `updated_at`: RFC3339 timestamps.
 
-A note body has `kind: "note"` and `content`. An AI answer has `kind: "ai_answer"`, `question`, `answer`, `provider_id`, `model_id`, and `context_text`. Provider credentials are never exported.
+A note body has `kind: "note"` and `content`. An AI answer has `kind: "ai_answer"`, `question`, `answer`, `provider_id`, `model_id`, and `context_text`. Its optional `note_content` contains the note reviewed and saved by the user, while `answer` preserves the complete response. Missing `note_content` identifies a legacy record that displays `answer` directly. Editing an AI note changes `note_content` and retains the original answer and provenance. Provider credentials and thinking text are never exported.
+
+Asking creates a session draft, not an annotation. The model's `propose_annotation` tool supplies only proposed text; Papertrail owns IDs, source anchors, and timestamps. The dedicated Save action persists a draft with a stable ID so retries cannot create duplicate annotations. This is an optional field extension of version 1; existing sidecars remain readable without migration.
 
 ## Anchoring
 

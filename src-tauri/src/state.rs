@@ -1,4 +1,6 @@
-use crate::{error::Result, http, models::OperationProgress, storage::Database};
+use crate::{
+  ai::RequestRegistry, error::Result, http, models::OperationProgress, storage::Database,
+};
 use std::{
   path::PathBuf,
   time::{Duration, Instant},
@@ -14,6 +16,7 @@ pub struct AppState {
   pub import_lock: Mutex<()>,
   pub settings_lock: Mutex<()>,
   pub arxiv_request_clock: Mutex<Instant>,
+  pub ai_requests: RequestRegistry,
 }
 
 impl AppState {
@@ -55,7 +58,8 @@ impl AppState {
         .tls_certs_merge(roots)
         .user_agent("Papertrail/0.1")
         .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(300))
+        .read_timeout(Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not initialize AI networking. Check the TLS certificate configuration and restart Papertrail.".to_string())
@@ -68,6 +72,7 @@ impl AppState {
       import_lock: Mutex::new(()),
       settings_lock: Mutex::new(()),
       arxiv_request_clock: Mutex::new(Instant::now() - Duration::from_secs(3)),
+      ai_requests: RequestRegistry::default(),
     })
   }
 

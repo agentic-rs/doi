@@ -38,6 +38,11 @@ export function validateAnnotation(value: unknown, paper: Pick<Paper, 'paper_id'
     : !['question', 'answer', 'provider_id', 'model_id', 'context_text'].every((key) => string(body[key]))) {
     throw new Error('Invalid annotation content.');
   }
+  if (body.kind === 'ai_answer' && body.note_content !== undefined
+    && (!string(body.note_content) || !body.note_content.trim() || body.note_content.includes('\0')
+      || new TextEncoder().encode(body.note_content).byteLength > 128 * 1024)) {
+    throw new Error('Invalid AI note content.');
+  }
 }
 
 export function serializeAnnotations(paper: Paper, annotations: Annotation[]): string {

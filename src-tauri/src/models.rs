@@ -103,6 +103,8 @@ pub enum AnnotationBody {
   AiAnswer {
     question: String,
     answer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_content: Option<String>,
     provider_id: String,
     model_id: String,
     context_text: String,
@@ -171,9 +173,27 @@ pub struct AiRequest {
 #[derive(Debug, Serialize)]
 pub struct AiAnswer {
   pub answer: String,
+  pub thinking: String,
+  pub note_proposal: Option<String>,
+  pub proposal_warning: Option<String>,
   pub provider_id: String,
   pub model_id: String,
   pub context_text: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiStreamKind {
+  Status,
+  ThinkingDelta,
+  AnswerDelta,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AiStreamEvent {
+  pub request_id: String,
+  pub kind: AiStreamKind,
+  pub text: String,
 }
 
 #[derive(Debug, Serialize)]

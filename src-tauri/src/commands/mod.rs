@@ -114,6 +114,13 @@ pub async fn ask_selection(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn cancel_ai_request(state: State<'_, AppState>, request_id: String) -> Result<()> {
+  validation::validate_id(&request_id)?;
+  state.ai_requests.cancel(&request_id);
+  Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn resolve_reference(
   state: State<'_, AppState>,
   citation_text: String,

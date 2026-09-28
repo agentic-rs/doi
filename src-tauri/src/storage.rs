@@ -400,6 +400,43 @@ mod tests {
   }
 
   #[test]
+  fn reviewed_ai_notes_preserve_original_answers_and_legacy_annotations() {
+    tauri::async_runtime::block_on(async {
+      let directory = tempfile::tempdir().unwrap();
+      let path = directory.path().join("library.sqlite");
+      let db = Database::initialize(&path).unwrap();
+      let paper = db.save_paper(fixture_paper()).await.unwrap();
+      let mut annotation = fixture_annotation(&paper);
+      annotation.body = serde_json::from_value(serde_json::json!({
+        "kind": "ai_answer", "question": "Why?", "answer": "The original complete explanation.",
+        "provider_id": "https://provider.example/v1", "model_id": "test-model", "context_text": "Quoted source",
+      })).unwrap();
+      let legacy = db.save_annotation(annotation).await.unwrap();
+      let legacy_json = serde_json::to_value(&legacy).unwrap();
+      assert!(legacy_json["body"].get("note_content").is_none());
+      let mut reviewed = legacy.clone();
+      if let AnnotationBody::AiAnswer { note_content, .. } = &mut reviewed.body {
+        *note_content = Some("My reviewed takeaway.".into());
+      }
+      db.save_annotation(reviewed.clone()).await.unwrap();
+      db.save_annotation(reviewed.clone()).await.unwrap();
+      let reopened = Database::initialize(&path).unwrap();
+      let annotations = reopened.list_annotations(paper.paper_id).await.unwrap();
+      assert_eq!(annotations.len(), 1);
+      let body = serde_json::to_value(&annotations[0].body).unwrap();
+      assert_eq!(body["note_content"], "My reviewed takeaway.");
+      assert_eq!(body["answer"], legacy_json["body"]["answer"]);
+      assert_eq!(body["context_text"], legacy_json["body"]["context_text"]);
+      for invalid in [" ".to_owned(), "contains\0null".into(), "字".repeat(44_000)] {
+        if let AnnotationBody::AiAnswer { note_content, .. } = &mut reviewed.body {
+          *note_content = Some(invalid);
+        }
+        assert!(db.save_annotation(reviewed.clone()).await.is_err());
+      }
+    });
+  }
+
+  #[test]
   fn persistence_and_revision_bound_annotations() {
     tauri::async_runtime::block_on(async {
       let directory = tempfile::tempdir().unwrap();

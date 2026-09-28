@@ -80,6 +80,8 @@ export type AnnotationBody =
       kind: 'ai_answer';
       question: string;
       answer: string;
+      // Missing on legacy annotations, which display the complete answer.
+      note_content?: string;
       provider_id: string;
       model_id: string;
       context_text: string;
@@ -141,9 +143,18 @@ export interface AiRequest {
 
 export interface AiAnswer {
   answer: string;
+  thinking: string;
+  note_proposal: string | null;
+  proposal_warning: string | null;
   provider_id: string;
   model_id: string;
   context_text: string;
+}
+
+export interface AiStreamEvent {
+  request_id: string;
+  kind: 'status' | 'thinking_delta' | 'answer_delta';
+  text: string;
 }
 
 export interface OperationProgress {

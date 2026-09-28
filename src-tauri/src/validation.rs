@@ -2,6 +2,7 @@ use crate::{error::Result, models::*};
 use url::Url;
 
 pub const MAX_TEXT_BYTES: usize = 128 * 1024;
+pub const MAX_AI_NOTE_BYTES: usize = 32 * 1024;
 
 pub fn validate_id(id: &str) -> Result<()> {
   if id.is_empty() || id.len() > 160 || id.chars().any(char::is_control) {
@@ -92,12 +93,16 @@ pub fn validate_annotation(annotation: &Annotation) -> Result<()> {
     AnnotationBody::AiAnswer {
       question,
       answer,
+      note_content,
       provider_id,
       model_id,
       context_text,
     } => {
       require_text(question, "question", 8192)?;
       require_text(answer, "AI answer", MAX_TEXT_BYTES)?;
+      if let Some(note) = note_content {
+        require_text(note, "AI note", MAX_TEXT_BYTES)?;
+      }
       require_text(provider_id, "provider", 2048)?;
       require_text(model_id, "model", 512)?;
       bound_text(context_text, "AI context", MAX_TEXT_BYTES)?;

@@ -19,6 +19,31 @@ const annotation: Annotation = {
 };
 
 describe('app annotation sidecar', () => {
+  it('round trips a reviewed AI note together with its original answer and provenance', () => {
+    const aiNote: Annotation = {
+      ...annotation,
+      body: {
+        kind: 'ai_answer', question: 'Why does this matter?',
+        answer: 'The complete explanation remains available.', note_content: 'My edited takeaway.',
+        provider_id: 'https://provider.example/v1', model_id: 'test-model', context_text: 'Quoted context',
+      },
+    };
+    expect(parseAnnotationSidecar(serializeAnnotations(paper, [aiNote]), paper)).toEqual([aiNote]);
+    if (aiNote.body.kind !== 'ai_answer') throw new Error('Expected an AI note');
+    delete aiNote.body.note_content;
+    expect(parseAnnotationSidecar(serializeAnnotations(paper, [aiNote]), paper)).toEqual([aiNote]);
+  });
+  it('rejects invalid optional AI note content before importing', () => {
+    const data = JSON.parse(serializeAnnotations(paper, [annotation]));
+    data.annotations[0].body = {
+      kind: 'ai_answer', question: 'Why?', answer: 'Explanation',
+      provider_id: 'local', model_id: 'local-model', context_text: '',
+    };
+    for (const invalid of [null, 42, '', '  ', 'contains\0null', '字'.repeat(44_000)]) {
+      data.annotations[0].body.note_content = invalid;
+      expect(() => parseAnnotationSidecar(JSON.stringify(data), paper)).toThrow(/AI note/);
+    }
+  });
   it('round trips coordinates and content independently of the renderer', () => {
     expect(parseAnnotationSidecar(serializeAnnotations(paper, [annotation]), paper)).toEqual([annotation]);
   });

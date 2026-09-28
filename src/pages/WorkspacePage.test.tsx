@@ -1,19 +1,20 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AiAnswer, Paper, PdfReaderProps, ReadingLocation, SelectionContext } from '../lib/types';
+import type { AiAnswer, AiStreamEvent, Annotation, Paper, PdfReaderProps, ReadingLocation, SelectionContext } from '../lib/types';
 import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
 vi.mock('../lib/tauri', () => ({
   nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
   openArxivPaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
-  askSelection: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
+  askSelection: vi.fn(), onAiStream: vi.fn(), cancelAiRequest: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
   resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(), listAiModels: vi.fn(),
   getReaderCapabilities: vi.fn(), setReaderOrientation: vi.fn(),
 }));
 
 let lastReader: PdfReaderProps;
+let readerRenderCount = 0;
 const selection: SelectionContext = {
   selected_text: 'Selected passage', context_text: 'Nearby text',
   page_anchors: [{ page_number: 4, quad_points: [[10, 20, 30, 20, 30, 10, 10, 10]],
@@ -22,6 +23,7 @@ const selection: SelectionContext = {
 
 vi.mock('../components/PdfReader', () => ({
   PdfReader: (props: PdfReaderProps) => {
+    readerRenderCount += 1;
     lastReader = props;
     return <div data-testid="reader">
       {props.paper.title}
@@ -52,12 +54,15 @@ function mockLayout(compact: boolean) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  readerRenderCount = 0;
   mockLayout(false);
   vi.mocked(backend.nativeAvailable).mockReturnValue(true);
   vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: false });
   vi.mocked(backend.listPapers).mockResolvedValue([first, second]);
   vi.mocked(backend.getSettings).mockResolvedValue({ provider_kind: 'openai_compatible', base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
   vi.mocked(backend.onProgress).mockResolvedValue(() => {});
+  vi.mocked(backend.onAiStream).mockResolvedValue(() => {});
+  vi.mocked(backend.cancelAiRequest).mockResolvedValue();
   vi.mocked(backend.getPdfBytes).mockResolvedValue(new Uint8Array([1, 2, 3]));
   vi.mocked(backend.listAnnotations).mockResolvedValue([]);
   vi.mocked(backend.saveReadingPosition).mockResolvedValue();
@@ -351,21 +356,104 @@ describe('assembled paper workspace', () => {
     expect(lastReader.controls_visible).toBe(false);
   });
 
-  it('supports a provider without a key and saves late answers to the selected paper', async () => {
+  it('keeps late AI answers unsaved and saves the edited note to the original passage after navigation', async () => {
     await openFirst();
     let resolveAnswer!: (answer: AiAnswer) => void;
     vi.mocked(backend.askSelection).mockReturnValue(new Promise((resolve) => { resolveAnswer = resolve; }));
     openSelection();
     fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain this passage' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Ask & save answer' }));
-    expect(backend.askSelection).toHaveBeenCalledWith(expect.objectContaining({ paper_id: first.paper_id, question: 'Explain this passage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await waitFor(() => expect(backend.askSelection).toHaveBeenCalledWith(expect.objectContaining({ paper_id: first.paper_id, question: 'Explain this passage' })));
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
-    await act(async () => resolveAnswer({ answer: 'An explanation', provider_id: 'local', model_id: 'local-model', context_text: 'Actual prompt' }));
+    await act(async () => resolveAnswer({ answer: 'An explanation', thinking: '', note_proposal: 'A concise takeaway', proposal_warning: null, provider_id: 'local', model_id: 'local-model', context_text: 'Actual prompt' }));
+    expect(backend.saveAnnotation).not.toHaveBeenCalled();
+    expect(screen.queryByText('An explanation')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect(await screen.findByText('An explanation')).toBeTruthy();
+    act(() => lastReader.on_selection({ ...selection, selected_text: 'A different selection', page_anchors: [{ ...selection.page_anchors[0], page_number: 9 }] }));
+    fireEvent.change(screen.getByLabelText('Suggested note'), { target: { value: 'My edited takeaway' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     await waitFor(() => expect(backend.saveAnnotation).toHaveBeenCalled());
     const saved = vi.mocked(backend.saveAnnotation).mock.calls[0][0];
-    expect(saved.target).toMatchObject({ paper_id: first.paper_id, pdf_hash: first.pdf_hash });
-    expect(lastReader.annotations).toHaveLength(0);
+    expect(saved.target).toMatchObject({ paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors });
+    expect(saved.body).toMatchObject({ answer: 'An explanation', note_content: 'My edited takeaway' });
+    expect(await screen.findByRole('button', { name: 'Saved' })).toBeTruthy();
+    expect(backend.askSelection).toHaveBeenCalledTimes(1);
+    expect(lastReader.annotations).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete annotation' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Saved' })).toBeNull());
+  });
+
+  it('streams in the Notes panel without rendering the PDF again', async () => {
+    let stream!: (event: AiStreamEvent) => void;
+    vi.mocked(backend.onAiStream).mockImplementation(async (listener) => { stream = listener; return () => {}; });
+    vi.mocked(backend.askSelection).mockReturnValue(new Promise(() => {}));
+    await openFirst();
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await waitFor(() => expect(backend.askSelection).toHaveBeenCalled());
+    const renders = readerRenderCount;
+    const requestId = vi.mocked(backend.askSelection).mock.calls[0][0].request_id;
+    act(() => {
+      stream({ request_id: requestId, kind: 'thinking_delta', text: 'Provider reasoning' });
+      stream({ request_id: requestId, kind: 'answer_delta', text: 'Streaming answer' });
+    });
+    expect(await screen.findByText('Streaming answer')).toBeTruthy();
+    expect(readerRenderCount).toBe(renders);
+    expect(backend.saveAnnotation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss selected passage' }));
+    expect(screen.getByText('Streaming answer')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(backend.cancelAiRequest).toHaveBeenCalledWith(requestId);
+  });
+
+  it('edits a legacy AI annotation as a note while preserving its original answer and provenance', async () => {
+    const legacy: Annotation = {
+      schema_version: 1, annotation_id: 'legacy-answer',
+      target: { paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors },
+      body: { kind: 'ai_answer', answer: 'Original detailed answer', question: 'Explain', provider_id: 'local', model_id: 'local-model', context_text: 'Original context' },
+      created_at: '2026-09-27T00:00:00Z', updated_at: '2026-09-27T00:00:00Z',
+    };
+    vi.mocked(backend.listAnnotations).mockResolvedValue([legacy]);
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit note'), { target: { value: 'My concise note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(backend.saveAnnotation).toHaveBeenCalled());
+    expect(vi.mocked(backend.saveAnnotation).mock.calls[0][0].body).toEqual({ ...legacy.body, note_content: 'My concise note' });
+    expect(await screen.findByText('My concise note')).toBeTruthy();
+    expect(screen.getByText('Full answer').closest('details')?.textContent).toContain('Original detailed answer');
+  });
+
+  it('preserves a saved draft when a pending PDF load returns an older annotation snapshot', async () => {
+    vi.mocked(backend.askSelection).mockResolvedValue({ answer: 'Full answer', thinking: '', note_proposal: 'A takeaway', proposal_warning: null, provider_id: 'local', model_id: 'model', context_text: 'Context' });
+    await openFirst();
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await screen.findByLabelText('Suggested note');
+    let completeSave!: () => void;
+    vi.mocked(backend.saveAnnotation).mockImplementationOnce((annotation) => new Promise((resolve) => { completeSave = () => resolve(annotation); }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    let completePdf!: (data: Uint8Array<ArrayBuffer>) => void;
+    vi.mocked(backend.getPdfBytes).mockReturnValueOnce(new Promise((resolve) => { completePdf = resolve; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
+    fireEvent.click(screen.getByRole('button', { name: /^First paper/ }));
+    await act(async () => completeSave());
+    expect(lastReader.annotations).toHaveLength(1);
+    await act(async () => completePdf(new Uint8Array([1, 2, 3])));
+    await screen.findByRole('dialog', { name: 'First paper' });
+    expect(lastReader.annotations).toHaveLength(1);
+    expect(lastReader.annotations[0].body).toMatchObject({ note_content: 'A takeaway' });
   });
 
   it('persists a note in our format and passes its anchor when revisiting it', async () => {

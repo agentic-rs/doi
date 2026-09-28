@@ -41,7 +41,7 @@ Separate the target from the body:
 
 - Target: exact document hash and revision, with one or more page anchors.
 - Page anchor: one-based page number, PDF user-space quadrilaterals, selected quote, and surrounding text.
-- Body: a user note or an AI answer, including its question, provider/model, and actual context used.
+- Body: a user note or an AI answer, including its question, provider/model, and actual context used. AI notes can add reviewed `note_content` while retaining the full `answer`.
 - Record: schema version, stable annotation ID, and timestamps.
 
 Define quad point ordering and coordinate conventions explicitly. Preserve unscaled, unrotated PDF user-space coordinates, including page box offsets; use engine transforms when displaying them. Do not assume every page starts at zero or every page uses the same size. Screen/device pixel coordinates and PDF.js text item indices are transient.
