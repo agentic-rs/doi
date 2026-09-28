@@ -14,6 +14,12 @@ Papertrail sends the selected passage, nearby text, paper metadata, and your que
 
 The app does not require a Tokn gateway or a separate Tokn configuration. Cloud providers work directly from each device. A custom network endpoint must use HTTPS; HTTP is accepted for loopback endpoints. On iPhone, localhost refers to the phone itself.
 
+## Connection troubleshooting
+
+Papertrail honors proxy environment variables. On desktop, a proxy using a private certificate authority can provide a PEM certificate bundle through `SSL_CERT_FILE`, or `CURL_CA_BUNDLE` when the former is unset or empty. Papertrail loads this bundle when it starts and adds its certificates to Papertrail's trust configuration alongside the operating system's trusted roots. Certificate and hostname verification remain enabled. Restart Papertrail after changing this configuration.
+
+Connection errors distinguish certificate verification, secure-connection, DNS, refused-connection, and timeout failures. Model discovery identifies its own failures. An unreadable or invalid configured certificate bundle prevents network requests but leaves the local library available. A manually entered model ID bypasses model discovery; it cannot fix a connection failure affecting AI answers.
+
 ## Implementation
 
 Tokn's provider crates are pinned to upstream revision `4db3eedb869604b460980956ad42152daaa23ad1`. Papertrail constructs a request-scoped account using a key read from Keychain, then uses Tokn's provider request, credential, and input-transformation APIs. Model discovery uses the same provider headers with a bounded response reader. The custom compatible option uses Tokn's llama.cpp chat adapter with the configured endpoint and optional key.

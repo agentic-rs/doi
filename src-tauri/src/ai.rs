@@ -68,7 +68,7 @@ pub async fn ask(state: &AppState, app: &AppHandle, request: AiRequest) -> Resul
     0,
     None,
   );
-  let answer = provider::complete(&state.ai_http, &settings, api_key, &user_content).await?;
+  let answer = provider::complete(state.ai_http()?, &settings, api_key, &user_content).await?;
   state.progress(
     app,
     &request.request_id,
@@ -101,5 +101,5 @@ pub async fn list_models(
       credentials::get_key(settings.base_url.clone()).await?
     }
   };
-  provider::list_models(&state.ai_http, &settings, api_key).await
+  provider::list_models(state.ai_http()?, &settings, api_key).await
 }

@@ -104,18 +104,19 @@ fn build_provider(settings: &AiSettings, api_key: Option<String>) -> Result<Arc<
   let provider: Arc<dyn Provider> = match settings.provider_kind {
     AiProviderKind::Openai => Arc::new(
       tokn_provider_openai::OpenAiProvider::from_account_at(account, target)
-        .map_err(provider_error)?,
+        .map_err(|error| provider_error("AI provider setup", error))?,
     ),
     AiProviderKind::Deepseek => Arc::new(
       tokn_provider_deepseek::DeepSeekProvider::from_account_at(account, target)
-        .map_err(provider_error)?,
+        .map_err(|error| provider_error("AI provider setup", error))?,
     ),
     AiProviderKind::OpenaiCompatible => Arc::new(
       tokn_provider_llama_cpp::LlamaCppProvider::from_account_at(account, target)
-        .map_err(provider_error)?,
+        .map_err(|error| provider_error("AI provider setup", error))?,
     ),
     _ => Arc::new(
-      tokn_provider_zai::ZaiProvider::from_account_at(account, target).map_err(provider_error)?,
+      tokn_provider_zai::ZaiProvider::from_account_at(account, target)
+        .map_err(|error| provider_error("AI provider setup", error))?,
     ),
   };
   Ok(provider)
@@ -123,9 +124,9 @@ fn build_provider(settings: &AiSettings, api_key: Option<String>) -> Result<Arc<
 
 // Tokn errors can carry raw upstream response bodies. Never expose those bodies,
 // request URLs, or credentials through a Tauri command error or app log.
-fn provider_error(error: Error) -> String {
+fn provider_error(operation: &str, error: Error) -> String {
   match error {
-    Error::Http { source, .. } => network_error("AI request", source),
+    Error::Http { source, .. } => network_error(operation, source),
     Error::MissingCredential { .. } => "Enter an API key for this provider in Settings.".into(),
     Error::UnsupportedEndpoint { .. } => "This provider does not support chat completions.".into(),
     _ => "Could not prepare the AI provider request. Check the provider settings.".into(),
@@ -150,7 +151,7 @@ pub async fn complete(
   if let Some(transformer) = provider.input_transformer() {
     body = transformer
       .transform_input(Endpoint::ChatCompletions, body)
-      .map_err(provider_error)?;
+      .map_err(|error| provider_error("AI request", error))?;
   }
   let response = provider
     .chat(RequestCtx {
@@ -168,7 +169,7 @@ pub async fn complete(
       agent_id: AgentId::from("papertrail"),
     })
     .await
-    .map_err(provider_error)?;
+    .map_err(|error| provider_error("AI request", error))?;
   http::require_success(&response, "AI request")?;
   let bytes = http::bounded_body(response, MAX_RESPONSE_BYTES, "AI request").await?;
   let completion: Value = serde_json::from_slice(&bytes).map_err(|_| {
@@ -228,7 +229,7 @@ pub async fn list_models(
         agent_id: &AgentId::from("papertrail"),
       },
     )
-    .map_err(provider_error)?;
+    .map_err(|error| provider_error("Model discovery", error))?;
   // Tokn's list_models convenience method reads an unbounded body. Use its
   // target and header pipeline with Papertrail's bounded response reader instead.
   let response = tokn_core::util::http::send(
@@ -241,7 +242,7 @@ pub async fn list_models(
     "AI model discovery",
   )
   .await
-  .map_err(provider_error)?;
+  .map_err(|error| provider_error("Model discovery", error))?;
   http::require_success(&response, "Model discovery")?;
   let bytes = http::bounded_body(response, MAX_RESPONSE_BYTES, "Model discovery").await?;
   let value: Value = serde_json::from_slice(&bytes).map_err(|_| {

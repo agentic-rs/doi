@@ -85,14 +85,14 @@ pub async fn resolve(state: &AppState, citation: String) -> Result<Vec<Reference
     let mut url = Url::parse("https://api.crossref.org/works/").expect("constant Crossref URL");
     url.set_path(&format!("/works/{doi}"));
     state
-      .http
+      .http()?
       .get(url)
       .timeout(Duration::from_secs(30))
       .send()
       .await
   } else {
     state
-      .http
+      .http()?
       .get("https://api.crossref.org/works")
       .query(&[("query.bibliographic", citation.as_str()), ("rows", "5")])
       .timeout(Duration::from_secs(30))

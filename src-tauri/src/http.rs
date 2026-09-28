@@ -1,5 +1,57 @@
 use crate::error::{network_error, Result};
-use reqwest::Response;
+use reqwest::{Certificate, Response};
+use std::{ffi::OsString, io::Read, path::Path};
+
+const MAX_CERTIFICATE_BUNDLE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Reqwest honors proxy environment variables, but its platform TLS verifier
+/// does not read the matching CA bundle. Merge explicit roots with OS trust.
+pub fn configured_tls_roots() -> Result<Vec<Certificate>> {
+  let path = certificate_bundle_path(
+    std::env::var_os("SSL_CERT_FILE"),
+    std::env::var_os("CURL_CA_BUNDLE"),
+  );
+  match path {
+    Some(path) => read_certificate_bundle(Path::new(&path)),
+    None => Ok(Vec::new()),
+  }
+}
+
+fn certificate_bundle_path(ssl: Option<OsString>, curl: Option<OsString>) -> Option<OsString> {
+  ssl
+    .filter(|path| !path.is_empty())
+    .or_else(|| curl.filter(|path| !path.is_empty()))
+}
+
+fn read_certificate_bundle(path: &Path) -> Result<Vec<Certificate>> {
+  let metadata = std::fs::metadata(path).map_err(|_| {
+    "Could not read the configured TLS certificate bundle (SSL_CERT_FILE or CURL_CA_BUNDLE)."
+      .to_string()
+  })?;
+  if !metadata.is_file() || metadata.len() > MAX_CERTIFICATE_BUNDLE_BYTES {
+    return Err(
+      "The configured TLS certificate bundle must be a PEM file smaller than 4 MB.".into(),
+    );
+  }
+  let mut bytes = Vec::new();
+  std::fs::File::open(path)
+    .and_then(|file| {
+      file
+        .take(MAX_CERTIFICATE_BUNDLE_BYTES + 1)
+        .read_to_end(&mut bytes)
+    })
+    .map_err(|_| "Could not read the configured TLS certificate bundle.".to_string())?;
+  if bytes.len() as u64 > MAX_CERTIFICATE_BUNDLE_BYTES {
+    return Err("The configured TLS certificate bundle is too large.".into());
+  }
+  let certificates = Certificate::from_pem_bundle(&bytes).map_err(|_| {
+    "The configured TLS certificate bundle contains invalid PEM certificates.".to_string()
+  })?;
+  if certificates.is_empty() {
+    return Err("The configured TLS certificate bundle contains no PEM certificates.".into());
+  }
+  Ok(certificates)
+}
 
 pub async fn bounded_body(
   mut response: Response,
@@ -43,3 +95,6 @@ pub fn require_success(response: &Response, operation: &str) -> Result<()> {
     status.as_u16()
   ))
 }
+
+#[cfg(test)]
+mod tests;

@@ -251,7 +251,7 @@ async fn fetch_metadata(state: &AppState, requested: &ArxivId) -> Result<Paper> 
   }
   *last_request = Instant::now();
   let response = state
-    .http
+    .http()?
     .get("https://export.arxiv.org/api/query")
     .query(&[("id_list", requested.canonical())])
     .timeout(Duration::from_secs(30))
@@ -271,7 +271,7 @@ async fn download_pdf(
   temporary: &std::path::Path,
 ) -> Result<String> {
   let mut response = state
-    .http
+    .http()?
     .get(&paper.pdf_url)
     .send()
     .await

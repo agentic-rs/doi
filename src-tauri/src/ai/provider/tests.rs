@@ -300,6 +300,46 @@ fn discovery_and_completion_bound_bodies_and_hide_upstream_errors() {
 }
 
 #[test]
+fn connection_failures_name_the_operation_without_exposing_request_details() {
+  tauri::async_runtime::block_on(async {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let settings = AiSettings {
+      provider_kind: AiProviderKind::OpenaiCompatible,
+      base_url: format!("http://{address}/private-provider-path"),
+      model_id: "test-model".into(),
+      has_api_key: false,
+    };
+    for discovery in [true, false] {
+      let error = if discovery {
+        list_models(&client(), &settings, Some("test-only-token".into()))
+          .await
+          .unwrap_err()
+      } else {
+        complete(
+          &client(),
+          &settings,
+          Some("test-only-token".into()),
+          "selection",
+        )
+        .await
+        .unwrap_err()
+      };
+      let operation = if discovery {
+        "Model discovery"
+      } else {
+        "AI request"
+      };
+      assert_eq!(
+        error,
+        format!("{operation} was refused by the server or proxy. Check the service URL and that the service is running.")
+      );
+    }
+  });
+}
+
+#[test]
 fn missing_keys_and_invalid_keys_fail_before_network_access() {
   let mut settings = AiSettings::default();
   for kind in PROVIDERS {
