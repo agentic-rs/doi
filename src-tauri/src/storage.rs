@@ -492,6 +492,44 @@ mod tests {
   }
 
   #[test]
+  fn legacy_ai_settings_keep_their_endpoint_and_compatible_provider() {
+    tauri::async_runtime::block_on(async {
+      let directory = tempfile::tempdir().unwrap();
+      let path = directory.path().join("library.sqlite");
+      let db = Database::initialize(&path).unwrap();
+      assert_eq!(
+        db.get_settings().await.unwrap().provider_kind,
+        AiProviderKind::Openai
+      );
+      let legacy = serde_json::json!({
+        "base_url": "http://localhost:8080/v1",
+        "model_id": "existing-local-model",
+        "has_api_key": false,
+      });
+      db.connect()
+        .unwrap()
+        .execute(
+          "INSERT INTO settings (key, value) VALUES ('ai', ?1)",
+          [legacy.to_string()],
+        )
+        .unwrap();
+      let mut settings = Database::initialize(&path)
+        .unwrap()
+        .get_settings()
+        .await
+        .unwrap();
+      assert_eq!(settings.provider_kind, AiProviderKind::OpenaiCompatible);
+      assert_eq!(settings.base_url, "http://localhost:8080/v1");
+      assert_eq!(settings.model_id, "existing-local-model");
+      settings.has_api_key = true;
+      db.save_settings(settings).await.unwrap();
+      let persisted = db.get_settings().await.unwrap();
+      assert!(!persisted.has_api_key);
+      assert_eq!(persisted.provider_kind, AiProviderKind::OpenaiCompatible);
+    });
+  }
+
+  #[test]
   fn anchors_reject_degenerate_geometry() {
     let mut annotation = fixture_annotation(&fixture_paper());
     annotation.target.page_anchors[0].quad_points = vec![[1.; 8]];

@@ -116,10 +116,19 @@ export interface ReferenceCandidate {
   url: string;
 }
 
+export type AiProviderKind = 'openai' | 'deepseek' | 'zai' | 'zai_coding_plan'
+  | 'zhipu' | 'zhipu_coding_plan' | 'openai_compatible';
+
 export interface AiSettings {
+  provider_kind: AiProviderKind;
   base_url: string;
   model_id: string;
   has_api_key: boolean;
+}
+
+export interface AiModel {
+  model_id: string;
+  display_name: string;
 }
 
 export interface AiRequest {

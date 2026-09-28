@@ -9,7 +9,7 @@ vi.mock('../lib/tauri', () => ({
   nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
   openArxivPaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
   askSelection: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
-  resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(),
+  resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(), listAiModels: vi.fn(),
   getReaderCapabilities: vi.fn(), setReaderOrientation: vi.fn(),
 }));
 
@@ -56,7 +56,7 @@ beforeEach(() => {
   vi.mocked(backend.nativeAvailable).mockReturnValue(true);
   vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: false });
   vi.mocked(backend.listPapers).mockResolvedValue([first, second]);
-  vi.mocked(backend.getSettings).mockResolvedValue({ base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
+  vi.mocked(backend.getSettings).mockResolvedValue({ provider_kind: 'openai_compatible', base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
   vi.mocked(backend.onProgress).mockResolvedValue(() => {});
   vi.mocked(backend.getPdfBytes).mockResolvedValue(new Uint8Array([1, 2, 3]));
   vi.mocked(backend.listAnnotations).mockResolvedValue([]);

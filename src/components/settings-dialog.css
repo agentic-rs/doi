@@ -1,0 +1,51 @@
+.ai-settings-dialog .text-field,
+.ai-settings-dialog .button,
+.ai-settings-dialog .icon-button,
+.ai-settings-dialog .model-entry-toggle {
+  min-height: 44px;
+}
+
+.ai-settings-dialog .icon-button {
+  min-width: 44px;
+}
+
+.ai-settings-dialog select.text-field {
+  padding-right: 28px;
+  text-overflow: ellipsis;
+}
+
+.ai-settings-dialog .model-field-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 7px;
+}
+
+.ai-settings-dialog .model-field-heading .field-label {
+  margin: 0;
+}
+
+.ai-settings-dialog .model-entry-toggle {
+  justify-content: flex-start;
+}
+
+.ai-settings-dialog .checkbox-label {
+  min-height: 44px;
+  margin-top: 4px;
+}
+
+.ai-settings-dialog .field-hint > svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 760px), (pointer: coarse) {
+  .ai-settings-dialog .text-field {
+    font-size: 16px;
+  }
+
+  .ai-settings-dialog .key-label {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+}

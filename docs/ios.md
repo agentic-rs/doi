@@ -4,7 +4,7 @@ Papertrail supports iOS 18 and newer. It bundles its interface, PDF.js worker, f
 
 ## Toolchain
 
-Use macOS with Xcode and its iOS SDK/simulator runtime, Rust, Node.js 22.18 or newer, and pnpm. The build launcher uses Node's built-in TypeScript support. Tauri also requires XcodeGen, CocoaPods, and libimobiledevice. These are installed on the development Mac used for this build.
+Use macOS with Xcode and its iOS SDK/simulator runtime, Rust 1.90 or newer, Node.js 22.18 or newer, and pnpm. The build launcher uses Node's built-in TypeScript support. Tauri also requires XcodeGen, CocoaPods, and libimobiledevice. These are installed on the development Mac used for this build.
 
 On a fresh checkout:
 
@@ -115,7 +115,7 @@ Pinch the PDF with two fingers to zoom the document while reading overlays keep 
 
 Back and Forward return directly to the saved PDF location, including across papers; they do not show the paper information sheet again. Use **Info** whenever you want to revisit the abstract or metadata.
 
-Long-press PDF text, adjust the native selection handles, and tap **Ask AI or add a note to this passage**. References and notes open over the reader. Close that panel or hide the reading controls to continue reading. The PDF stays loaded while information and controls are shown.
+Long-press PDF text, adjust the native selection handles, and tap the floating sparkle icon to ask AI or add a note. Drag the icon to move it out of the way. References and notes open over the reader. Close that panel or hide the reading controls to continue reading. The PDF stays loaded while information and controls are shown.
 
 ## Development and storage
 
@@ -123,6 +123,8 @@ Long-press PDF text, adjust the native selection handles, and tap **Ask AI or ad
 
 The phone has its own sandboxed library; desktop papers are not automatically copied or synchronized. API keys use the iOS protected Keychain, accessible while the device is unlocked. Annotation exports use the native Files picker and contain the complete JSON sidecar; cancelling the picker leaves the annotations in the app.
 
-For AI, configure an HTTPS endpoint reachable from the phone. `127.0.0.1` on an iPhone refers to the iPhone, not your Mac. The existing provider policy permits HTTP only for loopback addresses, so a Mac's plain HTTP LAN endpoint is not currently accepted.
+For AI, choose a provider in Settings, enter your API key, and load its models or enter a model ID. Tokn's provider components run inside the iPhone app and connect directly to that provider; a gateway on your Mac is not needed. Keys remain in the phone's protected Keychain. See [AI setup](ai.md).
+
+Custom endpoints must use HTTPS when reached over the network. `127.0.0.1` on an iPhone refers to the iPhone, not your Mac. HTTP is accepted only for loopback endpoints.
 
 To open another paper while reading, tap a page to reveal the controls and use the top-left library button.

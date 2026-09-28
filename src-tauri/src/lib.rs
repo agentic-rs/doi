@@ -47,6 +47,7 @@ pub fn run() {
       commands::delete_annotation,
       commands::get_settings,
       commands::save_settings,
+      commands::list_ai_models,
       commands::ask_selection,
       commands::resolve_reference,
       commands::open_external,

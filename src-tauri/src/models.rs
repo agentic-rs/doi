@@ -119,11 +119,44 @@ pub struct Annotation {
   pub updated_at: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProviderKind {
+  Openai,
+  Deepseek,
+  Zai,
+  ZaiCodingPlan,
+  Zhipu,
+  ZhipuCodingPlan,
+  // Settings saved before embedded Tokn always used the compatible protocol.
+  #[default]
+  OpenaiCompatible,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AiSettings {
+  #[serde(default)]
+  pub provider_kind: AiProviderKind,
   pub base_url: String,
   pub model_id: String,
   pub has_api_key: bool,
+}
+
+impl Default for AiSettings {
+  fn default() -> Self {
+    Self {
+      provider_kind: AiProviderKind::Openai,
+      base_url: "https://api.openai.com/v1".into(),
+      model_id: String::new(),
+      has_api_key: false,
+    }
+  }
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct AiModel {
+  pub model_id: String,
+  pub display_name: String,
 }
 
 #[derive(Debug, Deserialize)]

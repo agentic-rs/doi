@@ -3,7 +3,7 @@ name = "papertrail"
 version = "0.1.0"
 description = "A local paper reader with anchored annotations"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
@@ -22,7 +22,13 @@ tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["fs", "io-util", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query", "stream"] }
+tokn-core = { git = "https://github.com/tokn-ai/tokn", rev = "4db3eedb869604b460980956ad42152daaa23ad1" }
+tokn-headers = { git = "https://github.com/tokn-ai/tokn", rev = "4db3eedb869604b460980956ad42152daaa23ad1" }
+tokn-provider-openai = { git = "https://github.com/tokn-ai/tokn", rev = "4db3eedb869604b460980956ad42152daaa23ad1" }
+tokn-provider-deepseek = { git = "https://github.com/tokn-ai/tokn", rev = "4db3eedb869604b460980956ad42152daaa23ad1" }
+tokn-provider-zai = { git = "https://github.com/tokn-ai/tokn", rev = "4db3eedb869604b460980956ad42152daaa23ad1" }
+tokn-provider-llama-cpp = { git = "https://github.com/tokn-ai/tokn", rev = "4db3eedb869604b460980956ad42152daaa23ad1" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 quick-xml = { version = "0.41", features = ["serialize"] }
 sha2 = "0.10"

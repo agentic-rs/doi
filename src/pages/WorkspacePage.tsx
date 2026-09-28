@@ -25,6 +25,7 @@ import {
 } from '../lib/history';
 import type { NavigationHistory } from '../lib/history';
 import { parseAnnotationSidecar, serializeAnnotations } from '../lib/annotations';
+import { DEFAULT_AI_SETTINGS } from '../lib/ai-providers';
 import type {
   AiSettings, Annotation, OperationProgress, PageAnchor, Paper, ReaderTarget, ReadingLocation,
   ReferenceCandidate, ReferenceItem, SelectionContext,
@@ -52,12 +53,6 @@ interface ReferenceResolution {
   candidates: ReferenceCandidate[];
   error: string | null;
 }
-
-const defaultSettings: AiSettings = {
-  base_url: 'https://api.openai.com/v1',
-  model_id: '',
-  has_api_key: false,
-};
 
 const compactLayoutQuery = '(max-width: 760px), (pointer: coarse) and (max-height: 500px)';
 
@@ -135,7 +130,7 @@ export function WorkspacePage() {
   const [annotationBusy, setAnnotationBusy] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
-  const [settings, setSettings] = useState<AiSettings>(defaultSettings);
+  const [settings, setSettings] = useState<AiSettings>(DEFAULT_AI_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [resolutions, setResolutions] = useState<Record<string, ReferenceResolution>>({});
   const [importing, setImporting] = useState(false);

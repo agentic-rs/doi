@@ -96,6 +96,15 @@ pub async fn save_settings(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn list_ai_models(
+  state: State<'_, AppState>,
+  settings: AiSettings,
+  api_key: Option<String>,
+) -> Result<Vec<AiModel>> {
+  ai::list_models(&state, settings, api_key).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn ask_selection(
   app: AppHandle,
   state: State<'_, AppState>,

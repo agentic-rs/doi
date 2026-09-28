@@ -1,7 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
-  AiAnswer, AiRequest, AiSettings, Annotation, OperationProgress, Paper,
+  AiAnswer, AiModel, AiRequest, AiSettings, Annotation, OperationProgress, Paper,
   ReaderCapabilities, ReaderOrientation, ReadingLayout, ReadingLocation, ReferenceCandidate,
 } from './types';
 
@@ -28,6 +28,8 @@ export const saveAnnotationFile = (file_name: string, content: string) =>
 export const getSettings = () => invoke<AiSettings>('get_settings');
 export const saveSettings = (settings: AiSettings, api_key: string | null) =>
   invoke<AiSettings>('save_settings', { settings, api_key });
+export const listAiModels = (settings: AiSettings, api_key: string | null) =>
+  invoke<AiModel[]>('list_ai_models', { settings, api_key });
 export const askSelection = (request: AiRequest) => invoke<AiAnswer>('ask_selection', { request });
 export const resolveReference = (citation_text: string) =>
   invoke<ReferenceCandidate[]>('resolve_reference', { citation_text });
