@@ -3,6 +3,7 @@ import { constants, accessSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { constants as os_constants } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { syncIosIcons } from './ios-icons.ts';
 
 const project_root = fileURLToPath(new URL('../', import.meta.url));
 const environment_line = '. "${PROJECT_DIR:?}/.tauri/xcode-env.sh"';
@@ -219,7 +220,10 @@ async function main(): Promise<void> {
   }
   const tool_directories = getToolDirectories();
   if (command === 'init') await runTauri(['init', ...args], tool_directories);
-  prepareXcodeProject(join(project_root, 'src-tauri', 'gen', 'apple'), tool_directories);
+  const apple_directory = join(project_root, 'src-tauri', 'gen', 'apple');
+  const icon_sync = syncIosIcons(join(project_root, 'src-tauri', 'icons', 'ios'), apple_directory);
+  prepareXcodeProject(apple_directory, tool_directories);
+  console.info(`Synchronized iOS icons (${icon_sync.copied_count} updated, ${icon_sync.unchanged_count} unchanged).`);
   console.info('Prepared the local Xcode toolchain and Rust linker dependencies.');
   if (command === 'open') {
     console.info('Keep this terminal running while building in Xcode. Press Ctrl+C when finished.');

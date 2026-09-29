@@ -133,3 +133,17 @@ For AI, choose a provider in Settings, enter your API key, and load its models o
 Custom endpoints must use HTTPS when reached over the network. `127.0.0.1` on an iPhone refers to the iPhone, not your Mac. HTTP is accepted only for loopback endpoints.
 
 To open another paper while reading, tap a page to reveal the controls and use the top-left library button.
+
+## iOS app icon
+
+The current master artwork is `src-tauri/icons/source.png`. The tracked PNGs in `src-tauri/icons/ios` are the canonical iOS icon sizes. `ios:init`, `ios:open`, and the preparation command copy these into the generated Xcode catalog using its existing `Contents.json`. Every referenced source must exist and match its slot's pixel dimensions before any icons are replaced. Identical files are left untouched, and the current fully opaque RGBA images are supported.
+
+To refresh the icon while an Xcode helper is already running:
+
+```sh
+node scripts/ios-xcode.ts prepare
+```
+
+Then build and install from Xcode through that existing helper. No project regeneration, helper restart, or frontend build is needed for an icon-only change.
+
+For a future iOS design, update the canonical iOS PNGs before preparation. `pnpm tauri icon` writes into an existing generated Xcode catalog instead of refreshing `icons/ios`, and also regenerates other platforms' icons. For an iOS-only update, generate into a temporary output directory and promote only its iOS PNGs into `src-tauri/icons/ios`; preserve the catalog filenames and use an opaque background. See [Tauri's icon workflow](https://v2.tauri.app/develop/icons/).
