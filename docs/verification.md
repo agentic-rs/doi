@@ -161,3 +161,10 @@ Workspace integration tests use a mocked reader and command boundary; DOM select
 
 - The second line now combines author, year, and arXiv identifier or venue. Compact rows retain the first author; details and match results retain every author. Missing fields are omitted without stray separators, and uncertain entries keep their existing raw presentation.
 - All 13 affected reference UI tests pass, including arXiv priority, venue pagination removal, and missing-field fallbacks. The frontend and macOS/iOS simulator builds succeed. The signed simulator app was verified, installed over the existing library, and launched; this follow-up did not include native touch testing or a physical-device build.
+
+## Selected PDF text ghosting (2026-09-29)
+
+- Native Mac reproduction showed a second set of glyphs over the selected word in Reading view. The global `::selection` style supplied a dark foreground to PDF.js's normally transparent text layer; the PDF-specific rule overrode only the background. This is a selection styling defect shared by original PDF pages, Reading crops, and enlarged figures.
+- The PDF text-layer selection rule now explicitly keeps the foreground transparent while preserving the highlight background. The canvas remains the visible text, and the selectable DOM still supplies the word and annotation anchors. All 39 affected reader, page, and selection tests pass.
+- Native Mac before/after checks on the cached Attention paper confirm that selecting “mechanism” in Reading view no longer paints duplicate lettering. Original PDF selection is also clean at 167%, and selecting “Transformer” after zooming to 182% remains clean. The native accessibility selection reports the correct word and the highlight remains visible. Back restores the original Reading passage.
+- The frontend, isolated QA bundle, and regular macOS bundle build successfully. This Mac-focused correction did not rebuild or interaction-test the simulator or physical iPhone.

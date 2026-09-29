@@ -183,7 +183,9 @@
 }
 .pdf-page .textLayer .markedContent { display: contents; }
 .pdf-page .textLayer span[role="img"] { user-select: none; cursor: default; }
-.pdf-page .textLayer ::selection { background: #45988955; }
+/* Keep selectable glyphs invisible over the canvas, including when the app's
+   global selection style supplies a foreground color. */
+.pdf-page .textLayer ::selection { background: #45988955; color: transparent; }
 .pdf-page .textLayer[data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
 .pdf-page .textLayer[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
 .pdf-page .textLayer[data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }
