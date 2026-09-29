@@ -59,7 +59,7 @@ impl Database {
           };
           validation::validate_annotation_target(&target)?;
           let paper = transaction.query_row(
-            "SELECT data, last_location FROM papers WHERE paper_id=?1", [&target.paper_id], paper_from_row
+            "SELECT data, last_location, last_opened_at FROM papers WHERE paper_id=?1", [&target.paper_id], paper_from_row
           ).optional().map_err(storage_error)?.ok_or_else(|| "That paper is not in the local library.".to_string())?;
           if paper.pdf_hash != target.pdf_hash {
             return Err("The conversation does not match this cached PDF revision.".into());
@@ -419,7 +419,7 @@ pub(super) fn recover_interrupted(connection: &Connection) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
   use super::*;
 
   pub(crate) fn paper() -> Paper {
@@ -433,6 +433,7 @@ mod tests {
       pdf_url: "https://arxiv.org/pdf/2401.12345v2".into(),
       pdf_hash: "a".repeat(64),
       downloaded_at: chrono::Utc::now().to_rfc3339(),
+      last_opened_at: None,
       last_location: None,
     }
   }

@@ -1,4 +1,4 @@
-# Paper reader — proposed first release
+# Paper reader — product flow and implementation
 
 Status: first implementation complete. PDF.js is accepted as the renderer; annotations use the app's versioned format. AI provider settings are user-configurable. See [verification notes](./verification.md).
 
@@ -14,7 +14,7 @@ The first release treats discovery as following references and reopening the loc
 - Original PDF layout with selectable text using PDF.js.
 - An app-owned, versioned annotation format, independent of the PDF engine and its annotation editor.
 - A local library, cached PDFs, and saved annotations that remain usable offline.
-- A user-configured AI provider; provider details remain an open decision.
+- User-configured AI providers through embedded Tokn components, with keys in the native credential store.
 - User-directed reference exploration. Automatic AI traversal requires a separate decision about depth, context, and cost.
 - No website creation or deployment.
 
@@ -22,11 +22,17 @@ The first release treats discovery as following references and reopening the loc
 
 ### Library and opening a paper
 
-A compact library sidebar lists downloaded papers. An input accepts modern and legacy arXiv IDs, optional version suffixes, and arXiv abstract/PDF URLs.
+The home screen lists recently opened papers, a library search, and an input accepting modern and legacy arXiv IDs, version suffixes, and arXiv abstract/PDF URLs. Recency survives restart through `last_opened_at`, with download time as the fallback for papers not yet opened.
 
-Opening a paper validates the input, loads its metadata, downloads and caches the PDF, then opens the reader. Reopening a cached paper restores its saved reading position. A specified version stays pinned to that version; annotations attach to the PDF revision, not just the unversioned arXiv ID.
+**Find paper** validates the input and retrieves metadata only. The preview shows title, authors, ID/version, and abstract, with exactly **Download & add to library** and **Cancel**. Cancel leaves the input intact and does not add a paper. Confirmation downloads the PDF, adds the completed paper to the library, and opens the reader. A failed download keeps the preview for retry without repeating metadata lookup. A cached lookup result opens directly without a new download.
 
-Show distinct states for an empty library, invalid input, metadata lookup, download progress, unavailable paper, and network failure. A failed operation leaves the existing paper readable and offers retry.
+Reopening a library paper restores its position and reading mode directly; **Info** optionally shows metadata over the reader. An explicit arXiv version stays pinned, and annotations attach to the exact PDF revision.
+
+Metadata and PDF requests share one serialized arXiv connection and at least three seconds between requests. HTTP 429 produces a waiting state with a retry deadline. The app respects `Retry-After`, otherwise applies increasing delays with jitter, and stops after three automatic retries. The cooldown is saved for app restarts. Cancel stops queued work, waiting, network requests, and incomplete downloads; completed cached papers remain usable offline. A cancellation that arrives after the atomic download commit keeps the saved paper in the library without unexpectedly opening it.
+
+**Close paper** keeps library data and the reading position. iPhone has one active reader. iPad and Mac maintain paper tabs, reuse an existing tab for the same revision, and return home after the last tab closes. Returning home retains open desktop/iPad tabs. Each tab retains its selection, unsent question, manual-note draft, and navigation history when switching away.
+
+**Remove** in a library paper's menu requires confirmation explicitly naming the downloaded PDF, notes, and AI conversations. Successful removal deletes those records and the derived reading cache, stops that paper's AI requests, closes its tabs, and removes references to it from navigation history. Failed removal leaves the paper available and reports the error in the confirmation dialog.
 
 ### Reader
 
@@ -38,7 +44,7 @@ The reader integrates reusable rendering, text-selection, and link primitives be
 
 ### Following references
 
-Internal PDF links jump to their destinations. Links containing an explicit arXiv identifier open that paper inside the app and cache it on demand. A bibliography entry can expose a detected arXiv ID or DOI when present.
+Internal PDF links jump to their destinations. Links containing an explicit arXiv identifier open a saved paper directly or preview an unsaved paper before any download. A bibliography entry can expose a detected arXiv ID or DOI when present.
 
 A DOI or plain-text citation may need resolution before a readable PDF can be opened. Keep the original citation visible and show candidate matches rather than automatically choosing an uncertain result. If a readable copy is unavailable, show the source link and allow the user to continue reading the current paper.
 
@@ -48,54 +54,60 @@ Reference extraction is a separate pipeline from paper downloading: the arXiv me
 
 Selecting text reveals an Ask AI action. The question panel previews the selection and the context that will be sent: the selected text, nearby text, and paper metadata. Broader paper context can be added explicitly.
 
-The result stays attached to that selection as an annotation, with the original question and provider/model information. Keep the draft question on failure and offer retry. Allow editing and deletion of saved notes.
+Answers form a persistent conversation anchored to the original selection. Follow-ups continue that conversation; **Generate note** asks the model for a proposed note, and **Save note** explicitly creates an annotation. The first answer can include a suggested note. Keep unsaved drafts on failure and allow editing and deletion of saved notes. Returning home, changing tabs, or closing a reader does not cancel running AI; removing the paper does.
 
 Persist page-specific quadrilaterals in unscaled PDF user-space coordinates, plus the selected quote and surrounding text. Convert between PDF and screen coordinates at the reader boundary so highlights survive zoom and rotation. A selection spanning pages has multiple page anchors. Never silently move annotations to another PDF revision.
 
-Store annotations in the app's schema, with a schema version, stable IDs, target anchors, and typed content for notes or AI answers. Preserve the original PDF; a portable sidecar export is proposed. PDF.js editor objects, DOM ranges, text-span indices, and screen pixel positions must not become the persistent format. The exact schema and export requirements remain open.
+Store annotations in the app's schema, with a schema version, stable IDs, target anchors, and typed content for notes or AI answers. Preserve the original PDF and export annotations as a portable JSON sidecar. PDF.js editor objects, DOM ranges, text-span indices, and screen pixel positions are not persistent anchors.
 
 ### Back and Forward
 
-Navigation records paper revision, page, position within the page, and zoom. Internal citation jumps and opening another paper both create history entries. Ordinary scrolling updates the active location rather than filling history with scroll events.
+Navigation records paper revision, page, position, zoom, rotation, reading mode, and optional reading block. Ordinary scrolling updates the active location rather than filling history with scroll events.
 
-Before following a link, capture the source position. Back restores it; Forward restores the destination. A new jump after Back discards the forward branch. A failed destination load does not lose the source position.
+On iPhone, internal citation jumps and cross-paper links share the active reader's history. Back restores the captured source position; Forward restores the destination. On iPad and Mac, each paper tab owns its history, and a paper reference opens or focuses another tab with a **Back to source** action. A new jump after Back discards the forward branch. Failed destination loads preserve the source, and deleted papers are pruned from stored sessions and history.
 
 ## Command plan
 
 All network and file operations use async Rust command handlers. Keep invocation wrappers in `src/lib/tauri.ts`; keep the app entry points small and place domain logic in modules.
 
-Proposed commands:
+Library commands:
 
-- `open_arxiv_paper`: normalize and validate input, resolve metadata, and fetch/cache a PDF.
-- `list_papers`: return local library summaries.
-- `get_paper`: return cached metadata and a handle for accessing PDF bytes.
+- `preview_arxiv_paper`: validate input and return revision-bound metadata plus an opaque preview token, without downloading or saving a paper.
+- `download_arxiv_paper`: use that preview token to download and atomically save the confirmed PDF; reuse a cached copy when available.
+- `cancel_paper_operation`: cancel lookup or download by request ID, including queued work and cooldown waits.
+- `list_papers`: return local papers ordered by most recent opening, falling back to download time.
+- `mark_paper_opened`: persist recency while preserving metadata and the reading position.
+- `remove_paper`: invalidate pending previews and delete the PDF and all dependent local records after UI confirmation.
+- `get_pdf_bytes`: read a validated cached PDF.
 - `save_reading_position`: persist a paper's last location.
 - `resolve_reference`: look up an explicit identifier or return citation-match candidates.
-- `ask_selection`: send the chosen text/context and question to the configured provider.
+- `list_ai_conversations`, `ask_ai_conversation`, `generate_ai_conversation_note`, `update_ai_conversation_note`, `save_ai_conversation_note`, `cancel_ai_request`: load conversations, stream answers, prepare and review notes, save explicit annotations, and stop work.
 - `save_annotation`, `list_annotations`, `delete_annotation`: manage passage-linked notes.
 - `save_annotation_file`: export a validated sidecar through a native Save dialog, returning the written path or cancellation.
 - `get_settings`, `save_settings`: manage provider and reader preferences.
 
 Downloads and AI requests report progress/status through events carrying a `request_id`, so late responses cannot replace another paper or selection. UI operations must be cancelable or safely discard stale results. Serialize and throttle arXiv API requests according to its usage policy.
 
-Rust owns remote requests to avoid webview cross-origin restrictions. Provider credentials must not be persisted in frontend storage or included in logs; choose a native credential store once the provider design is confirmed.
+Rust owns remote requests to avoid webview cross-origin restrictions. Provider credentials remain in the native credential store and are excluded from frontend persistence and logs.
 
 ## Data model plan
 
 Shared frontend contracts live in `src/lib/types.ts` and map to Rust models. Persisted and serialized fields use `snake_case`.
 
-- `Paper`: `paper_id`, `arxiv_id`, `arxiv_version`, `title`, `authors`, `abstract`, `pdf_url`, `pdf_hash`, `downloaded_at`.
-- `ReadingLocation`: `paper_id`, `page_number`, `page_position`, `zoom`, `rotation`.
+- `PaperMetadata`: revision ID, arXiv ID/version, title, authors, abstract, and PDF URL.
+- `PaperPreview`: `preview_id`, `metadata`, and optional `library_paper`; previews are temporary in-memory records.
+- `Paper`: metadata plus `pdf_hash`, `downloaded_at`, optional `last_opened_at`, and `last_location`.
+- `ReadingLocation`: `paper_id`, `page_number`, `page_position`, `zoom`, `zoom_mode`, `rotation`, `reader_mode`, and optional `reading_block_id`.
 - `Reference`: `reference_id`, `source_paper_id`, `citation_text`, `arxiv_id`, `doi`, `source_anchor`, `resolution_status`.
 - `PageAnchor`: `page_number`, `quad_points`, `text_quote`.
 - `TextQuote`: `exact_text`, `prefix`, `suffix`, `normalization_version`.
 - `AnnotationTarget`: `paper_id`, `pdf_hash`, `page_anchors`.
 - `Annotation`: `schema_version`, `annotation_id`, `target`, `body`, `created_at`, `updated_at`.
 - `AnnotationBody`: a discriminated content model for a note or an AI answer; an AI answer retains `question`, `answer`, `provider_id`, `model_id`, and the context actually sent.
-- `AiSettings`: `provider_id`, `base_url`, `model_id`, `credential_id`.
+- `AiSettings`: `provider_kind`, `base_url`, `model_id`, and derived `has_api_key` presence.
 - `NavigationHistory`: `entries`, `current_index`.
 
-Use a versioned SQLite schema for metadata and annotations, with PDFs stored separately in the app data directory. Use atomic download completion so an incomplete PDF is never treated as a cached success.
+SQLite schema v4 stores metadata, positions, annotations, reading caches, and AI conversations; PDFs are separate files in the app data directory. Atomic download completion prevents incomplete PDFs from appearing as cached successes. Paper removal uses a staged PDF move and a database transaction with cascading deletes; failure restores the file, and startup repairs interrupted removals.
 
 ## Delivery order
 
@@ -107,10 +119,13 @@ Use a versioned SQLite schema for metadata and annotations, with PDFs stored sep
 
 ## Acceptance checks
 
-- Enter a valid arXiv ID, read its PDF, restart, and reopen the cached paper without another download.
+- Enter an arXiv ID, inspect its abstract without downloading, then confirm download or cancel with the input retained. Restart and reopen saved papers directly in recency order.
 - Support a legacy ID and an explicitly versioned ID; reject malformed IDs before making a request.
 - Follow an internal citation, then return to the same location and zoom.
-- Follow an explicit arXiv reference to another paper; Back and Forward restore each paper's location.
+- Follow an arXiv reference: preview unsaved papers, restore cross-paper locations on iPhone, and return through **Back to source** with separate tab histories on iPad/Mac.
+- Close a reader or the last tab and return home without deleting library data.
+- Confirm removal and verify PDF, notes, chats, and reading cache are deleted; late download/AI completions cannot restore the removed records.
+- Simulate metadata and PDF HTTP 429 responses, honor cooldowns across restart, and cancel waits without affecting cached reading.
 - Start a new navigation after Back and verify that the previous forward branch is removed.
 - Ask about a selection, save the answer, restart, and revisit the annotation at the same passage.
 - Zoom after annotating and verify that highlights still align with the selected text.

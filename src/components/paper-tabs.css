@@ -1,0 +1,14 @@
+.paper-tabs { display: flex; flex: none; align-items: stretch; min-width: 0; min-height: 52px; padding: env(safe-area-inset-top, 0px) calc(env(safe-area-inset-right, 0px) + 10px) 0 calc(env(safe-area-inset-left, 0px) + 10px); gap: 8px; color: #4b6659; background: #eef1e6; border-bottom: 1px solid #dbe3d5; }
+.paper-tabs-scroll { display: flex; flex: 1; min-width: 0; align-items: stretch; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+.paper-tab-item { display: flex; flex: none; align-items: center; min-width: 140px; max-width: 280px; margin-top: 4px; border: 1px solid transparent; border-bottom: 0; border-radius: 9px 9px 0 0; }
+.paper-tab-item.is-active { color: #254f46; background: var(--paper, #fcfcf7); border-color: #dbe3d5; }
+.paper-tab-item:hover { background: #e4eadc; }
+.paper-tab-item.is-active:hover { background: var(--paper, #fcfcf7); }
+.paper-tab-item > button { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; min-width: 44px; padding: 10px 12px; }
+.paper-tab-item > button:first-child { flex: 1; min-width: 0; text-align: left; }
+.paper-tab-item > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.paper-tab-item > .paper-tab-close { flex: none; justify-content: center; padding: 0; border-radius: 8px; }
+.paper-tab-close:hover:not(:disabled) { background: #dbe5d7; }
+.paper-tab-home { min-width: 44px; max-width: none; }
+.paper-tabs button:focus-visible { outline: 2px solid #2c8179; outline-offset: -3px; }
+@media (max-width: 800px) { .paper-tab-item { max-width: 220px; } .paper-tab-home span { display: none; } }

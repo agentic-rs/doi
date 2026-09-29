@@ -1,22 +1,11 @@
 .app-shell.reading-mode { --reader-overlay-clearance: 125px; display: block; position: relative; padding: 0; min-height: 0; }
 .reading-mode .workbench { position: absolute; inset: 0; overflow: clip; }
-.reading-mode .library-sidebar { display: none; }
-.reading-mode.library-is-open .library-sidebar {
-  display: flex;
-  position: fixed;
-  z-index: 70;
-  inset: 0;
-  width: min(440px, 100%);
-  padding: calc(30px + env(safe-area-inset-top, 0px)) calc(18px + env(safe-area-inset-right, 0px)) calc(22px + env(safe-area-inset-bottom, 0px)) calc(18px + env(safe-area-inset-left, 0px));
-  box-shadow: 12px 0 44px #23382c38;
-}
-.reading-mode .mobile-library-close { display: inline-flex; position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
 .reading-mode .reading-grid, .reading-mode .reading-grid.with-inspector { display: block; position: absolute; inset: 0; }
 .app-shell.reading-mode .reading-grid .reading-surface { display: flex; position: absolute; inset: 0; }
 .reading-mode .inspector {
   position: absolute;
   z-index: 35;
-  top: calc(env(safe-area-inset-top, 0px) + var(--reader-overlay-clearance));
+  top: calc(var(--reader-safe-top, env(safe-area-inset-top, 0px)) + var(--reader-overlay-clearance));
   right: env(safe-area-inset-right, 0px);
   bottom: env(safe-area-inset-bottom, 0px);
   width: min(420px, 100%);
@@ -27,7 +16,7 @@
 .reading-mode .runtime-banner, .reading-mode .operation-banner, .reading-mode .notice {
   position: absolute;
   z-index: 55;
-  top: calc(env(safe-area-inset-top, 0px) + var(--reader-overlay-clearance) + 5px);
+  top: calc(var(--reader-safe-top, env(safe-area-inset-top, 0px)) + var(--reader-overlay-clearance) + 5px);
   left: calc(env(safe-area-inset-left, 0px) + 12px);
   right: calc(env(safe-area-inset-right, 0px) + 12px);
   max-width: 680px;
@@ -35,14 +24,8 @@
   border-radius: 9px;
   box-shadow: 0 4px 20px #23382c18;
 }
-.library-import { margin: 10px 0 24px; }
-.library-import label { display: block; margin-bottom: 8px; font-size: 12px; color: #526851; }
-.library-import .arxiv-form { height: 46px; max-width: none; }
-.library-import input { font-size: 16px; }
-.library-import .import-button { min-width: 44px; min-height: 44px; }
 @media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
   .reading-mode .inspector { width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); border-radius: 14px 14px 0 0; }
-  .reading-mode.library-is-open .library-sidebar { width: 100%; }
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
@@ -90,3 +73,12 @@
 .phone-conversation-preview strong { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .phone-conversation-preview small { font-size: 12px; color: #687a62; }
 .phone-conversation-preview > svg { flex-shrink: 0; }
+
+.app-shell.library-workspace { display: flex; flex-direction: column; min-height: 0; padding: 0; }
+.library-workspace .workspace-tabs { flex-shrink: 0; z-index: 60; }
+.library-workspace .workbench { flex: 1; min-height: 0; position: relative; inset: auto; width: 100%; }
+.library-home-mode .workbench { overflow-y: auto; }
+.library-home-mode .notice { position: fixed; z-index: 75; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 16px; right: 16px; max-width: 680px; margin: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 20px #23382c18; }
+
+.has-paper-tabs .workbench { --reader-safe-top: 0px; }
+.has-paper-tabs .library-home { padding-top: 24px; }

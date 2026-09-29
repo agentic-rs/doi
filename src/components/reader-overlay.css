@@ -1,7 +1,7 @@
 .reader-overlay {
   position: absolute;
   z-index: 40;
-  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  top: calc(var(--reader-safe-top, env(safe-area-inset-top, 0px)) + 10px);
   left: calc(env(safe-area-inset-left, 0px) + 12px);
   right: calc(env(safe-area-inset-right, 0px) + 12px);
   max-width: 900px;
@@ -38,7 +38,7 @@
   .reader-overlay {
     display: flex;
     align-items: center;
-    top: calc(env(safe-area-inset-top, 0px) + 6px);
+    top: calc(var(--reader-safe-top, env(safe-area-inset-top, 0px)) + 6px);
     left: calc(env(safe-area-inset-left, 0px) + 8px);
     right: calc(env(safe-area-inset-right, 0px) + 8px);
     padding: 4px;

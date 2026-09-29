@@ -1,23 +1,50 @@
 use crate::{
-  ai, arxiv, error::Result, export, models::*, reader, references, state::AppState, validation,
+  ai, arxiv, error::Result, export, library, models::*, reader, references, state::AppState,
+  validation,
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn open_arxiv_paper(
+pub async fn list_papers(state: State<'_, AppState>) -> Result<Vec<Paper>> {
+  state.database.list_papers().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn preview_arxiv_paper(
   app: AppHandle,
   state: State<'_, AppState>,
   input: String,
   request_id: String,
-) -> Result<Paper> {
+) -> Result<PaperPreview> {
   validation::validate_id(&request_id)?;
-  arxiv::open_paper(&state, &app, &input, &request_id).await
+  arxiv::preview_paper(&state, &app, &input, &request_id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn list_papers(state: State<'_, AppState>) -> Result<Vec<Paper>> {
-  state.database.list_papers().await
+pub async fn download_arxiv_paper(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  preview_id: String,
+  request_id: String,
+) -> Result<Paper> {
+  validation::validate_id(&request_id)?;
+  arxiv::download_paper(&state, &app, &preview_id, &request_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn cancel_paper_operation(state: State<'_, AppState>, request_id: String) -> Result<()> {
+  arxiv::cancel_operation(&state, &request_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn mark_paper_opened(state: State<'_, AppState>, paper_id: String) -> Result<Paper> {
+  state.database.mark_paper_opened(paper_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn remove_paper(state: State<'_, AppState>, paper_id: String) -> Result<()> {
+  library::remove_paper(&state, paper_id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]

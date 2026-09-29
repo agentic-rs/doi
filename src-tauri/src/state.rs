@@ -1,10 +1,8 @@
 use crate::{
-  ai::RequestRegistry, error::Result, http, models::OperationProgress, storage::Database,
+  ai::RequestRegistry, arxiv::ArxivState, error::Result, http, models::OperationProgress,
+  storage::Database,
 };
-use std::{
-  path::PathBuf,
-  time::{Duration, Instant},
-};
+use std::{path::PathBuf, time::Duration};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
@@ -15,7 +13,7 @@ pub struct AppState {
   ai_http: Result<reqwest::Client>,
   pub import_lock: Mutex<()>,
   pub settings_lock: Mutex<()>,
-  pub arxiv_request_clock: Mutex<Instant>,
+  pub arxiv: ArxivState,
   pub ai_requests: RequestRegistry,
 }
 
@@ -64,14 +62,16 @@ impl AppState {
         .build()
         .map_err(|_| "Could not initialize AI networking. Check the TLS certificate configuration and restart Papertrail.".to_string())
     });
+    let database = Database::initialize(&data_directory.join("library.sqlite"))?;
+    database.recover_pdf_removals(&pdf_directory)?;
     Ok(Self {
-      database: Database::initialize(&data_directory.join("library.sqlite"))?,
+      database,
       pdf_directory,
       http,
       ai_http,
       import_lock: Mutex::new(()),
       settings_lock: Mutex::new(()),
-      arxiv_request_clock: Mutex::new(Instant::now() - Duration::from_secs(3)),
+      arxiv: ArxivState::new(&data_directory),
       ai_requests: RequestRegistry::default(),
     })
   }
@@ -101,6 +101,7 @@ impl AppState {
         message: message.to_owned(),
         received_bytes,
         total_bytes,
+        retry_at: None,
       },
     );
   }

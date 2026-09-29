@@ -59,6 +59,8 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
   const [loadError, setLoadError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const versionsRef = useRef(new Map<string, number>());
+  const discardedRef = useRef(new Set<string>());
+  const paperGenerationsRef = useRef(new Map<string, number>());
   const requestsRef = useRef(new Map<string, RequestRuntime>());
   const remoteStopsRef = useRef(new Set<string>());
   const notesRef = useRef(new Map<string, NoteRuntime>());
@@ -77,7 +79,7 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
   }, []);
 
   const receive = useCallback((conversation: AiConversation, persisted = true) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || discardedRef.current.has(conversation.conversation_id)) return;
     const id = conversation.conversation_id;
     const previous = viewsRef.current.find((view) => view.conversation.conversation_id === id);
     const edit = notesRef.current.get(id);
@@ -121,11 +123,13 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
       return;
     }
     const versions = new Map(versionsRef.current);
+    const generation = paperGenerationsRef.current.get(activePaper.paper_id);
     setLoading(true);
     setLoadError(null);
     try {
       const conversations = await listAiConversations(activePaper.paper_id);
-      if (!mountedRef.current || sequence !== loadSequenceRef.current) return;
+      if (!mountedRef.current || sequence !== loadSequenceRef.current
+        || generation !== paperGenerationsRef.current.get(activePaper.paper_id)) return;
       for (const conversation of conversations) {
         const id = conversation.conversation_id;
         // Loading a paper must never roll back a turn or edit made since its
@@ -176,7 +180,7 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     if (edit.in_flight) return edit.in_flight;
     if (edit.persisted_revision === edit.revision) return true;
     const work = async () => {
-      while (edit.persisted_revision < edit.revision) {
+      while (!discardedRef.current.has(id) && edit.persisted_revision < edit.revision) {
         const revision = edit.revision;
         const content = edit.content;
         change(id, (view) => ({ ...view, persistence_state: 'saving', persistence_error: null }));
@@ -409,9 +413,10 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     // Let any older write finish first; the atomic save below stores the latest
     // local content even when an earlier draft write failed.
     if (edit?.in_flight) await edit.in_flight;
+    if (discardedRef.current.has(id)) return;
     try {
       const result = await saveAiConversationNote(id, note.note_id, view.note_content);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || discardedRef.current.has(id)) return;
       if (edit) edit.persisted_revision = edit.revision;
       receive(result.conversation);
       change(id, (current) => ({ ...current, persistence_state: 'saved', persistence_error: null, status: 'Note saved' }));
@@ -426,6 +431,29 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
   const toggleCollapsed = useCallback((id: string) => {
     change(id, (view) => ({ ...view, collapsed: !view.collapsed }));
   }, [change]);
+
+  const forgetPaper = useCallback((paperId: string) => {
+    paperGenerationsRef.current.set(paperId, (paperGenerationsRef.current.get(paperId) ?? 0) + 1);
+    for (const view of viewsRef.current.filter((item) => item.conversation.target.paper_id === paperId)) {
+      const id = view.conversation.conversation_id;
+      discardedRef.current.add(id);
+      const runtime = requestsRef.current.get(id);
+      if (runtime) {
+        runtime.cancelled = true;
+        runtime.flush();
+        runtime.unlisten?.();
+        if (runtime.invoked) void cancelAiRequest(runtime.request_id).catch(() => {});
+        requestsRef.current.delete(id);
+      } else if (view.conversation.active_request_id) {
+        void cancelAiRequest(view.conversation.active_request_id).catch(() => {});
+      }
+      clearTimeout(notesRef.current.get(id)?.timer);
+      notesRef.current.delete(id);
+      versionsRef.current.delete(id);
+    }
+    viewsRef.current = viewsRef.current.filter((view) => view.conversation.target.paper_id !== paperId);
+    setViews(viewsRef.current);
+  }, []);
 
   // A webview reload can outlive its Rust request. Observe only these orphaned
   // operations; normal streams already have a completion promise and listener.
@@ -480,6 +508,6 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
   return {
     conversations: views.filter((view) => view.conversation.target.paper_id === paper?.paper_id && view.conversation.target.pdf_hash === paper?.pdf_hash),
     loading, load_error: loadError, reload, ask, followUp, generateNote, stop, editNote,
-    retryNotePersistence: flushNote, saveNote, toggleCollapsed,
+    retryNotePersistence: flushNote, saveNote, toggleCollapsed, forgetPaper,
   };
 }

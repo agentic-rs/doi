@@ -40,7 +40,7 @@ export interface ReaderCapabilities {
   device_kind: 'phone' | 'tablet' | 'desktop' | 'unknown';
 }
 
-export interface Paper {
+export interface PaperMetadata {
   paper_id: string;
   arxiv_id: string;
   arxiv_version: number;
@@ -48,9 +48,19 @@ export interface Paper {
   authors: string[];
   abstract: string;
   pdf_url: string;
+}
+
+export interface Paper extends PaperMetadata {
   pdf_hash: string;
   downloaded_at: string;
+  last_opened_at?: string | null;
   last_location: ReadingLocation | null;
+}
+
+export interface PaperPreview {
+  preview_id: string;
+  metadata: PaperMetadata;
+  library_paper: Paper | null;
 }
 
 export interface TextQuote {
@@ -215,10 +225,11 @@ export interface AiStreamEvent {
 
 export interface OperationProgress {
   request_id: string;
-  phase: 'metadata' | 'download' | 'ready' | 'ai';
+  phase: 'metadata' | 'download' | 'ready' | 'ai' | 'waiting';
   message: string;
   received_bytes: number;
   total_bytes: number | null;
+  retry_at?: string | null;
 }
 
 export type ReaderTarget =

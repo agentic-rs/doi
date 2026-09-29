@@ -2,7 +2,7 @@
 
 Papertrail embeds [Tokn](https://github.com/tokn-ai/tokn)'s Rust provider components on desktop and iOS. Bring your own API key for OpenAI, DeepSeek, Z.ai, or Zhipu, including the Z.ai and Zhipu Coding Plan endpoints. Choose **OpenAI-compatible** for a custom chat-completions service; a local service can work without a key.
 
-1. Open AI settings from the reading overlay.
+1. Open AI settings from Library home or the reading overlay.
 2. Choose a provider. Papertrail fills its default API base URL; change it if your account uses a different compatible endpoint.
 3. Enter your provider's API key. Leave the field blank to retain a saved key for the same endpoint.
 4. Choose **Load models**, then select a model. If discovery is unavailable or your model is not listed, enter its ID manually.
@@ -12,6 +12,8 @@ Papertrail embeds [Tokn](https://github.com/tokn-ai/tokn)'s Rust provider compon
 Model discovery uses the entered key without saving it. Saving settings stores the key in the native credential store. Switching providers or changing the endpoint clears an unsaved key, and an endpoint never inherits another endpoint's saved key. To remove a saved key, select the removal checkbox and save settings.
 
 On iPhone, Ask AI and saved conversations open full screen in portrait. **Back to paper** restores your previous reading direction; unsent questions, edited note drafts, and running requests remain available when you return. References and saved notes still work in landscape. iPad and Mac retain their AI panel in either orientation.
+
+Returning to Library home, switching paper tabs on iPad/Mac, or closing a reader preserves running AI conversations and saved drafts. Reopening the paper loads its conversations at the original passage. Selecting **Remove** from a library paper's menu is different: its confirmation deletes the PDF, notes, and AI conversations, and stops that paper's requests. A late answer or note-save response cannot restore those deleted records.
 
 Papertrail sends the selected passage, nearby text, paper metadata, and your question to the chosen provider. Follow-ups and note generation also send the completed questions and answers in that conversation. Model discovery requests its model list without sending paper text. Saved AI notes retain the source answer, model, endpoint, question, and supplied context in the annotation sidecar.
 

@@ -1,0 +1,48 @@
+.library-dialog-backdrop {
+  position: fixed;
+  z-index: 110;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(20px, env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) max(20px, env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+  background: #1b2c2b7a;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.library-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 720px);
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--paper, #fcfcf7);
+  color: var(--ink, #293b38);
+  border: 1px solid var(--line, #e4e6dc);
+  border-radius: 20px;
+  box-shadow: 0 18px 64px #14282130;
+}
+.library-dialog:focus { outline: none; }
+.library-dialog-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.library-dialog-actions { display: flex; flex: none; justify-content: flex-end; align-items: center; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--line, #e4e6dc); background: #f0f3e9; }
+.library-dialog-actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; min-width: 44px; padding: 10px 16px; border-radius: 9px; font-size: 14px; font-weight: 600; }
+.library-dialog-cancel { color: #456558; }
+.library-dialog-cancel:hover:not(:disabled) { background: #e4ebdf; }
+.library-dialog-confirm { color: #fff; background: var(--teal, #2f7068); }
+.library-dialog-confirm:hover:not(:disabled) { background: var(--teal-dark, #245b54); }
+.library-dialog button:focus-visible { outline: 2px solid #2c8179; outline-offset: 2px; }
+.library-dialog-message, .library-dialog-error { margin: 16px 0 0; padding: 12px 14px; border-radius: 9px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.library-dialog-message { display: flex; align-items: center; gap: 10px; color: #406554; background: #edf2e7; }
+.library-dialog-error { color: #8d4035; background: #f8ece6; }
+@media (max-width: 600px) {
+  .library-dialog-backdrop { align-items: flex-end; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
+  .library-dialog { border-radius: 20px 20px 0 0; }
+  .library-dialog-actions { flex-wrap: wrap; padding: 12px 16px max(12px, env(safe-area-inset-bottom, 0px)); }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .library-dialog-backdrop { padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+  .library-dialog { max-height: 100%; border-radius: 12px; }
+  .library-dialog-actions { padding-top: 8px; padding-bottom: 8px; }
+}

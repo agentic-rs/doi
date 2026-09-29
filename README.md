@@ -60,13 +60,14 @@ See [iOS build and installation](docs/ios.md) for simulator installation, signed
 
 ## Use
 
-1. Enter an arXiv ID or arXiv URL. Modern IDs, legacy IDs, and explicit versions are supported. Downloaded papers enter the local library.
-2. Opening a paper shows its full title, authors, arXiv ID/version, abstract, and cached date. Choose **Read paper** or **Resume reading** to dismiss the information sheet. The saved reading view fills the app window; new papers start in the original PDF.
-3. Tap a page to show or hide the reading controls. The overlay opens the library, **Info**, **Refs & notes**, and settings. On iOS, **Landscape** or **Portrait** changes the viewer's screen orientation; **Rotate clockwise** in the PDF controls separately rotates the PDF pages.
+1. The app opens to your library, with recent papers, search, and **Add a paper**. Enter an arXiv ID or URL and choose **Find paper**. Modern IDs, legacy IDs, and explicit versions are supported.
+2. Review the title, authors, ID/version, and abstract before downloading. The preview has two actions: **Download & add to library** and **Cancel**. Cancel returns to the input with your entry preserved. A successful download adds the paper and opens it; reopening a saved paper resumes reading directly. **Info** remains available for its metadata and abstract.
+3. Tap a page to show or hide the reading controls. The overlay opens the library, **Info**, **Refs & notes**, and settings. **Close paper** saves the reading position and keeps the paper in the library. iPhone has one active reader; iPad and Mac use tabs, and closing the last tab returns home. On iOS, **Landscape** or **Portrait** changes the viewer's screen orientation; **Rotate clockwise** in the PDF controls separately rotates the PDF pages.
 4. Select text, then tap the floating sparkle icon to ask AI. Use the Notes panel to add a manual note. Drag the icon to move it out of the way. **Ask** streams the answer and any provider-exposed thinking. Review and edit the model's suggested note, then use **Save note** to keep it beside the passage. In Settings, choose your AI provider, enter your own API key, and use **Load models** to choose a model. You can also enter its ID manually. On iPhone, AI opens full screen in portrait; **Back to paper** restores the previous reading direction. iPad and Mac keep AI available alongside landscape reading. Tokn's Rust provider components run inside the app on desktop and iOS. See [AI setup](docs/ai.md).
-5. Follow PDF citation links or open detected arXiv references. For references that need matching, review the suggested papers before choosing one.
-6. Use Back and Forward in the reading overlay to restore earlier reading positions, including across papers. History navigation restores the view mode and passage without reopening the information sheet.
-7. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
+5. Follow PDF citation links or open detected arXiv references. Unsaved papers use the same abstract preview before downloading. Saved papers open directly. For references that need matching, review the suggested papers before choosing one.
+6. Back and Forward restore earlier positions and view modes. On iPhone, history includes cross-paper links. On iPad and Mac, each tab has its own history; following a paper reference opens or focuses its tab, with **Back to source** returning to the referring paper. Switching tabs or returning home preserves running AI conversations.
+7. Use a library paper's menu to **Remove** it. Confirmation deletes its downloaded PDF, notes, AI conversations, and reading cache, and closes its tabs. Closing a reader or tab does not remove these records.
+8. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
 
 Choose **Reading view** in the overlay for an optional stream of cropped source blocks. It trims whitespace, reads clear columns in sequence, and places reliably detected figures with their captions after an explicit figure reference. Tap a figure or choose **Enlarge** for a closer look. The small document icon (**View in PDF**) opens its original location; Back returns to the reading block. Source icons for text appear with the reading controls, hover, or keyboard focus. Switch back using **Original PDF**. The layout is analyzed locally and cached for later openings.
 
@@ -78,6 +79,8 @@ Pinch the PDF with two fingers, use a Mac trackpad pinch, or hold Ctrl while scr
 
 PDFs, library metadata, positions, and annotations live in the platform's app data directory for `app.papertrail.reader`. Credentials use the native credential store, rather than the annotation file or frontend storage. Reading cached papers and notes works offline; paper downloads, reference lookup, and remote AI calls need a connection.
 
+If arXiv returns HTTP 429 during metadata lookup or PDF download, Papertrail shows **Waiting for arXiv** and the retry time. Requests share a three-second pacing clock and use up to three automatic retries, honoring `Retry-After` or increasing delays when it is absent. Cooldowns persist across app restarts. Cancel stops waiting and keeps your input; cached papers remain readable. A failed PDF download keeps the preview so retrying does not repeat its metadata lookup.
+
 Reference extraction from plain PDF text is heuristic. Embedded links and explicit identifiers are the most reliable path; bibliography text without an identifier can require manual review. AI answers use the selected passage, surrounding text, and paper metadata; they do not automatically read every cited paper.
 
 ## Project layout
@@ -86,7 +89,7 @@ Reference extraction from plain PDF text is heuristic. Embedded links and explic
 - `src/components`: reader, selection/annotation UI, and settings.
 - `src/lib/types.ts`: shared serialized contracts.
 - `src/lib/tauri.ts`: command wrappers.
-- `src/lib/history.ts`: cross-paper navigation.
+- `src/lib/history.ts`: reading-location history for the phone reader and each desktop/iPad tab.
 - `src/lib/annotations.ts`: sidecar validation and serialization.
 - `src-tauri/src`: downloads, persistence, provider requests, and reference lookup.
 - `docs`: product plan, reader decisions, and annotation format.

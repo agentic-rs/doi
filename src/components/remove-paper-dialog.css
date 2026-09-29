@@ -1,0 +1,15 @@
+.remove-paper-dialog { width: min(100%, 460px); }
+.remove-paper-content { padding: 26px; }
+.remove-paper-symbol { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; color: #91473a; background: #f5e6dc; }
+.remove-paper-content h2 { margin: 18px 0 14px; font: 26px/1.2 Georgia, 'Times New Roman', serif; }
+.remove-paper-content p { margin: 0; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.remove-paper-content .remove-paper-title { font-weight: 650; margin-bottom: 12px; }
+.remove-paper-content .library-dialog-message, .remove-paper-content .library-dialog-error { margin-top: 18px; }
+.remove-paper-confirm { background: #9b473a; color: #fff; }
+.remove-paper-confirm:hover:not(:disabled) { background: #80392f; }
+@media (max-width: 600px) { .remove-paper-content { padding: 22px; } }
+@media (orientation: landscape) and (max-height: 500px) {
+  .remove-paper-content { padding: 18px 24px; }
+  .remove-paper-symbol { display: none; }
+  .remove-paper-content h2 { margin-top: 0; }
+}

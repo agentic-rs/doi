@@ -18,16 +18,26 @@ PDF.js remains the leading candidate for a Tauri/React reader. Prefer composing 
 | Document revision and content hash | App |
 | Annotation schema, migrations, and storage | App |
 | Highlight overlay and AI discussion UI | App |
-| Back/Forward across internal links and papers | App |
+| Library home, paper tabs, per-reader history, and reference return paths | App |
 | Paper information and reading controls | App |
 | Native screen orientation | Platform reader plugin |
 | Optional export into another format | App export adapter |
 
 Keep the adapter small and driven by actual needs. We need page metrics, selection anchors, link targets, coordinate conversion, and navigation events. We do not need a general plugin system or multiple working engines for the first release.
 
+## Library, preview, and reader lifecycle
+
+The workspace starts at Library home with recent papers, search, and **Add a paper**. `preview_arxiv_paper` returns metadata and an opaque token without fetching a PDF or creating a library row. The preview exposes only **Download & add to library** and **Cancel**. Confirmation calls `download_arxiv_paper` with the token; cancellation retains the input. Metadata stays in a bounded in-memory preview cache so a failed PDF download can retry without another lookup. A cached paper opens directly through `get_pdf_bytes` and `mark_paper_opened`.
+
+Native device capabilities determine the navigation model. iPhone uses one active reader with history across paper references. iPad and Mac use one tab per opened revision, each with its own navigation history and transient editor state. References open or focus the destination tab and retain a source-paper return action. Only the active PDF reader is mounted; tab sessions preserve reading position, selection, and unsent drafts. Home and tab switches leave workspace-owned AI requests running. Closing a paper saves position and removes its tab/session, while keeping all library records. Closing the last tab returns home.
+
+`last_opened_at` in SQLite schema v4 provides durable recency without replacing metadata or reading position. Removing a paper is a separate confirmed operation: `remove_paper` holds the same import gate used by previews/downloads, invalidates its tokens, and transactionally deletes the paper and dependent annotations, conversations, and derived layouts. Active AI request IDs are collected in that transaction and canceled afterward; late writes cannot recreate deleted records. The PDF is moved to a staged path before deletion and restored on failure. Startup restores a staged file when the paper row survived, or removes it when deletion committed. The frontend also drops that paper's tabs, sources, histories, and late asynchronous results.
+
+arXiv metadata and PDF requests share serialized access and a three-second pacing clock. HTTP 429 respects `Retry-After` dates or seconds; missing/invalid headers use increasing delays with jitter. Up to three retries are automatic. The cooldown is persisted for restart and reported through `operation-progress` with `phase: waiting` and `retry_at`. `cancel_paper_operation` stops queued work, waits, requests, and incomplete file streaming; the short final commit completes or rolls back atomically. If cancellation loses that commit race, the UI refreshes the library without opening the dismissed preview.
+
 ## Immersive reading
 
-Explicit paper openings show metadata over an already mounted PDF. Closing the information sheet reveals the full reader; taps show controls without resizing or recreating the document. Back/Forward restores the destination directly. Taps on links, scrolling gestures, long presses, and active text selection do not toggle controls.
+Saved papers open directly at their reading location; newly confirmed downloads open the original PDF. **Info** displays metadata over the mounted reader on demand. Dismissing it returns to reading, and taps show or hide controls without resizing or recreating the document. The close icon closes the paper rather than merely hiding its controls. Back/Forward restores the destination directly. Taps on links, scrolling gestures, long presses, and active text selection do not toggle controls.
 
 The iOS plugin requests portrait or landscape through the foreground window scene. Screen orientation is independent of PDF page rotation and never changes annotation coordinates or the sidecar schema. Viewport changes preserve the normalized page position; fit-width mode refits automatically, while manually chosen or restored zoom remains stable.
 

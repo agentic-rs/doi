@@ -20,7 +20,9 @@ interface ReaderOverlayProps {
   on_inspector: () => void;
   on_settings: () => void;
   on_direction: () => void;
-  on_hide: () => void;
+  on_close: () => void;
+  source_title?: string;
+  on_source?: () => void;
   reader_mode?: ReaderMode;
   on_mode?: () => void;
 }
@@ -29,13 +31,14 @@ export function ReaderOverlay(props: ReaderOverlayProps) {
   const next_direction = props.orientation === 'portrait' ? 'landscape' : 'portrait';
   return <header className="reader-overlay" aria-label="Reading controls">
     <div className="reader-overlay-navigation">
-      <button ref={props.library_button_ref} className="icon-button" type="button" aria-label="Open paper library" onClick={props.on_library}><Library size={20} /></button>
+      <button ref={props.library_button_ref} className="icon-button" type="button" aria-label="Open paper library" onClick={props.on_library} disabled={props.busy}><Library size={20} /></button>
       <button className="icon-button" type="button" aria-label="Go back to previous reading location" disabled={!props.can_go_back || props.busy} onClick={props.on_back}><ArrowLeft size={20} /></button>
       <button className="icon-button" type="button" aria-label="Go forward to next reading location" disabled={!props.can_go_forward || props.busy} onClick={props.on_forward}><ArrowRight size={20} /></button>
       <button className="reader-overlay-title" type="button" onClick={props.on_info} aria-label="Show paper abstract and metadata"><span>{props.paper.title}</span><small>arXiv:{props.paper.arxiv_id}v{props.paper.arxiv_version}</small></button>
-      <button className="icon-button" type="button" aria-label="Hide reading controls" onClick={props.on_hide}><X size={20} /></button>
+      <button className="icon-button" type="button" aria-label="Close paper" onClick={props.on_close}><X size={20} /></button>
     </div>
     <div className="reader-overlay-actions">
+      {props.on_source && <button type="button" aria-label={`Back to source paper: ${props.source_title}`} title={props.source_title} onClick={props.on_source} disabled={props.busy}><ArrowLeft size={17} /><span>Source</span></button>}
       {props.on_mode && <button className="reader-mode-toggle" type="button" aria-label={props.reader_mode === 'reading' ? 'Switch to original PDF' : 'Switch to Reading view'} aria-pressed={props.reader_mode === 'reading'} onClick={props.on_mode}>{props.reader_mode === 'reading' ? <FileText size={17} /> : <BookOpen size={17} />}<span>{props.reader_mode === 'reading' ? 'Original PDF' : 'Reading view'}</span></button>}
       <button type="button" aria-label="Show paper information" onClick={props.on_info}><Info size={17} /><span>Info</span></button>
       <button type="button" aria-controls="paper-inspector" aria-expanded={props.inspector_open} aria-label={props.inspector_open ? 'Close references and notes panel' : 'Open references and notes panel'} onClick={props.on_inspector}>{props.inspector_open ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}<span>Refs & notes</span></button>

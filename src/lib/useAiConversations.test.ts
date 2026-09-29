@@ -367,4 +367,171 @@ describe('durable AI conversations', () => {
     expect(result.current.conversations[0].conversation.turns).toHaveLength(1);
     expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
   });
+
+  it('rejects an initial list snapshot with previously unseen conversation IDs after its paper is forgotten', async () => {
+    const stale = deferred<AiConversation[]>();
+    vi.mocked(backend.listAiConversations).mockReturnValueOnce(stale.promise);
+    const { result } = renderHook(() => useAiConversations(paper, vi.fn()));
+    expect(result.current.loading).toBe(true);
+    expect(result.current.conversations).toEqual([]);
+    act(() => result.current.forgetPaper(paper.paper_id));
+    await act(async () => stale.resolve([
+      { ...clone(initial), conversation_id: 'unseen-before-deletion' },
+      { ...clone(initial), conversation_id: 'another-unseen-conversation' },
+    ]));
+    expect(result.current.conversations).toEqual([]);
+    expect(result.current.loading).toBe(false);
+
+    // Re-downloading the same PDF must still permit a fresh conversation. A
+    // permanent paper blacklist would avoid the race but break this valid flow.
+    const fresh = { ...clone(initial), conversation_id: 'created-after-readding-paper' };
+    records.set(fresh.conversation_id, fresh);
+    await act(async () => result.current.reload());
+    expect(result.current.conversations.map((view) => view.conversation.conversation_id)).toEqual([fresh.conversation_id]);
+  });
+
+  it.each(['answer', 'note'] as const)('cancels a pending %s, removes its view, and ignores its retained listener and late completion', async (operation) => {
+    records.set(initial.conversation_id, clone(initial));
+    const response = deferred<AiConversationResponse>();
+    vi.mocked(operation === 'answer' ? backend.askAiConversation : backend.generateAiConversationNote).mockReturnValueOnce(response.promise);
+    const { result, unmount } = renderHook(() => useAiConversations(paper, vi.fn()));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    act(() => {
+      if (operation === 'answer') result.current.followUp(initial.conversation_id, 'Continue');
+      else void result.current.generateNote(initial.conversation_id);
+    });
+    await waitFor(() => expect(operation === 'answer' ? backend.askAiConversation : backend.generateAiConversationNote).toHaveBeenCalled());
+    const requestId = operation === 'answer'
+      ? vi.mocked(backend.askAiConversation).mock.calls[0][0].request_id
+      : vi.mocked(backend.generateAiConversationNote).mock.calls[0][0];
+    const retainedListener = [...listeners][0];
+    act(() => emit({ request_id: requestId, kind: 'answer_delta', text: 'Received before deletion' }));
+    act(() => result.current.forgetPaper(paper.paper_id));
+    expect(result.current.conversations).toEqual([]);
+    expect(backend.cancelAiRequest).toHaveBeenCalledWith(requestId);
+    expect(unlisten).toHaveBeenCalledOnce();
+    act(() => retainedListener({ request_id: requestId, kind: 'answer_delta', text: 'Must not resurrect the view' }));
+    await act(async () => response.resolve({
+      conversation: { ...clone(initial), note_draft: operation === 'note' ? clone(note) : null },
+      thinking: 'Late thinking',
+    }));
+    expect(result.current.conversations).toEqual([]);
+    unmount();
+    expect(backend.cancelAiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels an operation restored from disk when its paper is forgotten and stops orphan polling', async () => {
+    vi.useFakeTimers();
+    records.set(initial.conversation_id, { ...clone(initial), active_request_id: 'orphaned-request', active_operation: 'answer' });
+    const { result } = renderHook(() => useAiConversations(paper, vi.fn()));
+    await act(async () => {});
+    expect(result.current.conversations[0].pending).toBe(true);
+    act(() => result.current.forgetPaper(paper.paper_id));
+    expect(result.current.conversations).toEqual([]);
+    expect(backend.cancelAiRequest).toHaveBeenCalledWith('orphaned-request');
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(backend.listAiConversations).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets only the removed paper while another paper keeps its conversations', async () => {
+    const other = { ...clone(initial), conversation_id: 'other-paper-conversation', target: { ...initial.target, paper_id: second.paper_id, pdf_hash: second.pdf_hash } };
+    records.set(initial.conversation_id, clone(initial));
+    records.set(other.conversation_id, other);
+    const { result, rerender } = renderHook(({ active }) => useAiConversations(active, vi.fn()), { initialProps: { active: paper } });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    rerender({ active: second });
+    await waitFor(() => expect(result.current.conversations[0]?.conversation.conversation_id).toBe(other.conversation_id));
+    act(() => result.current.forgetPaper(paper.paper_id));
+    expect(result.current.conversations[0].conversation.conversation_id).toBe(other.conversation_id);
+    records.delete(initial.conversation_id);
+    rerender({ active: paper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.conversations).toEqual([]);
+    act(() => expect(result.current.followUp(initial.conversation_id, 'Must not restart a deleted chat')).toBe(false));
+    rerender({ active: second });
+    await waitFor(() => expect(result.current.conversations[0]?.conversation.conversation_id).toBe(other.conversation_id));
+  });
+
+  it('does not invalidate another paper’s in-flight conversation list when forgetting a background paper', async () => {
+    records.set(initial.conversation_id, clone(initial));
+    const { result, rerender } = renderHook(({ active }) => useAiConversations(active, vi.fn()), { initialProps: { active: paper } });
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    const loadingOther = deferred<AiConversation[]>();
+    vi.mocked(backend.listAiConversations).mockReturnValueOnce(loadingOther.promise);
+    rerender({ active: second });
+    expect(result.current.loading).toBe(true);
+    act(() => result.current.forgetPaper(paper.paper_id));
+    const other = { ...clone(initial), conversation_id: 'other-still-loading', target: { ...initial.target, paper_id: second.paper_id, pdf_hash: second.pdf_hash } };
+    await act(async () => loadingOther.resolve([other]));
+    expect(result.current.conversations.map((view) => view.conversation.conversation_id)).toEqual([other.conversation_id]);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it('discards queued draft edits rather than flushing them after deletion or unmount', async () => {
+    const { result, unmount } = await loadedWithNote();
+    vi.useFakeTimers();
+    act(() => result.current.editNote(initial.conversation_id, 'Deleted unsent draft'));
+    act(() => result.current.forgetPaper(paper.paper_id));
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    unmount();
+    expect(backend.updateAiConversationNote).not.toHaveBeenCalled();
+    expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
+  });
+
+  it('ignores an in-flight draft response and never sends a newer queued revision after deletion', async () => {
+    const { result, unmount } = await loadedWithNote();
+    vi.useFakeTimers();
+    const write = deferred<AiConversation>();
+    vi.mocked(backend.updateAiConversationNote).mockReturnValueOnce(write.promise);
+    act(() => result.current.editNote(initial.conversation_id, 'First revision'));
+    let storing!: Promise<boolean>;
+    act(() => { storing = result.current.retryNotePersistence(initial.conversation_id); });
+    act(() => result.current.editNote(initial.conversation_id, 'Newer queued revision'));
+    act(() => result.current.forgetPaper(paper.paper_id));
+    await act(async () => {
+      write.resolve({ ...clone(initial), note_draft: { ...note, content: 'First revision' } });
+      await storing;
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(result.current.conversations).toEqual([]);
+    unmount();
+    expect(backend.updateAiConversationNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start an annotation save after deletion while waiting for an older draft write', async () => {
+    const { result, onSaved } = await loadedWithNote();
+    const write = deferred<AiConversation>();
+    vi.mocked(backend.updateAiConversationNote).mockReturnValueOnce(write.promise);
+    act(() => result.current.editNote(initial.conversation_id, 'Draft waiting to be stored'));
+    let storing!: Promise<boolean>;
+    act(() => { storing = result.current.retryNotePersistence(initial.conversation_id); });
+    let saving!: Promise<void>;
+    act(() => { saving = result.current.saveNote(initial.conversation_id); });
+    act(() => result.current.forgetPaper(paper.paper_id));
+    await act(async () => {
+      write.resolve({ ...clone(initial), note_draft: clone(note) });
+      await storing;
+      await saving;
+    });
+    expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(result.current.conversations).toEqual([]);
+  });
+
+  it('ignores a completed annotation save after deletion without notifying Workspace or restoring its chat', async () => {
+    const { result, onSaved } = await loadedWithNote();
+    const save = deferred<{ conversation: AiConversation; annotation: Annotation }>();
+    vi.mocked(backend.saveAiConversationNote).mockReturnValueOnce(save.promise);
+    let saving!: Promise<void>;
+    act(() => { saving = result.current.saveNote(initial.conversation_id); });
+    expect(backend.saveAiConversationNote).toHaveBeenCalledOnce();
+    act(() => result.current.forgetPaper(paper.paper_id));
+    await act(async () => {
+      const conversation = { ...clone(initial), note_draft: { ...note, saved_annotation_id: 'late-annotation' } };
+      save.resolve({ conversation, annotation: annotation(conversation, note.content) });
+      await saving;
+    });
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(result.current.conversations).toEqual([]);
+  });
 });

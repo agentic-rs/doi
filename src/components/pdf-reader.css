@@ -50,7 +50,7 @@
   white-space: nowrap;
 }
 .pdf-controls-accessible:focus-visible {
-  top: calc(84px + env(safe-area-inset-top, 0px));
+  top: calc(84px + var(--reader-safe-top, env(safe-area-inset-top, 0px)));
   left: calc(16px + env(safe-area-inset-left, 0px));
   z-index: 30;
   width: auto;

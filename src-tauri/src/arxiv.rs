@@ -1,7 +1,7 @@
 use crate::{
   error::{network_error, Result},
   http,
-  models::Paper,
+  models::{OperationProgress, Paper, PaperMetadata, PaperPreview},
   state::AppState,
 };
 use regex::Regex;
@@ -12,7 +12,12 @@ use std::{
   sync::OnceLock,
   time::{Duration, Instant},
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
+
+mod cancellation;
+mod rate_limit;
+mod service;
+pub use service::ArxivState;
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
@@ -147,6 +152,7 @@ pub fn parse_metadata(bytes: &[u8], requested: &ArxivId) -> Result<Paper> {
     pdf_hash: String::new(),
     downloaded_at: String::new(),
     last_location: None,
+    last_opened_at: None,
   })
 }
 
@@ -157,126 +163,269 @@ pub fn pdf_path(state: &AppState, paper_id: &str) -> PathBuf {
     .join(format!("{:x}.pdf", Sha256::digest(paper_id.as_bytes())))
 }
 
-pub async fn open_paper(
+struct Progress<'a> {
+  request_id: &'a str,
+  emit: &'a (dyn Fn(OperationProgress) + Send + Sync),
+}
+
+impl Progress<'_> {
+  fn emit(
+    &self,
+    phase: &'static str,
+    message: &str,
+    received_bytes: u64,
+    total_bytes: Option<u64>,
+  ) {
+    (self.emit)(OperationProgress {
+      request_id: self.request_id.to_owned(),
+      phase,
+      message: message.to_owned(),
+      received_bytes,
+      total_bytes,
+      retry_at: None,
+    });
+  }
+
+  fn waiting(&self, retry_at: chrono::DateTime<chrono::Utc>) {
+    (self.emit)(OperationProgress {
+      request_id: self.request_id.to_owned(),
+      phase: "waiting",
+      message: "Waiting for arXiv… You can cancel and keep reading your library.".into(),
+      received_bytes: 0,
+      total_bytes: None,
+      retry_at: Some(retry_at.to_rfc3339()),
+    });
+  }
+}
+
+impl From<&Paper> for PaperMetadata {
+  fn from(paper: &Paper) -> Self {
+    Self {
+      paper_id: paper.paper_id.clone(),
+      arxiv_id: paper.arxiv_id.clone(),
+      arxiv_version: paper.arxiv_version,
+      title: paper.title.clone(),
+      authors: paper.authors.clone(),
+      r#abstract: paper.r#abstract.clone(),
+      pdf_url: paper.pdf_url.clone(),
+    }
+  }
+}
+
+impl From<PaperMetadata> for Paper {
+  fn from(metadata: PaperMetadata) -> Self {
+    Self {
+      paper_id: metadata.paper_id,
+      arxiv_id: metadata.arxiv_id,
+      arxiv_version: metadata.arxiv_version,
+      title: metadata.title,
+      authors: metadata.authors,
+      r#abstract: metadata.r#abstract,
+      pdf_url: metadata.pdf_url,
+      pdf_hash: String::new(),
+      downloaded_at: String::new(),
+      last_location: None,
+      last_opened_at: None,
+    }
+  }
+}
+
+pub fn cancel_operation(state: &AppState, request_id: &str) -> Result<()> {
+  state.arxiv.operations.cancel(request_id)
+}
+
+pub async fn preview_paper(
   state: &AppState,
   app: &AppHandle,
   input: &str,
   request_id: &str,
-) -> Result<Paper> {
-  let requested = ArxivId::parse(input)?;
-  let _download_guard = state.import_lock.lock().await;
-  let cached = if requested.version.is_some() {
-    state.database.get_paper(requested.canonical()).await?
-  } else {
-    state
-      .database
-      .list_papers()
-      .await?
-      .into_iter()
-      .filter(|paper| paper.arxiv_id == requested.base_id)
-      .max_by_key(|paper| paper.arxiv_version)
+) -> Result<PaperPreview> {
+  let emit = |event| {
+    let _ = app.emit("operation-progress", event);
   };
-  if let Some(paper) = cached {
-    if tokio::fs::try_exists(pdf_path(state, &paper.paper_id))
+  preview(
+    state,
+    input,
+    &Progress {
+      request_id,
+      emit: &emit,
+    },
+  )
+  .await
+}
+
+async fn cached_paper(state: &AppState, requested: &ArxivId) -> Result<Option<Paper>> {
+  if requested.version.is_some() {
+    state.database.get_paper(requested.canonical()).await
+  } else {
+    Ok(
+      state
+        .database
+        .list_papers()
+        .await?
+        .into_iter()
+        .filter(|paper| paper.arxiv_id == requested.base_id)
+        .max_by_key(|paper| paper.arxiv_version),
+    )
+  }
+}
+
+async fn available_paper(state: &AppState, paper_id: &str) -> Result<Option<Paper>> {
+  if let Some(paper) = state.database.get_paper(paper_id.to_owned()).await? {
+    if tokio::fs::try_exists(pdf_path(state, paper_id))
       .await
       .map_err(|_| "Could not inspect cached PDF.".to_string())?
     {
-      state.progress(app, request_id, "ready", "Opened cached paper.", 0, None);
-      return Ok(paper);
+      return Ok(Some(paper));
     }
   }
-  state.progress(
-    app,
-    request_id,
-    "metadata",
-    "Looking up the paper on arXiv…",
-    0,
-    None,
-  );
-  let mut paper = fetch_metadata(state, &requested).await?;
-  if let Some(cached) = state.database.get_paper(paper.paper_id.clone()).await? {
-    if tokio::fs::try_exists(pdf_path(state, &cached.paper_id))
-      .await
-      .map_err(|_| "Could not inspect cached PDF.".to_string())?
-    {
-      state.progress(app, request_id, "ready", "Opened cached paper.", 0, None);
-      return Ok(cached);
-    }
+  Ok(None)
+}
+
+async fn preview(state: &AppState, input: &str, progress: &Progress<'_>) -> Result<PaperPreview> {
+  let requested = ArxivId::parse(input)?;
+  let mut active = state.arxiv.operations.register(progress.request_id)?;
+  active
+    .run(async {
+      // Register before waiting so Cancel also interrupts queued operations.
+      let _import_guard = state.import_lock.lock().await;
+      let cached = cached_paper(state, &requested).await?;
+      let metadata = if let Some(paper) = &cached {
+        PaperMetadata::from(paper)
+      } else if let Some(metadata) = state.arxiv.cached_metadata(&requested.canonical()) {
+        metadata
+      } else {
+        progress.emit("metadata", "Looking up the paper on arXiv…", 0, None);
+        let response = rate_limit::send(state, progress, "arXiv metadata lookup", || {
+          Ok(
+            state
+              .http()?
+              .get(&state.arxiv.metadata_url)
+              .query(&[("id_list", requested.canonical())])
+              .timeout(Duration::from_secs(30)),
+          )
+        })
+        .await?;
+        let bytes = http::bounded_body(response, 2 * 1024 * 1024, "arXiv metadata lookup").await?;
+        PaperMetadata::from(&parse_metadata(&bytes, &requested)?)
+      };
+      let library_paper = available_paper(state, &metadata.paper_id).await?;
+      let preview_id = state
+        .arxiv
+        .insert_preview(requested.canonical(), metadata.clone());
+      progress.emit("ready", "Paper preview is ready.", 0, None);
+      Ok(PaperPreview {
+        preview_id,
+        metadata,
+        library_paper,
+      })
+    })
+    .await
+}
+
+pub async fn download_paper(
+  state: &AppState,
+  app: &AppHandle,
+  preview_id: &str,
+  request_id: &str,
+) -> Result<Paper> {
+  let emit = |event| {
+    let _ = app.emit("operation-progress", event);
+  };
+  download(
+    state,
+    preview_id,
+    &Progress {
+      request_id,
+      emit: &emit,
+    },
+  )
+  .await
+}
+
+async fn download(state: &AppState, preview_id: &str, progress: &Progress<'_>) -> Result<Paper> {
+  crate::validation::validate_id(preview_id)?;
+  let mut active = state.arxiv.operations.register(progress.request_id)?;
+  let _import_guard = active
+    .run(async { Ok(state.import_lock.lock().await) })
+    .await?;
+  // Check the token only after acquiring the same gate used by library deletion.
+  let metadata = state.arxiv.preview(preview_id).ok_or_else(|| {
+    "This preview has expired or the paper was removed. Look up the paper again.".to_string()
+  })?;
+  if let Some(paper) = active
+    .run(available_paper(state, &metadata.paper_id))
+    .await?
+  {
+    progress.emit("ready", "Opened cached paper.", 0, None);
+    return Ok(paper);
   }
-  state.progress(
-    app,
-    request_id,
-    "download",
-    "Downloading the original PDF…",
-    0,
-    None,
-  );
-  let temporary = state
+  let temporary_path = state
     .pdf_directory
     .join(format!("{}.part", uuid::Uuid::new_v4()));
-  let download_result = download_pdf(state, app, &paper, request_id, &temporary).await;
-  let hash = match download_result {
-    Ok(hash) => hash,
-    Err(error) => {
-      let _ = tokio::fs::remove_file(&temporary).await;
-      return Err(error);
-    }
+  let mut temporary = TemporaryPdf {
+    path: temporary_path,
+    keep: false,
   };
+  let mut paper = Paper::from(metadata);
+  let hash = active
+    .run(download_pdf(state, progress, &paper, &temporary.path))
+    .await?;
   paper.pdf_hash = hash;
   paper.downloaded_at = chrono::Utc::now().to_rfc3339();
-  // Check the revision before replacing a missing cache entry's file.
-  if let Some(previous) = state.database.get_paper(paper.paper_id.clone()).await? {
+  if let Some(previous) = active
+    .run(state.database.get_paper(paper.paper_id.clone()))
+    .await?
+  {
     if previous.pdf_hash != paper.pdf_hash {
-      let _ = tokio::fs::remove_file(&temporary).await;
       return Err(
         "The downloaded PDF differs from the saved revision. Existing annotations were preserved."
           .into(),
       );
     }
   }
-  tokio::fs::rename(&temporary, pdf_path(state, &paper.paper_id))
+  // This is the short commit boundary: cancellation stops all waits, requests,
+  // and file streaming above. Once committing, finish or roll back both files
+  // and database rather than dropping a SQLite operation midway through it.
+  active.check()?;
+  let final_path = pdf_path(state, &paper.paper_id);
+  tokio::fs::rename(&temporary.path, &final_path)
     .await
     .map_err(|_| "Could not finalize the cached PDF.".to_string())?;
+  temporary.path = final_path;
   let paper = state.database.save_paper(paper).await?;
-  state.progress(app, request_id, "ready", "Paper is ready to read.", 0, None);
+  temporary.keep = true;
+  progress.emit("ready", "Paper is ready to read.", 0, None);
   Ok(paper)
 }
 
-async fn fetch_metadata(state: &AppState, requested: &ArxivId) -> Result<Paper> {
-  // The mutex serializes calls; time is recorded even on failed requests.
-  let mut last_request = state.arxiv_request_clock.lock().await;
-  let wait = Duration::from_secs(3).saturating_sub(last_request.elapsed());
-  if !wait.is_zero() {
-    tokio::time::sleep(wait).await;
+struct TemporaryPdf {
+  path: PathBuf,
+  keep: bool,
+}
+impl Drop for TemporaryPdf {
+  fn drop(&mut self) {
+    if !self.keep {
+      let _ = std::fs::remove_file(&self.path);
+    }
   }
-  *last_request = Instant::now();
-  let response = state
-    .http()?
-    .get("https://export.arxiv.org/api/query")
-    .query(&[("id_list", requested.canonical())])
-    .timeout(Duration::from_secs(30))
-    .send()
-    .await
-    .map_err(|error| network_error("arXiv metadata lookup", error))?;
-  http::require_success(&response, "arXiv metadata lookup")?;
-  let bytes = http::bounded_body(response, 2 * 1024 * 1024, "arXiv metadata lookup").await?;
-  parse_metadata(&bytes, requested)
 }
 
 async fn download_pdf(
   state: &AppState,
-  app: &AppHandle,
+  progress: &Progress<'_>,
   paper: &Paper,
-  request_id: &str,
   temporary: &std::path::Path,
 ) -> Result<String> {
-  let mut response = state
-    .http()?
-    .get(&paper.pdf_url)
-    .send()
-    .await
-    .map_err(|error| network_error("PDF download", error))?;
-  http::require_success(&response, "PDF download")?;
+  progress.emit("download", "Downloading the original PDF…", 0, None);
+  let mut response = rate_limit::send(state, progress, "PDF download", || {
+    Ok(
+      state
+        .http()?
+        .get(format!("{}{}", state.arxiv.pdf_base_url, paper.paper_id)),
+    )
+  })
+  .await?;
   let total = response.content_length();
   if total.is_some_and(|bytes| bytes > MAX_PDF_BYTES) {
     return Err("The PDF exceeds the 256 MB download limit.".into());
@@ -309,14 +458,7 @@ async fn download_pdf(
       .await
       .map_err(|_| "Could not write the PDF cache file.".to_string())?;
     if last_progress.elapsed() >= Duration::from_millis(120) {
-      state.progress(
-        app,
-        request_id,
-        "download",
-        "Downloading the original PDF…",
-        received,
-        total,
-      );
+      progress.emit("download", "Downloading the original PDF…", received, total);
       last_progress = Instant::now();
     }
   }
@@ -334,14 +476,7 @@ async fn download_pdf(
     .sync_all()
     .await
     .map_err(|_| "Could not save the PDF cache file.".to_string())?;
-  state.progress(
-    app,
-    request_id,
-    "download",
-    "Downloaded the PDF.",
-    received,
-    total,
-  );
+  progress.emit("download", "Downloaded the PDF.", received, total);
   Ok(format!("{:x}", digest.finalize()))
 }
 
@@ -365,6 +500,10 @@ pub async fn read_pdf(state: &AppState, paper_id: String) -> Result<Vec<u8>> {
     Ok(bytes)
   }).await.map_err(|_| "The PDF integrity check was interrupted.".to_string())?
 }
+
+#[cfg(test)]
+#[path = "arxiv/tests.rs"]
+mod workflow_tests;
 
 #[cfg(test)]
 mod tests {

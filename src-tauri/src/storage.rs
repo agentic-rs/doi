@@ -10,6 +10,7 @@ use std::{
 };
 
 mod conversations;
+mod library;
 pub(crate) use conversations::ConversationAnswer;
 
 #[derive(Clone)]
@@ -22,17 +23,19 @@ impl Database {
     let database = Self {
       path: path.to_owned(),
     };
-    let connection = database.connect()?;
-    let version: u32 = connection
+    let mut connection = database.connect()?;
+    let transaction = connection
+      .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+      .map_err(storage_error)?;
+    let version: u32 = transaction
       .query_row("PRAGMA user_version", [], |row| row.get(0))
       .map_err(storage_error)?;
-    if version > 3 {
+    if version > 4 {
       return Err("The library was created by a newer Papertrail version.".into());
     }
-    connection
+    transaction
       .execute_batch(
-        "PRAGMA journal_mode=WAL;
-       BEGIN IMMEDIATE;
+        "
        CREATE TABLE IF NOT EXISTS papers (
          paper_id TEXT PRIMARY KEY,
          arxiv_id TEXT NOT NULL,
@@ -40,7 +43,8 @@ impl Database {
          pdf_hash TEXT NOT NULL,
          data TEXT NOT NULL,
          last_location TEXT,
-         downloaded_at TEXT NOT NULL
+         downloaded_at TEXT NOT NULL,
+         last_opened_at TEXT
        );
        CREATE TABLE IF NOT EXISTS annotations (
          annotation_id TEXT PRIMARY KEY,
@@ -67,9 +71,27 @@ impl Database {
        );
        CREATE INDEX IF NOT EXISTS conversations_by_paper
          ON ai_conversations(paper_id, created_at);
-       PRAGMA user_version=3;
-       COMMIT;",
+       ",
       )
+      .map_err(storage_error)?;
+    let has_recency_column: bool = transaction
+      .query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('papers') WHERE name='last_opened_at')",
+        [],
+        |row| row.get(0),
+      )
+      .map_err(storage_error)?;
+    if !has_recency_column {
+      transaction
+        .execute_batch("ALTER TABLE papers ADD COLUMN last_opened_at TEXT;")
+        .map_err(storage_error)?;
+    }
+    transaction
+      .pragma_update(None, "user_version", 4)
+      .map_err(storage_error)?;
+    transaction.commit().map_err(storage_error)?;
+    connection
+      .pragma_update(None, "journal_mode", "WAL")
       .map_err(storage_error)?;
     conversations::recover_interrupted(&connection)?;
     Ok(database)
@@ -101,7 +123,7 @@ impl Database {
     self
       .run(|connection| {
         let mut statement = connection
-          .prepare("SELECT data, last_location FROM papers ORDER BY downloaded_at DESC")
+          .prepare("SELECT data, last_location, last_opened_at FROM papers ORDER BY COALESCE(last_opened_at, downloaded_at) DESC, paper_id")
           .map_err(storage_error)?;
         let papers = statement
           .query_map([], paper_from_row)
@@ -118,7 +140,7 @@ impl Database {
       .run(move |connection| {
         connection
           .query_row(
-            "SELECT data, last_location FROM papers WHERE paper_id=?1",
+            "SELECT data, last_location, last_opened_at FROM papers WHERE paper_id=?1",
             [paper_id],
             paper_from_row,
           )
@@ -132,15 +154,16 @@ impl Database {
     self
       .run(move |connection| {
         let transaction = connection.transaction().map_err(storage_error)?;
-        let previous: Option<(String, Option<String>)> = transaction
+        let previous: Option<(String, Option<String>, Option<String>)> = transaction
           .query_row(
-            "SELECT pdf_hash, last_location FROM papers WHERE paper_id=?1",
+            "SELECT pdf_hash, last_location, last_opened_at FROM papers WHERE paper_id=?1",
             [&paper.paper_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
           )
           .optional()
           .map_err(storage_error)?;
-        if let Some((hash, location)) = previous {
+        if let Some((hash, location, opened_at)) = previous {
+          paper.last_opened_at = opened_at;
           if hash != paper.pdf_hash {
             return Err(
               "A cached paper revision cannot be replaced with different PDF bytes.".into(),
@@ -154,8 +177,8 @@ impl Database {
         let data = serde_json::to_string(&paper).map_err(storage_error)?;
         transaction
           .execute(
-            "INSERT INTO papers (paper_id, arxiv_id, arxiv_version, pdf_hash, data, downloaded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO papers (paper_id, arxiv_id, arxiv_version, pdf_hash, data, downloaded_at, last_opened_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(paper_id) DO UPDATE SET data=excluded.data",
             params![
               paper.paper_id,
@@ -163,7 +186,8 @@ impl Database {
               paper.arxiv_version,
               paper.pdf_hash,
               data,
-              paper.downloaded_at
+              paper.downloaded_at,
+              paper.last_opened_at
             ],
           )
           .map_err(storage_error)?;
@@ -357,10 +381,12 @@ impl Database {
 fn paper_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Paper> {
   let data: String = row.get(0)?;
   let location: Option<String> = row.get(1)?;
+  let opened_at: Option<String> = row.get(2)?;
   let decode_error = |error| {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
   };
   let mut paper: Paper = serde_json::from_str(&data).map_err(decode_error)?;
+  paper.last_opened_at = opened_at;
   paper.last_location = location
     .map(|value| serde_json::from_str(&value))
     .transpose()
@@ -372,7 +398,7 @@ fn paper_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Paper> {
 mod tests {
   use super::*;
 
-  fn fixture_paper() -> Paper {
+  pub(super) fn fixture_paper() -> Paper {
     Paper {
       paper_id: "2401.12345v2".into(),
       arxiv_id: "2401.12345".into(),
@@ -383,11 +409,12 @@ mod tests {
       pdf_url: "https://arxiv.org/pdf/2401.12345v2".into(),
       pdf_hash: "a".repeat(64),
       downloaded_at: chrono::Utc::now().to_rfc3339(),
+      last_opened_at: None,
       last_location: None,
     }
   }
 
-  fn fixture_annotation(paper: &Paper) -> Annotation {
+  pub(super) fn fixture_annotation(paper: &Paper) -> Annotation {
     Annotation {
       schema_version: 1,
       annotation_id: "note-1".into(),

@@ -5,6 +5,7 @@ mod credentials;
 mod error;
 mod export;
 mod http;
+mod library;
 mod models;
 mod reader;
 mod reading_layout;
@@ -36,8 +37,12 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
-      commands::open_arxiv_paper,
       commands::list_papers,
+      commands::preview_arxiv_paper,
+      commands::download_arxiv_paper,
+      commands::cancel_paper_operation,
+      commands::mark_paper_opened,
+      commands::remove_paper,
       commands::get_pdf_bytes,
       commands::save_reading_position,
       commands::get_reading_layout,

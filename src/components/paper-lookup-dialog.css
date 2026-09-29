@@ -1,0 +1,5 @@
+.paper-lookup-dialog { width: min(100%, 460px); }
+.paper-lookup-content { padding: 26px; }
+.paper-lookup-content h2 { margin: 0; font: 25px/1.3 Georgia, 'Times New Roman', serif; overflow-wrap: anywhere; }
+.paper-lookup-content .library-dialog-message { margin-top: 20px; }
+@media (max-width: 600px) { .paper-lookup-content { padding: 22px; } }

@@ -2,14 +2,20 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AiAnswer, AiConversation, AiConversationRequest, AiConversationResponse, AiConversationSaveResult,
-  AiModel, AiRequest, AiSettings, AiStreamEvent, Annotation, OperationProgress, Paper,
+  AiModel, AiRequest, AiSettings, AiStreamEvent, Annotation, OperationProgress, Paper, PaperPreview,
   ReaderCapabilities, ReaderOrientation, ReadingLayout, ReadingLocation, ReferenceCandidate,
 } from './types';
 
 export const nativeAvailable = isTauri;
 export const listPapers = () => invoke<Paper[]>('list_papers');
-export const openArxivPaper = (input: string, request_id: string) =>
-  invoke<Paper>('open_arxiv_paper', { input, request_id });
+export const previewArxivPaper = (input: string, request_id: string) =>
+  invoke<PaperPreview>('preview_arxiv_paper', { input, request_id });
+export const downloadArxivPaper = (preview_id: string, request_id: string) =>
+  invoke<Paper>('download_arxiv_paper', { preview_id, request_id });
+export const cancelPaperOperation = (request_id: string) =>
+  invoke<void>('cancel_paper_operation', { request_id });
+export const markPaperOpened = (paper_id: string) => invoke<Paper>('mark_paper_opened', { paper_id });
+export const removePaper = (paper_id: string) => invoke<void>('remove_paper', { paper_id });
 export const getPdfBytes = async (paper_id: string) =>
   new Uint8Array(await invoke<ArrayBuffer>('get_pdf_bytes', { paper_id }));
 export const saveReadingPosition = (location: ReadingLocation) =>

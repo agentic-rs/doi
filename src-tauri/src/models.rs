@@ -59,6 +59,24 @@ pub struct ReadingLayout {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaperMetadata {
+  pub paper_id: String,
+  pub arxiv_id: String,
+  pub arxiv_version: u32,
+  pub title: String,
+  pub authors: Vec<String>,
+  pub r#abstract: String,
+  pub pdf_url: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PaperPreview {
+  pub preview_id: String,
+  pub metadata: PaperMetadata,
+  pub library_paper: Option<Paper>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Paper {
   pub paper_id: String,
   pub arxiv_id: String,
@@ -69,6 +87,8 @@ pub struct Paper {
   pub pdf_url: String,
   pub pdf_hash: String,
   pub downloaded_at: String,
+  #[serde(default)]
+  pub last_opened_at: Option<String>,
   pub last_location: Option<ReadingLocation>,
 }
 
@@ -296,6 +316,7 @@ pub struct OperationProgress {
   pub message: String,
   pub received_bytes: u64,
   pub total_bytes: Option<u64>,
+  pub retry_at: Option<String>,
 }
 
 #[cfg(test)]

@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, Paper, PdfReaderProps, ReaderOrientation, ReadingLocation, SelectionContext } from '../lib/types';
+import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, OperationProgress, Paper, PaperPreview, PdfReaderProps, ReaderOrientation, ReadingLocation, SelectionContext } from '../lib/types';
 import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
 vi.mock('../lib/tauri', () => ({
   nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
-  openArxivPaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
+  previewArxivPaper: vi.fn(), downloadArxivPaper: vi.fn(), cancelPaperOperation: vi.fn(), markPaperOpened: vi.fn(), removePaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
   askAiConversation: vi.fn(), listAiConversations: vi.fn(), generateAiConversationNote: vi.fn(), updateAiConversationNote: vi.fn(), saveAiConversationNote: vi.fn(),
   onAiStream: vi.fn(), cancelAiRequest: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
   resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(), listAiModels: vi.fn(),
@@ -43,6 +43,8 @@ const first: Paper = {
   pdf_hash: 'a'.repeat(64), downloaded_at: '2026-09-27T00:00:00Z', last_location: null,
 };
 const second: Paper = { ...first, paper_id: '1409.0473v3', arxiv_id: '1409.0473', arxiv_version: 3, title: 'Second paper', pdf_hash: 'b'.repeat(64) };
+
+const preview: PaperPreview = { preview_id: 'preview-second', metadata: second, library_paper: null };
 
 function mockLayout(compact: boolean) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
@@ -113,6 +115,11 @@ beforeEach(() => {
   vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: false, device_kind: 'desktop' });
   vi.mocked(backend.setReaderAiMode).mockImplementation(async (active) => active ? 'portrait' : 'landscape');
   vi.mocked(backend.listPapers).mockResolvedValue([first, second]);
+  vi.mocked(backend.markPaperOpened).mockImplementation(async (id) => ({ ...([first, second].find((paper) => paper.paper_id === id) ?? first), last_opened_at: '2026-09-30T00:00:00Z' }));
+  vi.mocked(backend.cancelPaperOperation).mockResolvedValue();
+  vi.mocked(backend.removePaper).mockResolvedValue();
+  vi.mocked(backend.previewArxivPaper).mockResolvedValue(preview);
+  vi.mocked(backend.downloadArxivPaper).mockResolvedValue(second);
   vi.mocked(backend.getSettings).mockResolvedValue({ provider_kind: 'openai_compatible', base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
   vi.mocked(backend.onProgress).mockResolvedValue(() => {});
   vi.mocked(backend.onAiStream).mockResolvedValue(() => {});
@@ -139,9 +146,8 @@ afterEach(async () => {
 
 async function openFirst() {
   render(<WorkspacePage />);
-  fireEvent.click(await screen.findByRole('button', { name: /^First paper/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Open First paper' }));
   await waitFor(() => expect(screen.getByTestId('reader').textContent).toContain('First paper'));
-  fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
   fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
 }
 
@@ -163,28 +169,33 @@ async function openReadingBlock(): Promise<ReadingLocation> {
 }
 
 describe('assembled paper workspace', () => {
-  it('shows metadata on opening, then hides controls until requested without replacing the reader', async () => {
+  it('starts in the library and resumes cached papers directly with metadata available on demand', async () => {
     render(<WorkspacePage />);
-    fireEvent.click(await screen.findByRole('button', { name: /^First paper/ }));
-    const sheet = await screen.findByRole('dialog', { name: 'First paper' });
+    expect(await screen.findByRole('region', { name: 'Paper library' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Recent papers' })).toBeTruthy();
+    expect(screen.getByLabelText('arXiv ID or link')).toBeTruthy();
+    expect(screen.queryByTestId('reader')).toBeNull();
+    expect(backend.getPdfBytes).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open First paper' }));
+    await screen.findByTestId('reader');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const data = lastReader.pdf_data;
+    expect(lastReader.controls_visible).toBe(false);
+    expect(lastReader.reading_active).toBe(true);
+    expect(lastReader.initial_fit_width).toBe(true);
+    expect(backend.markPaperOpened).toHaveBeenCalledWith(first.paper_id);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show paper information' }));
+    const sheet = screen.getByRole('dialog', { name: 'First paper' });
     expect(sheet.textContent).toContain('Abstract');
     expect(sheet.textContent).toContain('Author');
     expect(sheet.textContent).toContain('1706.03762');
-    const data = lastReader.pdf_data;
-    expect(lastReader.controls_visible).toBe(false);
+    expect(lastReader.pdf_data).toBe(data);
     expect(lastReader.reading_active).toBe(false);
-    expect(lastReader.initial_fit_width).toBe(true);
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
-    expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Paper library' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Read paper' }));
     expect(lastReader.reading_active).toBe(true);
-    expect(screen.queryByRole('banner', { name: 'Reading controls' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
-    expect(lastReader.controls_visible).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Show paper information' }));
-    expect(lastReader.pdf_data).toBe(data);
-    expect(screen.getByRole('dialog', { name: 'First paper' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Read paper' }));
     expect(lastReader.controls_visible).toBe(false);
   });
 
@@ -202,10 +213,13 @@ describe('assembled paper workspace', () => {
     });
     observer.observe(container, { childList: true, subtree: true });
     try {
-      fireEvent.click(await screen.findByRole('button', { name: /^First paper/ }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Open First paper' }));
+      await screen.findByTestId('reader');
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Show paper information' }));
       await screen.findByRole('dialog', { name: 'First paper' });
       await waitFor(() => expect(shortcut).toHaveBeenCalledOnce());
-      expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Paper library' })).toBeNull();
     } finally {
       observer.disconnect();
     }
@@ -436,16 +450,12 @@ describe('assembled paper workspace', () => {
   it('keeps mobile reading space available and retains a touch selection across panel changes', async () => {
     mockLayout(true);
     render(<WorkspacePage />);
-    await screen.findByRole('button', { name: /^First paper/ });
+    await screen.findByRole('button', { name: 'Open First paper' });
     expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
-    expect(screen.getByRole('dialog', { name: 'Paper library' }).getAttribute('aria-modal')).toBe('true');
-    expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: /^First paper/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open First paper' }));
     await screen.findByTestId('reader');
-    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
-    expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Paper library' })).toBeNull();
     expect(screen.getByRole('main').hasAttribute('inert')).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Select passage' }));
@@ -466,40 +476,34 @@ describe('assembled paper workspace', () => {
     expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
   });
 
-  it('keeps short touch screens compact at landscape widths and handles a larger viewport', async () => {
-    vi.stubGlobal('innerWidth', 852);
-    vi.stubGlobal('innerHeight', 393);
-    let changeLayout!: (event: MediaQueryListEvent) => void;
-    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
-      matches: query.includes('(pointer: coarse)') && query.includes('(max-height: 500px)'),
-      media: query,
-      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => { changeLayout = listener; },
-      removeEventListener: vi.fn(),
-    })));
+  it('keeps the active phone reader mounted when the viewport grows or becomes landscape', async () => {
+    mockPhone();
     await openFirst();
-    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
-    expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
-
-    act(() => changeLayout({ matches: false } as MediaQueryListEvent));
-    expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+    const reader = screen.getByTestId('reader');
+    expect(screen.queryByRole('navigation', { name: 'Open papers' })).toBeNull();
+    vi.stubGlobal('innerWidth', 1024);
+    vi.stubGlobal('innerHeight', 768);
+    fireEvent(window, new Event('resize'));
+    expect(screen.queryByRole('region', { name: 'Paper library' })).toBeNull();
     expect(screen.getByRole('main').hasAttribute('inert')).toBe(false);
+    expect(screen.getByTestId('reader')).toBe(reader);
+    expect(screen.queryByRole('navigation', { name: 'Open papers' })).toBeNull();
+    vi.stubGlobal('innerWidth', 393);
+    vi.stubGlobal('innerHeight', 852);
+    fireEvent(window, new Event('resize'));
+    expect(screen.getByTestId('reader')).toBe(reader);
     expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
-
-    act(() => changeLayout({ matches: true } as MediaQueryListEvent));
-    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
-    expect(screen.getByTestId('reader').textContent).toContain('First paper');
   });
 
   it('restores source position across internal and cross-paper links', async () => {
+    mockPhone();
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
     fireEvent.click(screen.getByRole('button', { name: 'Follow internal citation' }));
     expect(lastReader.target_location?.page_number).toBe(12);
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
     await waitFor(() => expect(screen.getByTestId('reader').textContent).toContain('Second paper'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
     expect(lastReader.target_location?.page_number).toBe(12);
@@ -557,11 +561,12 @@ describe('assembled paper workspace', () => {
   });
 
   it('returns to a Reading view block after following a citation to another paper', async () => {
+    mockPhone();
     const readingLocation = await openReadingBlock();
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await screen.findByTestId('reader');
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
-    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
     expect(lastReader.target_location).toEqual(readingLocation);
@@ -614,24 +619,25 @@ describe('assembled paper workspace', () => {
   });
 
   it('reopens a cached paper at its latest passage after returning to another paper', async () => {
+    mockPhone();
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await screen.findByTestId('reader');
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
-    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
 
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Second paper/ }));
-    await screen.findByRole('dialog', { name: 'Second paper' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Second paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
     expect(lastReader.target_location).toMatchObject({
       paper_id: second.paper_id, page_number: 4, page_position: [0.1, 0.6], zoom: 1.5, rotation: 90,
     });
     expect(lastReader.initial_fit_width).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Resume reading' }));
     expect(lastReader.reading_active).toBe(true);
     expect(lastReader.controls_visible).toBe(false);
   });
@@ -645,13 +651,13 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
     await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ paper_id: first.paper_id }), question: 'Explain this passage' })));
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await screen.findByTestId('reader');
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
     await act(async () => resolveAnswer(completeConversation(vi.mocked(backend.askAiConversation).mock.calls[0][0])));
     expect(backend.saveAnnotation).not.toHaveBeenCalled();
     expect(screen.queryByText('An explanation')).toBeNull();
-    fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to source paper: First paper' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
@@ -783,7 +789,8 @@ describe('assembled paper workspace', () => {
 
     } else {
       fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
-      await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+      await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
     }
     const currentPanel = screen.queryByRole('tabpanel', { name: /Notes/ });
     if (currentPanel && currentPanel !== oldPanel) currentPanel.scrollTo = vi.fn();
@@ -825,11 +832,11 @@ describe('assembled paper workspace', () => {
     let completePdf!: (data: Uint8Array<ArrayBuffer>) => void;
     vi.mocked(backend.getPdfBytes).mockReturnValueOnce(new Promise((resolve) => { completePdf = resolve; }));
     fireEvent.click(screen.getByRole('button', { name: 'Open paper library' }));
-    fireEvent.click(screen.getByRole('button', { name: /^First paper/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open First paper' }));
     await act(async () => completeSave());
-    expect(lastReader.annotations).toHaveLength(1);
+    expect(screen.queryByTestId('reader')).toBeNull();
     await act(async () => completePdf(new Uint8Array([1, 2, 3])));
-    await screen.findByRole('dialog', { name: 'First paper' });
+    await screen.findByTestId('reader');
     expect(lastReader.annotations).toHaveLength(1);
     expect(lastReader.annotations[0].body).toMatchObject({ note_content: 'A takeaway' });
   });
@@ -849,5 +856,370 @@ describe('assembled paper workspace', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Selected passage/ }));
     expect(lastReader.target_anchor).toEqual(selection.page_anchors[0]);
+  });
+});
+
+async function findNewPaper() {
+  fireEvent.change(screen.getByLabelText('arXiv ID or link'), { target: { value: '1409.0473v3' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Find paper' }));
+  return screen.findByRole('dialog', { name: 'Second paper' });
+}
+
+async function showRemoveConfirmation(title = 'First paper') {
+  fireEvent.click(screen.getByRole('button', { name: `More actions for ${title}` }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
+  return screen.findByRole('dialog', { name: 'Remove paper?' });
+}
+
+describe('library, previews, and open papers', () => {
+  it('previews metadata with exactly Download and Cancel, preserving the input on Cancel', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    render(<WorkspacePage />);
+    await screen.findByRole('button', { name: 'Open First paper' });
+    const dialog = await findNewPaper();
+    expect(within(dialog).getByRole('heading', { name: 'Abstract' })).toBeTruthy();
+    expect(within(dialog).getByText('Author')).toBeTruthy();
+    expect(within(dialog).getByText('1409.0473')).toBeTruthy();
+    expect(within(dialog).getByText('v3')).toBeTruthy();
+    expect(within(dialog).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual(['Cancel', 'Download & add to library']);
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    expect(backend.getPdfBytes).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((screen.getByLabelText('arXiv ID or link') as HTMLInputElement).value).toBe('1409.0473v3');
+    expect(screen.queryByRole('button', { name: 'Open Second paper' })).toBeNull();
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+  });
+
+  it('downloads only after confirmation and retries a failed PDF without repeating metadata lookup', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    vi.mocked(backend.downloadArxivPaper).mockRejectedValueOnce(new Error('PDF download interrupted'));
+    render(<WorkspacePage />);
+    await screen.findByRole('button', { name: 'Open First paper' });
+    const dialog = await findNewPaper();
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Download & add to library' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('PDF download interrupted');
+    expect(screen.queryByTestId('reader')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Download & add to library' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(backend.downloadArxivPaper).toHaveBeenCalledTimes(2);
+    expect(backend.downloadArxivPaper).toHaveBeenLastCalledWith(preview.preview_id, expect.any(String));
+    expect(backend.previewArxivPaper).toHaveBeenCalledExactlyOnceWith('1409.0473v3', expect.any(String));
+    expect(backend.getPdfBytes).toHaveBeenCalledExactlyOnceWith(second.paper_id);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(lastReader.reading_active).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
+    expect(screen.getByRole('button', { name: 'Open Second paper' })).toBeTruthy();
+  });
+
+  it('shows arXiv cooldown progress, cancels metadata lookup, and ignores its late result and progress', async () => {
+    const lookup = deferred<PaperPreview>();
+    let progress!: (event: OperationProgress) => void;
+    vi.mocked(backend.previewArxivPaper).mockReturnValueOnce(lookup.promise);
+    vi.mocked(backend.onProgress).mockImplementation(async (listener) => { progress = listener; return () => {}; });
+    render(<WorkspacePage />);
+    await screen.findByRole('button', { name: 'Open First paper' });
+    fireEvent.change(screen.getByLabelText('arXiv ID or link'), { target: { value: '1409.0473v3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find paper' }));
+    const requestId = vi.mocked(backend.previewArxivPaper).mock.calls[0][1];
+    const waiting: OperationProgress = { request_id: requestId, phase: 'waiting', message: 'Waiting for arXiv. Retrying in 30 seconds.', received_bytes: 0, total_bytes: null, retry_at: '2026-09-30T00:00:30Z' };
+    act(() => progress(waiting));
+    expect(screen.getByRole('status').textContent).toContain('Waiting for arXiv');
+    expect((screen.getByLabelText('arXiv ID or link') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(backend.cancelPaperOperation).toHaveBeenCalledExactlyOnceWith(requestId);
+    expect((screen.getByLabelText('arXiv ID or link') as HTMLInputElement).value).toBe('1409.0473v3');
+    expect((screen.getByLabelText('arXiv ID or link') as HTMLInputElement).disabled).toBe(false);
+    act(() => progress(waiting));
+    await act(async () => lookup.resolve(preview));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText(/Waiting for arXiv/)).toBeNull();
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Find paper' }));
+    await screen.findByRole('dialog', { name: 'Second paper' });
+    expect(backend.previewArxivPaper).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a canceled download closed when the backend reports completion after Cancel', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    const download = deferred<Paper>();
+    vi.mocked(backend.downloadArxivPaper).mockReturnValueOnce(download.promise);
+    render(<WorkspacePage />);
+    await screen.findByRole('button', { name: 'Open First paper' });
+    const dialog = await findNewPaper();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Download & add to library' }));
+    const requestId = vi.mocked(backend.downloadArxivPaper).mock.calls[0][1];
+    expect((within(dialog).getByRole('button', { name: 'Download & add to library' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(backend.cancelPaperOperation).toHaveBeenCalledWith(requestId);
+    vi.mocked(backend.listPapers).mockResolvedValue([first, second]);
+    await act(async () => download.resolve(second));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('reader')).toBeNull();
+    expect(backend.getPdfBytes).not.toHaveBeenCalled();
+    // The backend's atomic save may have won the race with Cancel. Keep that
+    // successfully saved paper reachable without unexpectedly opening it.
+    expect(screen.getByRole('button', { name: 'Open Second paper' })).toBeTruthy();
+    expect((screen.getByLabelText('arXiv ID or link') as HTMLInputElement).value).toBe('1409.0473v3');
+  });
+
+  it('opens an already downloaded lookup result without requesting the PDF from arXiv again', async () => {
+    vi.mocked(backend.previewArxivPaper).mockResolvedValue({ ...preview, library_paper: second });
+    render(<WorkspacePage />);
+    await screen.findByRole('button', { name: 'Open First paper' });
+    fireEvent.change(screen.getByLabelText('arXiv ID or link'), { target: { value: '1409.0473v3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    expect(backend.getPdfBytes).toHaveBeenCalledWith(second.paper_id);
+  });
+
+  it('previews an unsaved reference over the source reader and returns to the same passage on Cancel', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+    const location = lastReader.target_location;
+    const reader = screen.getByTestId('reader');
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Second paper' });
+    expect(screen.getByTestId('reader')).toBe(reader);
+    expect(lastReader.reading_active).toBe(false);
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByTestId('reader')).toBe(reader);
+    expect(lastReader.reading_active).toBe(true);
+    expect(lastReader.target_location).toEqual(location);
+    expect(lastReader.paper.paper_id).toBe(first.paper_id);
+  });
+
+  it('closes the single iPhone reader to home, keeps its paper, and resumes its saved position', async () => {
+    mockPhone();
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close paper' }));
+    expect(screen.getByRole('region', { name: 'Paper library' })).toBeTruthy();
+    expect(screen.queryByTestId('reader')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Open papers' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open First paper' })).toBeTruthy();
+    expect(backend.removePaper).not.toHaveBeenCalled();
+    expect(backend.saveReadingPosition).toHaveBeenCalledWith(expect.objectContaining({ paper_id: first.paper_id, page_number: 4 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Second paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(screen.getAllByTestId('reader')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect((screen.getByRole('button', { name: 'Go back to previous reading location' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Close paper' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open First paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    expect(lastReader.target_location).toMatchObject({ page_number: 4, page_position: [0.1, 0.6], zoom: 1.5 });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it.each(['desktop', 'tablet'] as const)('keeps distinct tabs, histories, and draft questions on %s', async (deviceKind) => {
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: deviceKind === 'tablet', device_kind: deviceKind });
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Follow internal citation' }));
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Draft for first paper' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    const tabs = screen.getByRole('navigation', { name: 'Open papers' });
+    expect(within(tabs).getAllByRole('button', { name: 'First paper' })).toHaveLength(1);
+    expect(within(tabs).getAllByRole('button', { name: 'Second paper' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect((screen.getByRole('button', { name: 'Go back to previous reading location' }) as HTMLButtonElement).disabled).toBe(true);
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Draft for second paper' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back to source paper: First paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    expect(lastReader.target_location?.page_number).toBe(12);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+    expect((screen.getByLabelText('Question about this selection') as HTMLTextAreaElement).value).toBe('Draft for first paper');
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location?.page_number).toBe(4);
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Second paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+    expect((screen.getByLabelText('Question about this selection') as HTMLTextAreaElement).value).toBe('Draft for second paper');
+    expect(within(tabs).getAllByRole('button', { name: 'First paper' })).toHaveLength(1);
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Close Second paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    expect(lastReader.target_location?.page_number).toBe(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Close First paper' }));
+    expect(screen.queryByTestId('reader')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Open papers' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Paper library' })).toBeTruthy();
+    expect(backend.removePaper).not.toHaveBeenCalled();
+  });
+
+  it.each(['desktop', 'tablet'] as const)('updates an existing paper tab to return to its latest citation source on %s', async (deviceKind) => {
+    const third: Paper = { ...first, paper_id: '2005.14165v4', arxiv_id: '2005.14165', arxiv_version: 4, title: 'Third paper', pdf_hash: 'c'.repeat(64) };
+    const papers = [first, second, third];
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: deviceKind === 'tablet', device_kind: deviceKind });
+    vi.mocked(backend.listPapers).mockResolvedValue(papers);
+    vi.mocked(backend.markPaperOpened).mockImplementation(async (id) => ({ ...papers.find((paper) => paper.paper_id === id)!, last_opened_at: '2026-09-30T00:00:00Z' }));
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect(screen.getByRole('button', { name: 'Back to source paper: First paper' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Third paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(third.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Follow internal citation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location?.page_number).toBe(4);
+    const tabs = screen.getByRole('navigation', { name: 'Open papers' });
+    expect(within(tabs).getAllByRole('button', { name: 'Second paper' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect(screen.queryByRole('button', { name: 'Back to source paper: First paper' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to source paper: Third paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(third.paper_id));
+    expect(lastReader.target_location?.page_number).toBe(12);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(backend.previewArxivPaper).not.toHaveBeenCalled();
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation before removal and retains the paper and tab when removal fails', async () => {
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
+    let dialog = await showRemoveConfirmation();
+    expect(dialog.textContent).toContain('downloaded PDF, notes, and AI conversations');
+    expect(backend.removePaper).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Open First paper' })).toBeTruthy();
+    expect(backend.removePaper).not.toHaveBeenCalled();
+    vi.mocked(backend.removePaper).mockRejectedValueOnce(new Error('Could not remove the cached PDF'));
+    dialog = await showRemoveConfirmation();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove paper' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Could not remove the cached PDF');
+    expect(backend.removePaper).toHaveBeenCalledExactlyOnceWith(first.paper_id);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Open First paper' })).toBeTruthy();
+    expect(within(screen.getByRole('navigation', { name: 'Open papers' })).getByRole('button', { name: 'First paper' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open First paper' }));
+    await screen.findByTestId('reader');
+    expect(lastReader.paper.paper_id).toBe(first.paper_id);
+  });
+
+  it('removes saved papers and their tabs, prunes reference sources, and keeps remaining tabs usable', async () => {
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
+    const dialog = await showRemoveConfirmation();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove paper' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Open First paper' })).toBeNull();
+    const tabs = screen.getByRole('navigation', { name: 'Open papers' });
+    expect(within(tabs).queryByRole('button', { name: 'First paper' })).toBeNull();
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Second paper' }));
+    await screen.findByTestId('reader');
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect(screen.queryByRole('button', { name: 'Back to source paper: First paper' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Go back to previous reading location' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('cancels deleted papers AI work and ignores a late answer when that paper is downloaded again', async () => {
+    const answer = deferred<AiConversationResponse>();
+    vi.mocked(backend.askAiConversation).mockReturnValueOnce(answer.promise);
+    await openFirst();
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Question before removal' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalled());
+    const request = vi.mocked(backend.askAiConversation).mock.calls[0][0];
+    fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
+    const dialog = await showRemoveConfirmation();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove paper' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(backend.cancelAiRequest).toHaveBeenCalledWith(request.request_id);
+    await act(async () => answer.resolve(completeConversation(request, 'Late deleted answer')));
+    expect(screen.queryByText('Late deleted answer')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open First paper' })).toBeNull();
+    expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
+    conversations.clear();
+    vi.mocked(backend.previewArxivPaper).mockResolvedValue({ preview_id: 'first-again', metadata: first, library_paper: null });
+    vi.mocked(backend.downloadArxivPaper).mockResolvedValue(first);
+    fireEvent.change(screen.getByLabelText('arXiv ID or link'), { target: { value: first.arxiv_id } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find paper' }));
+    const previewDialog = await screen.findByRole('dialog', { name: 'First paper' });
+    fireEvent.click(within(previewDialog).getByRole('button', { name: 'Download & add to library' }));
+    await screen.findByTestId('reader');
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
+    expect(screen.queryByRole('article', { name: 'AI conversation: Question before removal' })).toBeNull();
+    expect(screen.queryByText('Late deleted answer')).toBeNull();
+    expect(lastReader.annotations).toHaveLength(0);
+  });
+});
+
+describe('removal completion races', () => {
+  it('does not open a PDF whose cached load completes after the paper was removed', async () => {
+    const pdf = deferred<Uint8Array<ArrayBuffer>>();
+    vi.mocked(backend.getPdfBytes).mockReturnValueOnce(pdf.promise);
+    render(<WorkspacePage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open First paper' }));
+    expect(screen.queryByTestId('reader')).toBeNull();
+    const dialog = await showRemoveConfirmation();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove paper' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Open First paper' })).toBeNull();
+    await act(async () => pdf.resolve(new Uint8Array([1, 2, 3])));
+    expect(screen.queryByTestId('reader')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Open papers' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open First paper' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open Second paper' })).toBeTruthy();
+  });
+
+  it('does not restore a deleted annotation from a late Save note response', async () => {
+    await openFirst();
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain before removing' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await screen.findByLabelText('Suggested note');
+    const save = deferred<ReturnType<typeof saveConversationNote>>();
+    let saved!: ReturnType<typeof saveConversationNote>;
+    vi.mocked(backend.saveAiConversationNote).mockImplementationOnce((id, noteId, content) => {
+      saved = saveConversationNote(id, noteId, content);
+      return save.promise;
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(backend.saveAiConversationNote).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
+    const dialog = await showRemoveConfirmation();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove paper' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await act(async () => save.resolve(saved));
+    expect(screen.queryByRole('button', { name: 'Open First paper' })).toBeNull();
+    conversations.clear();
+    vi.mocked(backend.previewArxivPaper).mockResolvedValue({ preview_id: 'first-again', metadata: first, library_paper: null });
+    vi.mocked(backend.downloadArxivPaper).mockResolvedValue(first);
+    fireEvent.change(screen.getByLabelText('arXiv ID or link'), { target: { value: first.arxiv_id } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find paper' }));
+    const previewDialog = await screen.findByRole('dialog', { name: 'First paper' });
+    fireEvent.click(within(previewDialog).getByRole('button', { name: 'Download & add to library' }));
+    await screen.findByTestId('reader');
+    expect(lastReader.annotations).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
+    expect(screen.queryByText('A concise takeaway')).toBeNull();
+    expect(screen.queryByRole('article', { name: 'AI conversation: Explain before removing' })).toBeNull();
   });
 });
