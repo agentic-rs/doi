@@ -6,6 +6,34 @@ import { fileURLToPath } from 'node:url';
 
 const project_root = fileURLToPath(new URL('../', import.meta.url));
 const environment_line = '. "${PROJECT_DIR:?}/.tauri/xcode-env.sh"';
+const rust_archive_path = 'Externals/$(CURRENT_ARCH)/$(CONFIGURATION)/libapp.a';
+const rust_archive_input = `$(PROJECT_DIR)/${rust_archive_path}`;
+const rust_archive_flag = `"${rust_archive_input}"`;
+
+function appendArchiveFlag(value: string): string {
+  const trimmed = value.trim();
+  const unsupported = () => {
+    throw new Error('Expected inline Xcode linker flags; the generated project was left intact.');
+  };
+  if (/^[>|]/.test(trimmed)) unsupported();
+  if (!/^["'(\[]/.test(trimmed) && /(?:^|\s)#/.test(trimmed)) unsupported();
+  if (trimmed.startsWith('(') || trimmed.startsWith('[')) {
+    const closing = trimmed.startsWith('(') ? ')' : ']';
+    if (!trimmed.endsWith(closing)) unsupported();
+    if (value.includes(rust_archive_path)) return value;
+    const existing = trimmed.slice(1, -1).trim().replace(/,$/, '');
+    return `${trimmed[0]}${existing}${existing ? ', ' : ''}${JSON.stringify(rust_archive_input)}${closing}`;
+  }
+  let flags = trimmed;
+  if (trimmed.startsWith('"')) {
+    try { flags = JSON.parse(trimmed) as string; } catch { unsupported(); }
+  } else if (trimmed.startsWith("'")) {
+    if (!trimmed.endsWith("'")) unsupported();
+    flags = trimmed.slice(1, -1).replaceAll("''", "'");
+  }
+  if (value.includes(rust_archive_path)) return value;
+  return JSON.stringify(`${flags || '$(inherited)'} ${rust_archive_flag}`);
+}
 
 function findToolDirectory(name: string, search_path: string): string {
   for (const directory of search_path.split(delimiter).filter(Boolean)) {
@@ -62,6 +90,46 @@ export function prepareXcodeProject(apple_directory: string, tool_directories: s
     throw new Error('Expected one Xcode Rust build phase; the generated project was left intact.');
   }
 
+  // Keep the archive visible in Xcode, but link it explicitly below. Frameworks
+  // references become -lapp even with a full path; that does not register the
+  // Rust phase's output as an input of Xcode's incremental linker task.
+  let archive_count = 0;
+  project = project.replace(/\/\* libapp\.a \*\/ = \{[\s\S]*?\};/g, (reference) => {
+    if (!/\bisa = PBXFileReference;/.test(reference)) return reference;
+    archive_count += 1;
+    if (!/\bpath = [^;]+;/.test(reference) || !/\bsourceTree = [^;]+;/.test(reference)) {
+      throw new Error('The Xcode Rust archive reference has changed; the generated project was left intact.');
+    }
+    const patched = reference
+      .replace(/\bpath = [^;]+;/, () => `path = ${JSON.stringify(rust_archive_path)};`)
+      .replace(/\bsourceTree = [^;]+;/, 'sourceTree = SOURCE_ROOT;');
+    return /\bname = [^;]+;/.test(patched) ? patched : patched.replace(/\bpath = /, 'name = libapp.a; path = ');
+  });
+  if (archive_count !== 1) {
+    throw new Error('Expected one Xcode Rust archive reference; the generated project was left intact.');
+  }
+  const archive_links = [...project.matchAll(/([A-F0-9]{24}) \/\* libapp\.a in Frameworks \*\/ = \{[^}]*\};/g)];
+  if (archive_links.length > 1) {
+    throw new Error('Expected at most one Xcode Rust archive link; the generated project was left intact.');
+  }
+  for (const [definition, id] of archive_links) {
+    project = project.replace(definition, '').replace(new RegExp(`^[ \\t]*${id} /\\* libapp\\.a in Frameworks \\*/,\\n`, 'gm'), '');
+  }
+  let linker_count = 0;
+  project = project.replace(/buildSettings = \{[\s\S]*?\n[ \t]*\};/g, (settings) => {
+    if (!settings.includes('LIBRARY_SEARCH_PATHS')) return settings;
+    linker_count += 1;
+    if (/\bOTHER_LDFLAGS = /.test(settings)) {
+      return settings.replace(/\bOTHER_LDFLAGS = ([\s\S]*?);/, (_, flags: string) => `OTHER_LDFLAGS = ${appendArchiveFlag(flags)};`);
+    }
+    return settings.replace(/(\n)([ \t]*)([^\n]*LIBRARY_SEARCH_PATHS)/, (_, newline: string, indent: string, setting: string) => {
+      return `${newline}${indent}OTHER_LDFLAGS = ${appendArchiveFlag('$(inherited)')};${newline}${indent}${setting}`;
+    });
+  });
+  if (linker_count === 0) {
+    throw new Error('Expected Xcode app linker settings; the generated project was left intact.');
+  }
+
   // Preserve the same environment hook if XcodeGen regenerates the project later.
   template = template.split('\n').filter((line) => line.trim() !== environment_line).join('\n');
   template = template.replace(/^([ \t]*)- script: ([^\n]*\bios xcode-script\b[^\n]*)$/gm, (_, indent: string, command: string) => {
@@ -74,6 +142,33 @@ export function prepareXcodeProject(apple_directory: string, tool_directories: s
   });
   if (template_count !== 1) {
     throw new Error('Expected one XcodeGen Rust build script; the generated project was left intact.');
+  }
+  let dependency_count = 0;
+  template = template.replace(/^([ \t]*- framework: )[^\n]*\blibapp\.a["']?[ \t]*$/gm, (_, prefix: string) => {
+    dependency_count += 1;
+    return `${prefix}${JSON.stringify(rust_archive_path)}`;
+  });
+  if (dependency_count !== 1) {
+    throw new Error('Expected one XcodeGen Rust archive dependency; the generated project was left intact.');
+  }
+  template = template.replace(/^([ \t]*)(- framework: [^\n]*\blibapp\.a["']?[ \t]*)\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/gm, (_, indent: string, dependency: string, attributes: string) => {
+    const other_attributes = attributes.replace(/^[ \t]+link:[^\n]*(?:\n|$)/gm, '');
+    return `${indent}${dependency}\n${indent}  link: false\n${other_attributes}`;
+  });
+  let template_linker_count = 0;
+  template = template.replace(/^([ \t]*)base:\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/gm, (_, indent: string, settings: string) => {
+    if (!settings.includes('LIBRARY_SEARCH_PATHS')) return `${indent}base:\n${settings}`;
+    template_linker_count += 1;
+    const patched = /\bOTHER_LDFLAGS:/.test(settings)
+      ? settings.replace(/OTHER_LDFLAGS: ([^\n]+)/, (_, flags: string) => `OTHER_LDFLAGS: ${appendArchiveFlag(flags)}`)
+      : `${indent}  OTHER_LDFLAGS: ${appendArchiveFlag('$(inherited)')}\n${settings}`;
+    if (!patched.includes(rust_archive_path)) {
+      throw new Error('Expected inline XcodeGen linker flags; the generated project was left intact.');
+    }
+    return `${indent}base:\n${patched}`;
+  });
+  if (template_linker_count !== 1) {
+    throw new Error('Expected one XcodeGen app linker settings block; the generated project was left intact.');
   }
 
   const environment_directory = join(apple_directory, '.tauri');
@@ -125,7 +220,7 @@ async function main(): Promise<void> {
   const tool_directories = getToolDirectories();
   if (command === 'init') await runTauri(['init', ...args], tool_directories);
   prepareXcodeProject(join(project_root, 'src-tauri', 'gen', 'apple'), tool_directories);
-  console.info('Prepared the local Xcode toolchain environment.');
+  console.info('Prepared the local Xcode toolchain and Rust linker dependencies.');
   if (command === 'open') {
     console.info('Keep this terminal running while building in Xcode. Press Ctrl+C when finished.');
     await runTauri(['build', '--debug', '--open', ...args], tool_directories);

@@ -53,7 +53,9 @@ Use `xcrun simctl list devices available` to choose another simulator. Intel Mac
 
 `pnpm ios:open` refreshes the existing project's local toolchain environment, bundles the frontend, and starts the Tauri CLI helper before opening Xcode. It does not install or run the app on the phone itself. The helper must remain running while Xcode builds; opening the `.xcodeproj` alone does not provide it. Press Ctrl+C in the terminal when finished. See [Tauri's Xcode workflow](https://v2.tauri.app/develop/#using-xcode-or-android-studio).
 
-The environment hook is also stored in the local XcodeGen configuration, so it survives regeneration of the generated project. Reopening through `pnpm ios:open` leaves your existing signing settings intact.
+The launcher also links the Rust archive by its full architecture/configuration path. Xcode records it as a linker dependency, so a rebuilt Rust backend or embedded frontend updates the app instead of leaving an older executable. The environment hook and linker settings are stored in the local XcodeGen configuration and survive project regeneration. Existing signing settings remain intact.
+
+When editing the frontend while `pnpm ios:open` is already running, run `pnpm build` in another terminal before building or running in Xcode. This refreshes the interface embedded in the Rust archive. Keep the existing helper running; a frontend rebuild does not require restarting it. Rust edits are rebuilt by Xcode's **Build Rust Code** phase.
 
 Apple supports a personal Apple account for running your own development app; signing and provisioning must match your account/device. See [Apple's device setup instructions](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) and [Developer Mode instructions](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
 
@@ -93,6 +95,7 @@ If the phone asks you to trust the developer after installation, open Settings â
 
 - **Build Rust Code: `pnpm: command not found`**: Xcode's GUI environment lacks the Node/pnpm paths available in your terminal. Run `pnpm ios:open` from a terminal where pnpm and Rust work; the launcher refreshes the generated project's local environment.
 - **CLI options helper unavailable**: the Tauri terminal command has stopped or the project was opened without it. Run `pnpm ios:open` again and keep that terminal running before pressing Run or Build in Xcode.
+- **Build succeeds but the app still shows an older interface**: run `pnpm build` first for frontend changes. For an iOS project generated before the linker fix, run `node scripts/ios-xcode.ts prepare` once; this updates the Rust archive dependency without stopping an existing helper. Then build again in Xcode.
 
 ## Packages built on this Mac
 
