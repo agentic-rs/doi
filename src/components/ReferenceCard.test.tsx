@@ -25,7 +25,8 @@ describe('reference cards', () => {
     expect(screen.getByText('VSP+17')).toBeTruthy();
     expect(screen.getByRole('heading', { name: reference.title! })).toBeTruthy();
     expect(screen.getByText(reference.authors.join(', '))).toBeTruthy();
-    expect(screen.getByText('2017 · NeurIPS')).toBeTruthy();
+    expect(screen.getByText('arxiv:1706.03762')).toBeTruthy();
+    expect(screen.getByText('2017')).toBeTruthy();
     expect(screen.getByText(reference.citation_text).closest('details')).toBeTruthy();
     const original = screen.getByText('Original citation');
     expect(original.getAttribute('tabindex')).toBe('0');
@@ -89,7 +90,8 @@ describe('reference cards', () => {
     const view = render(<ReferenceCard {...callbacks} resolution={{ busy: false, candidates: [possible, exact], error: null }} />);
     expect(screen.getByText('Possible match')).toBeTruthy();
     expect(screen.getByText('Identifier match')).toBeTruthy();
-    expect(screen.getAllByText('2020 · Example Journal')).toHaveLength(2);
+    expect(screen.getAllByText('Example Journal')).toHaveLength(2);
+    expect(screen.getAllByText('2020')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'Find a match' })).toBeNull();
     expect(callbacks.on_open).not.toHaveBeenCalled();
     const candidate = screen.getByRole('button', { name: `Open possible match: ${possible.title}` });

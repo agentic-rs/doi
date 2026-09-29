@@ -39,7 +39,7 @@ describe('bibliography extraction', () => {
   it('recognizes CoRR identifiers and avoids appending unnumbered supplement figures', () => {
     const references = extractReferences([
       { page_number: 10, text: 'References\n[1] A paper. CoRR, abs/1409.0473, 2014.' },
-      { page_number: 11, text: 'Attention Visualizations Input-Input Layer5\nThe plot contains many words.' },
+      { page_number: 11, text: 'Attention VisualizationsInput-Input Layer5\nThe plot contains many words.' },
     ]);
     expect(references).toHaveLength(1);
     expect(references[0].arxiv_id).toBe('1409.0473');
@@ -91,4 +91,14 @@ it('parses wrapped arXiv URLs and balanced DOI punctuation', () => {
   const item = referenceFromText('A related paper. https://arxiv.org/pdf/\nhep-th/9901001v2.pdf. DOI:10.1000/test(part).', 4, 0)!;
   expect(item.arxiv_id).toBe('hep-th/9901001v2');
   expect(item.doi).toBe('10.1000/test(part)');
+});
+
+it.each([
+  ['Journal of Examples, 6(Nov):1817–1853, 2020.', 'Journal of Examples'],
+  ['In Proceedings of the 27th Example Conference, pages 1929–1958. ACL, 2020.', 'In Proceedings of the 27th Example Conference'],
+  ['In Example Conference (Volume 1: Long Papers), pp. 47– 52, 2020.', 'In Example Conference (Volume 1: Long Papers)'],
+])('extracts a publication venue without pagination from %s', (publication, venue) => {
+  const item = referenceFromText(`Jane Doe. 2020. A useful paper. ${publication}`, 8, 0)!;
+  expect(item.venue).toBe(venue);
+  expect(item.citation_text).toContain(publication);
 });

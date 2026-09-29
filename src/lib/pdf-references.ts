@@ -1,5 +1,6 @@
 import type { PdfSourceRect, ReferenceItem } from './types';
 import { normalizePdfText, safeReferenceUrl } from './pdf-geometry';
+import { publicationVenue } from './reference-presentation';
 export { referenceAtDestination, referencesForText } from './citation-index';
 
 export interface PageText {
@@ -10,7 +11,7 @@ export interface PageText {
 
 interface SourceLine { text: string; page_number: number; source_rect: PdfSourceRect | null }
 const heading_pattern = /^(?:\d+\.?\s+)?(?:references|bibliography|literature cited)\s*$/i;
-const end_pattern = /^(?:appendix\b|attention visualizations\b|supplement(?:ary|al)\b|acknowledg(?:e)?ments\b|author biographies\b|[A-Z]\.?\s+(?:proof|additional|supplementary)\b)/i;
+const end_pattern = /^(?:appendix\b|attention visualizations|supplement(?:ary|al)\b|acknowledg(?:e)?ments\b|author biographies\b|[A-Z]\.?\s+(?:proof|additional|supplementary)\b)/i;
 const label_pattern = /^(?:\[([\p{L}\d][\p{L}\d+_.:–-]{0,30})\]|(\d{1,3})[.)])\s*/u;
 const year_pattern = /\b((?:18|19|20)\d{2}[a-z]?)\b/;
 const id_pattern = /^(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Za-z]{2})?\/\d{2}(?:0[1-9]|1[0-2])\d{3})(?:v[1-9]\d{0,3})?$/;
@@ -84,7 +85,9 @@ function metadata(body: string) {
   const parts = sentences(remainder);
   const title = authors.length && parts[0] && parts[0].length > 5 && !/^(?:https?:|arxiv\b|doi\b|CoRR\b)/i.test(parts[0])
     ? parts[0].replace(/,\s*(?:18|19|20)\d{2}[a-z]?\.?$/, '').replace(/[.\s]+$/, '') : null;
-  const venue = title ? parts.slice(1).join('. ').replace(/https?:\/\/\S+|\barxiv\s*:\s*\S+|\bdoi\s*:\s*\S+/gi, '').replace(/\b(?:18|19|20)\d{2}[a-z]?\b/g, '').replace(/^[\s,.;]+|[\s,.;]+$/g, '') || null : null;
+  const venue = title ? publicationVenue(parts.slice(1).join('. ')
+    .replace(/https?:\/\/\S+|\barxiv\s*:\s*\S+|\bdoi\s*:\s*\S+/gi, '')
+    .replace(/[,;.]?\s*\b(?:18|19|20)\d{2}[a-z]?\.?\s*$/, '')) || null : null;
   return { title, authors: title ? authors : [], publication_year: year?.[1] ?? null, venue, parse_confidence: title ? 'parsed' as const : 'raw' as const };
 }
 

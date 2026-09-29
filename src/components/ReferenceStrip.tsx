@@ -1,6 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import type { ReferenceItem } from '../lib/types';
-import { referenceSummary } from './ReferenceCard';
+import { referencePublication, referenceSummary } from '../lib/reference-presentation';
 import './reference-components.css';
 
 export interface ReferenceStripProps {
@@ -13,8 +13,7 @@ export function ReferenceStrip({ references, on_select }: ReferenceStripProps) {
   return <aside className="reference-strip" aria-label="References for this passage">
     <ul>{references.map((reference) => {
       const summary = referenceSummary(reference);
-      const publication = reference.parse_confidence === 'parsed'
-        ? [reference.authors?.[0], reference.publication_year].filter(Boolean).join(' · ') : '';
+      const publication = reference.arxiv_id || reference.parse_confidence === 'parsed' ? referencePublication(reference) : '';
       return <li key={reference.reference_id}>
         <button type="button" aria-label={`Reference ${reference.label ? `${reference.label}: ` : ''}${summary}`}
           onClick={() => on_select(reference)}>

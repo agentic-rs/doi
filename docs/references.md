@@ -2,6 +2,8 @@
 
 Reading view places compact, unscaled reference rows below the blocks that cite them. Tapping one opens reference details without moving the paper. Embedded bibliography citation links in the original PDF open the same details; figure, section, and other links retain their normal navigation.
 
+The line below a reference title shows `arxiv:xxxx` when an arXiv identifier is available, otherwise the publication venue without page numbers. Details and match results use the same ordering; authors and publication years remain available in details.
+
 Details show conservatively parsed titles, authors, publication years, and venues. Printed labels are retained instead of renumbering the bibliography. Author/year bibliographies have no invented ordinal. The original citation remains available, and entries that cannot be separated confidently remain plain text. Parsing does not rewrite the PDF or annotation sidecars.
 
 **View bibliography** opens the source entry in the original PDF. Back restores the prior page position, zoom, and Reading block. Following another paper uses the existing phone history or iPad/Mac tabs and source return path.

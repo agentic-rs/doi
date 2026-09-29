@@ -1,5 +1,6 @@
 import { ArrowUpRight, BookOpen, FileText, LoaderCircle, Search } from 'lucide-react';
 import type { ReferenceCandidate, ReferenceItem } from '../lib/types';
+import { referencePublication } from '../lib/reference-presentation';
 import './reference-components.css';
 
 export interface ReferenceResolution {
@@ -17,25 +18,21 @@ export interface ReferenceCardProps {
   on_source: (reference: ReferenceItem) => void;
 }
 
-export function referenceSummary(reference: ReferenceItem): string {
-  return reference.parse_confidence === 'parsed' && reference.title?.trim()
-    ? reference.title : reference.citation_text;
-}
-
 function CandidateDetails({ candidate }: { candidate: ReferenceCandidate }) {
-  const publication = [candidate.publication_year, candidate.venue].filter(Boolean).join(' · ');
+  const publication = referencePublication(candidate);
   return <span className="reference-entry-candidate-content">
     <span className="reference-entry-match-kind">{candidate.match_kind === 'identifier' ? 'Identifier match' : 'Possible match'}</span>
     <strong>{candidate.title}</strong>
-    {candidate.authors?.length > 0 && <span>{candidate.authors.join(', ')}</span>}
     {publication && <span>{publication}</span>}
+    {candidate.authors?.length > 0 && <span>{candidate.authors.join(', ')}</span>}
+    {candidate.publication_year && <span>{candidate.publication_year}</span>}
   </span>;
 }
 
 export function ReferenceCard(props: ReferenceCardProps) {
   const { reference, resolution } = props;
   const parsed = reference.parse_confidence === 'parsed' && Boolean(reference.title?.trim());
-  const publication = [reference.publication_year, reference.venue].filter(Boolean).join(' · ');
+  const publication = referencePublication(reference);
   const can_open = Boolean(reference.arxiv_id || reference.doi || reference.url);
   const candidates = resolution?.candidates ?? [];
   const finding = Boolean(resolution?.busy);
@@ -49,14 +46,15 @@ export function ReferenceCard(props: ReferenceCardProps) {
     </header>
     {parsed ? <div className="reference-entry-metadata">
       <h3>{reference.title}</h3>
-      {reference.authors.length > 0 && <p className="reference-entry-authors">{reference.authors.join(', ')}</p>}
       {publication && <p className="reference-entry-publication">{publication}</p>}
+      {reference.authors.length > 0 && <p className="reference-entry-authors">{reference.authors.join(', ')}</p>}
+      {reference.publication_year && <p className="reference-entry-publication">{reference.publication_year}</p>}
       <details className="reference-entry-original">
         <summary tabIndex={0}>Original citation</summary>
         <p>{reference.citation_text}</p>
       </details>
     </div> : <p className="reference-entry-citation">{reference.citation_text}</p>}
-    {reference.arxiv_id && <p className="reference-entry-identifier">arXiv:{reference.arxiv_id}</p>}
+    {!parsed && reference.arxiv_id && <p className="reference-entry-publication">{publication}</p>}
     {reference.doi && <p className="reference-entry-identifier">DOI: {reference.doi}</p>}
     <div className="reference-entry-actions">
       {can_open && <button type="button" className="reference-entry-open" disabled={disabled} onClick={() => props.on_open(reference)}>
