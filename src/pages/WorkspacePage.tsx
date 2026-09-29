@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 import {
   ArrowDownToLine, ArrowLeft, ArrowUpRight, Check,
   ChevronRight, CircleHelp, FileText, Link2, LoaderCircle,
-  MessageSquare, Plus, Search, Settings2,
+  MessageSquare, Plus, Settings2,
   Sparkles, StickyNote, Trash2, Upload, X,
 } from 'lucide-react';
 import { PdfReader } from '../components/PdfReader';
@@ -20,6 +20,10 @@ import { PaperTabs } from '../components/PaperTabs';
 import { PaperPreviewDialog } from '../components/PaperPreviewDialog';
 import { PaperLookupDialog } from '../components/PaperLookupDialog';
 import { RemovePaperDialog } from '../components/RemovePaperDialog';
+import { ReferenceCard } from '../components/ReferenceCard';
+import type { ReferenceResolution } from '../components/ReferenceCard';
+import { ReferenceDetailsDialog } from '../components/ReferenceDetailsDialog';
+import { arxivIdFromUrl } from '../lib/pdf-references';
 import { findLibraryPaper, removePaperFromHistory, sortRecentPapers } from '../lib/reader-sessions';
 import type { ReaderSession } from '../lib/reader-sessions';
 import '../components/reading-workspace.css';
@@ -60,12 +64,6 @@ interface Notice {
   tone: 'error' | 'success' | 'info';
 }
 
-interface ReferenceResolution {
-  busy: boolean;
-  candidates: ReferenceCandidate[];
-  error: string | null;
-}
-
 function getReaderDirection(): ReaderOrientation {
   // The keyboard changes the web viewport's shape, not the device direction.
   const type = window.screen.orientation?.type;
@@ -83,17 +81,6 @@ function initialLocation(paper: Paper): ReadingLocation {
     zoom_mode: 'fit_width',
     rotation: 0,
   };
-}
-
-function arxivFromUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (!/(^|\.)arxiv\.org$/i.test(url.hostname)) return null;
-    const match = url.pathname.match(/^\/(?:abs|pdf|html)\/(.+?)(?:\.pdf)?\/?$/i);
-    return match ? decodeURIComponent(match[1]) : null;
-  } catch {
-    return null;
-  }
 }
 
 function selectionKey(selection: SelectionContext): string {
@@ -128,6 +115,8 @@ export function WorkspacePage() {
   const [active, setActive] = useState<ActiveDocument | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [references, setReferences] = useState<ReferenceItem[]>([]);
+  const [referenceStatus, setReferenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [selectedReference, setSelectedReference] = useState<ReferenceItem | null>(null);
   const [history, setHistoryState] = useState(() => createHistory(null));
   const [targetLocation, setTargetLocation] = useState<ReadingLocation | null>(null);
   const [targetAnchor, setTargetAnchor] = useState<PageAnchor | null>(null);
@@ -171,6 +160,8 @@ export function WorkspacePage() {
   const openingRef = useRef(opening);
   const progressRef = useRef<OperationProgress | null>(null);
   const openSequenceRef = useRef(0);
+  const referenceEpochRef = useRef(0);
+  const referenceLookupsRef = useRef(new Map<string, Promise<ReferenceCandidate[]>>());
   const currentPositionRef = useRef<ReadingLocation | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -189,7 +180,7 @@ export function WorkspacePage() {
   const tabIdsRef = useRef(tabIds);
   tabIdsRef.current = tabIds;
   const supportsTabs = !isNative || readerCapabilities.device_kind === 'tablet' || readerCapabilities.device_kind === 'desktop';
-  const modalOpen = Boolean(preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
+  const modalOpen = Boolean(selectedReference || preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
   const readerActionsRef = useRef({ handleNavigate, toggleReadingControls });
   readerActionsRef.current = { handleNavigate, toggleReadingControls };
   const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
@@ -429,6 +420,8 @@ export function WorkspacePage() {
   }
 
   function showHome() {
+    referenceEpochRef.current += 1;
+    setSelectedReference(null);
     rememberSession();
     flushPosition();
     stopOpening();
@@ -455,6 +448,9 @@ export function WorkspacePage() {
   }
 
   function applyDocument(document: ActiveDocument, notes: Annotation[], nextHistory: NavigationHistory, location: ReadingLocation, session?: ReaderSession) {
+    referenceEpochRef.current += 1;
+    setSelectedReference(null);
+    setReferenceStatus('loading');
     hideReadingControls();
     setPaperInfoOpen(false);
     activeRef.current = document;
@@ -686,7 +682,7 @@ export function WorkspacePage() {
   }
 
   async function followUrl(url: string) {
-    const arxivId = arxivFromUrl(url);
+    const arxivId = arxivIdFromUrl(url);
     if (arxivId) {
       const cached = findLibraryPaper(papersRef.current, arxivId);
       await openPaper(arxivId, cached, activeRef.current?.paper.paper_id ?? null);
@@ -701,6 +697,7 @@ export function WorkspacePage() {
 
   function handleNavigate(target: ReaderTarget) {
     if (target.kind === 'internal') jumpTo(target.location);
+    else if (target.kind === 'reference') setSelectedReference(target.reference);
     else void followUrl(target.url);
   }
 
@@ -895,19 +892,31 @@ export function WorkspacePage() {
   }
 
   async function findReference(reference: ReferenceItem) {
-    const paperId = activeRef.current?.paper.paper_id;
+    const epoch = referenceEpochRef.current;
     setResolutions((existing) => ({ ...existing, [reference.reference_id]: { busy: true, candidates: [], error: null } }));
     try {
-      const candidates = await resolveReference(reference.citation_text);
-      if (activeRef.current?.paper.paper_id !== paperId) return;
+      const key = reference.citation_text;
+      let lookup = referenceLookupsRef.current.get(key);
+      if (!lookup) {
+        lookup = resolveReference(key).catch((cause: unknown) => {
+          referenceLookupsRef.current.delete(key);
+          throw cause;
+        });
+        // Bound successful/pending lookups for this workspace session.
+        if (referenceLookupsRef.current.size >= 100) referenceLookupsRef.current.delete(referenceLookupsRef.current.keys().next().value!);
+        referenceLookupsRef.current.set(key, lookup);
+      }
+      const candidates = await lookup;
+      if (!mountedRef.current || referenceEpochRef.current !== epoch) return;
       setResolutions((existing) => ({ ...existing, [reference.reference_id]: { busy: false, candidates, error: null } }));
     } catch (cause) {
-      if (activeRef.current?.paper.paper_id !== paperId) return;
+      if (!mountedRef.current || referenceEpochRef.current !== epoch) return;
       setResolutions((existing) => ({ ...existing, [reference.reference_id]: { busy: false, candidates: [], error: String(cause) } }));
     }
   }
 
   function openReference(reference: ReferenceItem | ReferenceCandidate) {
+    setSelectedReference(null);
     if (reference.arxiv_id) {
       const cached = findLibraryPaper(papersRef.current, reference.arxiv_id);
       void openPaper(reference.arxiv_id, cached, activeRef.current?.paper.paper_id ?? null);
@@ -916,6 +925,19 @@ export function WorkspacePage() {
     } else if (reference.url) {
       void followUrl(reference.url);
     }
+  }
+
+  function showReferenceSource(reference: ReferenceItem) {
+    const location = currentPositionRef.current;
+    if (!location) return;
+    setSelectedReference(null);
+    const rect = reference.source_rect;
+    const anchor: PageAnchor | null = rect ? {
+      page_number: reference.page_number,
+      quad_points: [[rect[0], rect[3], rect[2], rect[3], rect[2], rect[1], rect[0], rect[1]]],
+      text_quote: { exact_text: reference.citation_text, prefix: '', suffix: '', normalization_version: 1 },
+    } : null;
+    jumpTo({ ...location, page_number: reference.page_number, page_position: [0, 0], reader_mode: 'pdf', reading_block_id: null }, anchor);
   }
 
   async function retryLibrary() {
@@ -934,7 +956,7 @@ export function WorkspacePage() {
   const operationMessage = cooldownMessage(progress, Boolean(opening))
     ?? progress?.message ?? (opening?.kind === 'lookup' ? 'Looking up the paper on arXiv…' : opening?.kind === 'download' ? 'Downloading the original PDF…' : `Opening ${opening?.label ?? 'paper'}…`);
 
-  const reader = useMemo(() => active ? <PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!modalOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection} on_references={(items) => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) setReferences(items); }} on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
+  const reader = useMemo(() => active ? <PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!modalOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection} on_references={(items, status = 'ready') => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) { setReferences(items); setReferenceStatus(status); } }} on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
     [active, annotations, targetLocation, targetAnchor, navigationKey, controlsVisible, inspectorOpen, viewportKey, modalOpen, handleLocationChange, handleSelection]);
 
   return (
@@ -972,17 +994,14 @@ export function WorkspacePage() {
             </div>}
             {inspectorTab === 'references' ? <div id="references-panel" role="tabpanel" aria-labelledby="references-tab" className="inspector-content">
               <div className="inspector-intro"><h2>Follow the thread.</h2><p>Every paper is part of a bigger conversation.</p></div>
-              {references.length ? <><div className="list-eyebrow">CITATIONS & LINKS <span>{references.length}</span></div><div className="reference-list">{references.map((reference, index) => {
-                const resolution = resolutions[reference.reference_id];
-                const canOpen = Boolean(reference.arxiv_id || reference.doi || reference.url);
-                return <article className="reference-card" key={reference.reference_id}>
-                  <div className="reference-number">{String(index + 1).padStart(2, '0')} <span>p. {reference.page_number}</span></div>
-                  <p className="reference-citation">{reference.citation_text}</p>
-                  <div className="reference-actions">{canOpen ? <button type="button" className="text-button" onClick={() => openReference(reference)} disabled={Boolean(opening)}>{reference.arxiv_id ? 'Read paper' : reference.doi ? 'Open DOI' : 'Open link'}<ArrowUpRight size={13} /></button> : <button type="button" className="text-button" onClick={() => { void findReference(reference); }} disabled={resolution?.busy}>{resolution?.busy ? <LoaderCircle size={13} className="spin" /> : <Search size={13} />} {resolution?.busy ? 'Finding matches…' : 'Find a match'}</button>}<button type="button" className="reference-page" onClick={() => { if (current) jumpTo({ ...current, page_number: reference.page_number, page_position: [0, 0], reading_block_id: null }); }} aria-label={`Go to reference on page ${reference.page_number}`} title="Show in paper"><ChevronRight size={15} /></button></div>
-                  {resolution && !resolution.busy && <div className="reference-results">{resolution.error ? <p className="inline-error">{resolution.error}</p> : resolution.candidates.length ? <><span className="candidate-label">Choose a possible match</span>{resolution.candidates.map((candidate, candidateIndex) => <button type="button" className="reference-candidate" key={`${candidate.url}-${candidateIndex}`} onClick={() => openReference(candidate)} disabled={Boolean(opening)}><span>{candidate.title}</span><ArrowUpRight size={13} /></button>)}</> : <p className="field-hint">No match found. Return to the library to look up an arXiv ID.</p>}</div>}
-                </article>;
-              })}</div></> : <div className="inspector-empty"><span className="empty-symbol"><Link2 size={24} strokeWidth={1.4} /></span><h3>{active ? 'Looking for connections' : 'The next idea is a citation away.'}</h3><p>{active ? 'Embedded paper links and detected bibliography entries appear here as the PDF loads. You can also follow links directly on a page.' : 'Open a paper to explore its references. Follow a link, then use Back to pick up where you left off.'}</p><div className="navigation-demo" aria-hidden="true"><span>Paper</span><span className="demo-arrow">↔</span><span>Reference</span></div></div>}
-              {active && <details className="paper-about"><summary>About this paper <ChevronRight size={14} /></summary><p>{active.paper.abstract || 'No abstract available.'}</p><button type="button" className="text-button" onClick={() => { void openExternal(`https://arxiv.org/abs/${active.paper.arxiv_id}v${active.paper.arxiv_version}`).catch((cause) => setNotice({ tone: 'error', message: String(cause) })); }}>View on arXiv <ArrowUpRight size={13} /></button></details>}
+              {references.length ? <><div className="list-eyebrow">CITATIONS & LINKS <span>{references.length}</span></div>
+                <div className="reference-list">{references.map((reference) => <ReferenceCard key={reference.reference_id}
+                  reference={reference} resolution={resolutions[reference.reference_id]} busy={Boolean(opening)}
+                  on_open={openReference} on_find={(item) => { void findReference(item); }} on_source={showReferenceSource} />)}</div>
+              </> : <div className="inspector-empty"><span className="empty-symbol"><Link2 size={24} strokeWidth={1.4} /></span>
+                <h3>{referenceStatus === 'loading' ? 'Finding references…' : referenceStatus === 'error' ? 'References unavailable' : 'No bibliography detected'}</h3>
+                <p>{referenceStatus === 'loading' ? 'Reading the bibliography on this device.' : 'You can still follow embedded links directly in the PDF.'}</p>
+              </div>}
             </div> : <div id="notes-panel" ref={notesPanelRef} role={phoneAi.open ? undefined : 'tabpanel'} aria-labelledby={phoneAi.open ? undefined : 'notes-tab'} className="inspector-content notes-content">
               {selection && active ? <form className="selection-composer" onSubmit={(event) => { void submitSelection(event); }}>
                 <div className="selection-heading"><span><span className="selection-dot" /> SELECTED PASSAGE</span><button type="button" className="icon-button" onClick={clearSelection} aria-label="Dismiss selected passage"><X size={14} /></button></div>
@@ -1024,6 +1043,9 @@ export function WorkspacePage() {
           </aside>}
         </div>}
       </main>
+      {selectedReference && <ReferenceDetailsDialog reference={selectedReference} resolution={resolutions[selectedReference.reference_id]}
+        busy={Boolean(opening)} on_open={openReference} on_find={(item) => { void findReference(item); }}
+        on_source={showReferenceSource} on_close={() => setSelectedReference(null)} />}
       {preview && <PaperPreviewDialog preview={preview} busy={opening?.kind === 'download'} message={opening?.kind === 'download' || progress?.phase === 'waiting' ? operationMessage : null} error={downloadError} on_confirm={() => { void confirmDownload(); }} on_cancel={cancelPreview} />}
       {active && opening?.kind === 'lookup' && !preview && <PaperLookupDialog label={opening.label} message={operationMessage} on_cancel={stopOpening} />}
       {removing && <RemovePaperDialog paper={removing} busy={removeBusy} error={removeError} on_confirm={() => { void confirmRemoval(); }} on_cancel={() => { if (!removeBusy) setRemoving(null); }} />}

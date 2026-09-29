@@ -34,6 +34,7 @@ quick-xml = { version = "0.41", features = ["serialize"] }
 sha2 = "0.10"
 regex = "1"
 url = "2"
+percent-encoding = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 

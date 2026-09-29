@@ -164,28 +164,13 @@ svg { flex-shrink: 0; }
 .empty-symbol { display: inline-flex; align-items: center; justify-content: center; width: 43px; height: 43px; border-radius: 8px; background: #eaf0e1; color: #9cb28c; border: 1px solid #e1e9d5; margin-bottom: 16px; }
 .inspector-empty h3 { font: 18px/1.4 Georgia, 'Times New Roman', serif; color: #839573; letter-spacing: -.25px; margin: 0 0 10px; max-width: 210px; }
 .inspector-empty p { font-size: 11px; line-height: 1.85; color: #a3ad97; margin: 0; max-width: 251px; }
-.navigation-demo { display: flex; align-items: center; gap: 12px; margin-top: 27px; font-size: 9px; color: #93a582; }
-.navigation-demo > span:not(.demo-arrow) { border: 1px dashed #d6e1c8; border-radius: 4px; padding: 9px 13px; background: #f1f5e9; }
-.demo-arrow { font-size: 15px; color: #a9bc94; }
 .inspector-footer { flex-shrink: 0; display: flex; align-items: center; gap: 7px; height: 45px; color: #afb99f; font-size: 9px; padding: 0 22px; border-top: 1px solid #e7ecdd; }
 .inspector-footer-mark { font-size: 19px; line-height: 1; color: #adbda0; }
 .list-eyebrow { display: flex; align-items: center; gap: 7px; font-size: 9px; letter-spacing: 1.15px; color: #91a181; font-weight: 500; margin-bottom: 17px; }
 .list-eyebrow > span { font-size: 8px; letter-spacing: 0; background: #e7eede; color: #96a780; padding: 2px 5px; border-radius: 3px; }
 .reference-list { display: flex; flex-direction: column; gap: 15px; }
-.reference-card { border-bottom: 1px solid #e5ebdC; padding: 0 0 16px; }
-.reference-number { display: flex; align-items: center; gap: 8px; font: 12px Georgia, serif; color: #93aa83; }
-.reference-number > span { font: 9px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #a9b49b; }
-.reference-citation { font: 12px/1.65 Georgia, 'Times New Roman', serif; color: #718969; margin: 7px 0 10px; overflow-wrap: anywhere; }
-.reference-actions { display: flex; justify-content: space-between; align-items: center; }
 .text-button { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: #6c9064; padding: 3px 0; line-height: 1.5; }
 .text-button:hover:not(:disabled) { color: #3a6e4b; text-decoration: underline; text-underline-offset: 3px; }
-.reference-page { color: #a5b696; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 4px; }
-.reference-page:hover { background: #e9f0df; }
-.reference-results { margin-top: 10px; padding: 10px; background: #f0f5e7; border: 1px solid #e1e9d6; border-radius: 4px; }
-.candidate-label { display: block; font-size: 9px; color: #97a783; margin-bottom: 6px; }
-.reference-candidate { display: flex; gap: 8px; align-items: center; text-align: left; width: 100%; color: #68835c; font: 11px/1.55 Georgia, serif; padding: 7px 0; border-top: 1px solid #e2e9d7; }
-.reference-candidate > span { flex: 1; }
-.reference-candidate:hover { color: #315c39; }
 .paper-about { margin-top: 25px; border: 1px solid #e2e9d6; border-radius: 5px; padding: 10px 12px; background: #f2f5eC; }
 .paper-about summary { display: flex; justify-content: space-between; font-size: 10px; color: #8b9e7d; cursor: pointer; list-style: none; }
 .paper-about summary::-webkit-details-marker { display: none; }
@@ -306,11 +291,7 @@ svg { flex-shrink: 0; }
 .inspector-footer,
 .list-eyebrow,
 .list-eyebrow > span,
-.reference-number,
-.reference-number > span,
-.reference-citation,
 .text-button,
-.candidate-label,
 .paper-about summary,
 .paper-about p,
 .notes-intro p,
@@ -458,12 +439,11 @@ svg { flex-shrink: 0; }
   .inspector-tabs > button { font-size: 14px; }
   .inspector-tabs > button > span { font-size: 12px; }
   .inspector-content { padding: 22px 20px; }
-  .inspector-intro p, .inspector-empty p, .reference-citation, .notes-intro p, .no-notes, .annotation-body, .annotation-question { font-size: 14px; }
+  .inspector-intro p, .inspector-empty p, .notes-intro p, .no-notes, .annotation-body, .annotation-question { font-size: 14px; }
   .inspector-empty h3, .inspector-empty p, .notes-intro h2 { max-width: none; }
-  .list-eyebrow, .reference-number > span, .selection-heading > span, .selection-page, .annotation-meta, .annotation-page, .annotation-footer, .context-preview, .annotation-format-hint { font-size: 11px; }
+  .list-eyebrow, .selection-heading > span, .selection-page, .annotation-meta, .annotation-page, .annotation-footer, .context-preview, .annotation-format-hint { font-size: 11px; }
   .text-button, .composer-tabs > button, .annotation-edit { font-size: 13px; min-height: 44px; }
-  .reference-page, .annotation-page, .sidecar-controls .icon-button, .selection-heading .icon-button, .delete-button { min-width: 44px; min-height: 44px; }
-  .reference-candidate { font-size: 14px; min-height: 48px; }
+  .annotation-page, .sidecar-controls .icon-button, .selection-heading .icon-button, .delete-button { min-width: 44px; min-height: 44px; }
   .selection-composer blockquote, .annotation-quote { font-size: 14px; }
   .selection-composer textarea, .annotation-editor textarea, .text-field { font-size: 16px; }
   .composer-submit, .button { min-height: 44px; font-size: 14px; }

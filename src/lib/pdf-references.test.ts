@@ -46,3 +46,49 @@ describe('bibliography extraction', () => {
     expect(references[0].citation_text).not.toContain('plot');
   });
 });
+
+it('keeps printed labels, parsed metadata, and the original wrapped citation distinct', () => {
+  const item = referenceFromText('[VSP17] Jane Doe and John Smith. A long attention-\nbased title. arXiv preprint arXiv:1706.03762, 2017.', 5, 0)!;
+  expect(item.label).toBe('VSP17');
+  expect(item.title).toBe('A long attentionbased title');
+  expect(item.authors).toEqual(['Jane Doe', 'John Smith']);
+  expect(item.publication_year).toBe('2017');
+  expect(item.venue).toBe('arXiv preprint');
+  expect(item.citation_text).toContain('attention- based title');
+});
+
+it('splits a hanging-indent bibliography with wrapped authors and year suffixes across columns', () => {
+  const lines = [
+    { text: 'References', source_rect: [50, 760, 150, 772] as [number, number, number, number] },
+    { text: 'Jane Doe, John Smith, and Mary', source_rect: [50, 730, 260, 740] as [number, number, number, number] },
+    { text: 'Jones. 2018a. A useful first title.', source_rect: [60, 716, 265, 726] as [number, number, number, number] },
+    { text: 'In Proceedings of Examples.', source_rect: [60, 702, 245, 712] as [number, number, number, number] },
+    { text: 'John Smith and Jane Doe.', source_rect: [50, 680, 250, 690] as [number, number, number, number] },
+    { text: '2018b. A useful second title.', source_rect: [60, 666, 255, 676] as [number, number, number, number] },
+    { text: 'Example Journal.', source_rect: [60, 652, 220, 662] as [number, number, number, number] },
+    { text: 'Mary Jones and Jane Doe.', source_rect: [320, 730, 530, 740] as [number, number, number, number] },
+    { text: '2019. A third useful title.', source_rect: [330, 716, 535, 726] as [number, number, number, number] },
+    { text: 'In Proceedings of Examples.', source_rect: [330, 702, 525, 712] as [number, number, number, number] },
+    { text: 'John Smith and Mary Jones.', source_rect: [320, 680, 530, 690] as [number, number, number, number] },
+    { text: '2020. A fourth useful title.', source_rect: [330, 666, 535, 676] as [number, number, number, number] },
+    { text: 'Example Journal.', source_rect: [330, 652, 520, 662] as [number, number, number, number] },
+    { text: 'Appendix', source_rect: [320, 620, 500, 640] as [number, number, number, number] },
+  ];
+  const refs = extractReferences([{ page_number: 10, text: '', lines }]);
+  expect(refs).toHaveLength(4);
+  expect(refs[0]).toMatchObject({ label: null, title: 'A useful first title', publication_year: '2018a', authors: ['Jane Doe', 'John Smith', 'Mary Jones'], source_rect: [50, 702, 265, 740] });
+  expect(refs[2].source_rect).toEqual([320, 702, 535, 740]);
+  expect(refs[3].citation_text).not.toContain('Appendix');
+});
+
+it('does not treat a publication year as a numbered bibliography label', () => {
+  const refs = extractReferences([{ page_number: 8, text: 'References\nJane Doe and John Smith.\n2020. A useful title. Example Journal.\nMary Jones. 2021. Another useful title. Example Journal.' }]);
+  expect(refs).toHaveLength(2);
+  expect(refs.map((item) => item.label)).toEqual([null, null]);
+});
+
+it('parses wrapped arXiv URLs and balanced DOI punctuation', () => {
+  const item = referenceFromText('A related paper. https://arxiv.org/pdf/\nhep-th/9901001v2.pdf. DOI:10.1000/test(part).', 4, 0)!;
+  expect(item.arxiv_id).toBe('hep-th/9901001v2');
+  expect(item.doi).toBe('10.1000/test(part)');
+});

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, OperationProgress, Paper, PaperPreview, PdfReaderProps, ReaderOrientation, ReadingLocation, SelectionContext } from '../lib/types';
+import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, OperationProgress, Paper, PaperPreview, PdfReaderProps, ReaderOrientation, ReadingLocation, ReferenceCandidate, ReferenceItem, SelectionContext } from '../lib/types';
 import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
@@ -595,13 +595,14 @@ describe('assembled paper workspace', () => {
     const readingLocation = await openReadingBlock();
     act(() => lastReader.on_references([{
       reference_id: 'reference-12', citation_text: 'An interesting related paper',
+      label: '12', title: null, authors: [], publication_year: null, venue: null, source_rect: null, parse_confidence: 'raw',
       page_number: 12, arxiv_id: null, doi: null, url: null,
     }]));
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Go to reference on page 12' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View bibliography on page 12' }));
     expect(lastReader.target_location).toMatchObject({
-      reader_mode: 'reading', reading_block_id: null, page_number: 12, page_position: [0, 0],
+      reader_mode: 'pdf', reading_block_id: null, page_number: 12, page_position: [0, 0],
     });
     expect(lastReader.target_anchor).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
@@ -1221,5 +1222,65 @@ describe('removal completion races', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
     expect(screen.queryByText('A concise takeaway')).toBeNull();
     expect(screen.queryByRole('article', { name: 'AI conversation: Explain before removing' })).toBeNull();
+  });
+});
+
+
+describe('shared reference previews', () => {
+  const reference: ReferenceItem = {
+    reference_id: 'ref-7', label: '7', citation_text: '[7] Author. Related paper. 2020.',
+    title: 'Related paper', authors: ['Author'], publication_year: '2020', venue: null,
+    parse_confidence: 'parsed', page_number: 12, source_rect: [50, 610, 300, 640],
+    arxiv_id: '1409.0473v3', doi: null, url: null,
+  };
+
+  it('opens citation details locally and requires download confirmation after the arXiv preview', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    await openFirst();
+    const location = lastReader.target_location;
+    act(() => lastReader.on_navigate({ kind: 'reference', reference }));
+    const details = screen.getByRole('dialog', { name: 'Reference details' });
+    expect(within(details).getByText('Related paper')).toBeTruthy();
+    expect(backend.previewArxivPaper).not.toHaveBeenCalled();
+    expect(lastReader.target_location).toEqual(location);
+    expect(lastReader.reading_active).toBe(false);
+    fireEvent.click(within(details).getByRole('button', { name: 'Preview paper' }));
+    const previewDialog = await screen.findByRole('dialog', { name: 'Second paper' });
+    expect(backend.previewArxivPaper).toHaveBeenCalledExactlyOnceWith('1409.0473v3', expect.any(String));
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    fireEvent.click(within(previewDialog).getByRole('button', { name: 'Cancel' }));
+    expect(lastReader.paper.paper_id).toBe(first.paper_id);
+    expect(lastReader.target_location).toEqual(location);
+    expect(lastReader.reading_active).toBe(true);
+  });
+
+  it('jumps to the actual bibliography anchor and Back returns to the citing Reading block', async () => {
+    const original = await openReadingBlock();
+    act(() => lastReader.on_navigate({ kind: 'reference', reference }));
+    fireEvent.click(screen.getByRole('button', { name: 'View bibliography on page 12' }));
+    expect(lastReader.target_location).toMatchObject({ reader_mode: 'pdf', page_number: 12, reading_block_id: null });
+    expect(lastReader.target_anchor?.quad_points).toEqual([[50, 640, 300, 640, 300, 610, 50, 610]]);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location).toEqual(original);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('ignores stale lookup UI after a paper switch and reuses the successful lookup on demand', async () => {
+    const lookup = deferred<ReferenceCandidate[]>();
+    vi.mocked(backend.resolveReference).mockReturnValue(lookup.promise);
+    const unresolved = { ...reference, arxiv_id: null };
+    await openFirst();
+    act(() => lastReader.on_navigate({ kind: 'reference', reference: unresolved }));
+    fireEvent.click(screen.getByRole('button', { name: 'Find a match' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close reference details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    await act(async () => lookup.resolve([{ title: 'Matched title', authors: ['Author'], publication_year: '2020', venue: null, match_kind: 'suggestion', arxiv_id: null, doi: '10.1234/test', url: 'https://doi.org/10.1234/test' }]));
+    expect(screen.queryByText('Matched title')).toBeNull();
+    act(() => lastReader.on_navigate({ kind: 'reference', reference: unresolved }));
+    fireEvent.click(screen.getByRole('button', { name: 'Find a match' }));
+    await screen.findByText('Matched title');
+    expect(backend.resolveReference).toHaveBeenCalledTimes(1);
   });
 });

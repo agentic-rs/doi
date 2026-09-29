@@ -1,6 +1,6 @@
 use crate::{
   ai::RequestRegistry, arxiv::ArxivState, error::Result, http, models::OperationProgress,
-  storage::Database,
+  references::ResolverCache, storage::Database,
 };
 use std::{path::PathBuf, time::Duration};
 use tauri::{AppHandle, Emitter};
@@ -14,6 +14,7 @@ pub struct AppState {
   pub import_lock: Mutex<()>,
   pub settings_lock: Mutex<()>,
   pub arxiv: ArxivState,
+  pub reference_cache: ResolverCache,
   pub ai_requests: RequestRegistry,
 }
 
@@ -72,6 +73,7 @@ impl AppState {
       import_lock: Mutex::new(()),
       settings_lock: Mutex::new(()),
       arxiv: ArxivState::new(&data_directory),
+      reference_cache: ResolverCache::default(),
       ai_requests: RequestRegistry::default(),
     })
   }

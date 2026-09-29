@@ -3093,6 +3093,7 @@ dependencies = [
  "chrono",
  "keyring",
  "keyring-core",
+ "percent-encoding",
  "quick-xml 0.41.0",
  "rcgen",
  "regex",

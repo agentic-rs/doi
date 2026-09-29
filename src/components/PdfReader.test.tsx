@@ -25,6 +25,8 @@ const pdf_fixture = vi.hoisted(() => ({
   annotations: new Map<number, Array<{ subtype: string; id: string; rect: number[]; dest: unknown[] }>>(),
   defer_renders: false,
   defer_text: false,
+  fail_text_page: null as number | null,
+  defer_text_page: null as number | null,
   render_requests: [] as MockRenderRequest[],
   text_requests: [] as Array<{ page_number: number; complete: () => void }>,
   text_layer_starts: [] as Array<{ scale: number; rotation: number }>,
@@ -94,9 +96,10 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
         getTextContent: async () => ({ items: [], styles: {} }),
         streamTextContent: () => new ReadableStream({
           start(controller) {
+            if (pdf_fixture.fail_text_page === index + 1) { controller.error(new Error("Unreadable text")); return; }
             const complete = () => { controller.enqueue({ items: pdf_fixture.text_content.get(index + 1) ?? [], styles: {}, lang: null }); controller.close(); };
             pdf_fixture.text_requests.push({ page_number: index + 1, complete });
-            if (!pdf_fixture.defer_text) complete();
+            if (!pdf_fixture.defer_text && pdf_fixture.defer_text_page !== index + 1) complete();
           },
         }),
         getAnnotations: async () => pdf_fixture.annotations.get(index + 1) ?? [],
@@ -184,6 +187,8 @@ beforeEach(() => {
   pdf_fixture.annotations.clear();
   pdf_fixture.defer_renders = false;
   pdf_fixture.defer_text = false;
+  pdf_fixture.fail_text_page = null;
+  pdf_fixture.defer_text_page = null;
   pdf_fixture.render_requests = [];
   pdf_fixture.text_requests = [];
   pdf_fixture.text_layer_starts = [];
@@ -1233,6 +1238,87 @@ describe('PDF zoom gestures and rendering', () => {
     view.rerender(<PdfReader {...props} reading_active />);
     expect(dispatchZoomWheel(scroll).defaultPrevented).toBe(true);
     await waitFor(() => expect(latestLocation(props).zoom).toBeGreaterThan(zoom_before_gestures));
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('reference details in both reading modes', () => {
+  function bibliography() {
+    const item = (str: string, y: number) => ({ str, transform: [10, 0, 0, 10, 50, y], width: 260, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
+    pdf_fixture.text_content.set(4, [item('References', 750), item('[7] Jane Doe. A useful paper. Journal, 2021.', 700)]);
+  }
+
+  it('opens reference details for bibliography links without navigating away or redrawing PDF', async () => {
+    bibliography();
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'cite-7', rect: [100, 500, 125, 512], dest: [3, { name: 'XYZ' }, 50, 712, null] }]);
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ label: '7' })]), 'ready'));
+    const baseline = pdf_fixture.render_requests.length;
+    fireEvent.click(await screen.findByRole('button', { name: 'Follow citation to its destination' }));
+    await waitFor(() => expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7', page_number: 4 }) }));
+    expect(pdf_fixture.render_requests.length).toBe(baseline);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('shows a reference beside a citing block outside the PDF text and zoom layers', async () => {
+    bibliography();
+    const props = readingProps('p1-intro');
+    reading_fixture.layout!.blocks[0].text = 'This follows earlier work [7].';
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(document.querySelector('.reference-strip button')).toBeTruthy());
+    const button = document.querySelector<HTMLButtonElement>('.reference-strip button')!;
+    expect(button.closest('.pdf-page-wrap')).toBeNull();
+    expect(button.closest('.textLayer')).toBeNull();
+    fireEvent.click(button);
+    expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7' }) });
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+  });
+
+  it('associates a block through native citation geometry when its text cannot identify the citation', async () => {
+    bibliography();
+    const props = readingProps('p1-intro');
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'author-year-link', rect: [100, 600, 200, 612], dest: [3, { name: 'XYZ' }, 50, 712, null] }]);
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(document.querySelector('.reference-strip button')).toBeTruthy());
+    const strips = [...document.querySelectorAll('.reference-strip')];
+    expect(strips).toHaveLength(1);
+    expect(strips[0].closest('article')?.querySelector('[data-block-id]')?.getAttribute('data-block-id')).toBe('p1-intro');
+    fireEvent.click(strips[0].querySelector('button')!);
+    expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7' }) });
+  });
+
+  it('defers new reference rows until an active pinch has settled', async () => {
+    bibliography();
+    pdf_fixture.defer_text_page = 4;
+    const props = readingProps('p1-intro');
+    reading_fixture.layout!.blocks[0].text = 'This follows earlier work [7].';
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(pdf_fixture.text_requests.some((request) => request.page_number === 4)).toBe(true));
+    await waitFor(() => expect(readingBlock('p1-intro').querySelector('.textLayer')?.textContent).toBeDefined());
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    vi.useFakeTimers();
+    dispatchTouch(scroll, 'touchstart', [{ identifier: 1, clientX: 140, clientY: 180 }, { identifier: 2, clientX: 220, clientY: 180 }]);
+    dispatchTouch(scroll, 'touchmove', [{ identifier: 1, clientX: 120, clientY: 180 }, { identifier: 2, clientX: 240, clientY: 180 }]);
+    await advancePreviewFrame();
+    await act(async () => { pdf_fixture.text_requests.filter((request) => request.page_number === 4).forEach((request) => request.complete()); });
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(true);
+    expect(document.querySelector('.reference-strip')).toBeNull();
+    dispatchTouch(scroll, 'touchend', []);
+    await advancePreviewFrame();
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+    expect(document.querySelector('.reference-strip')).toBeTruthy();
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('keeps a readable PDF open if bibliography text extraction fails', async () => {
+    pdf_fixture.fail_text_page = 4;
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith([], 'error'));
+    expect(screen.getByLabelText('Page 1')).toBeTruthy();
+    expect(screen.queryByText(/Could not open this PDF/)).toBeNull();
     expect(props.on_error).not.toHaveBeenCalled();
   });
 });

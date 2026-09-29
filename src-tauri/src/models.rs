@@ -301,9 +301,13 @@ pub struct AiStreamEvent {
   pub text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ReferenceCandidate {
   pub title: String,
+  pub authors: Vec<String>,
+  pub publication_year: Option<String>,
+  pub venue: Option<String>,
+  pub match_kind: String,
   pub arxiv_id: Option<String>,
   pub doi: Option<String>,
   pub url: String,

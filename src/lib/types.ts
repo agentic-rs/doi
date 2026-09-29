@@ -115,8 +115,15 @@ export interface SelectionContext {
 
 export interface ReferenceItem {
   reference_id: string;
+  label: string | null;
   citation_text: string;
+  title: string | null;
+  authors: string[];
+  publication_year: string | null;
+  venue: string | null;
+  parse_confidence: 'parsed' | 'raw';
   page_number: number;
+  source_rect: PdfSourceRect | null;
   arxiv_id: string | null;
   doi: string | null;
   url: string | null;
@@ -124,6 +131,10 @@ export interface ReferenceItem {
 
 export interface ReferenceCandidate {
   title: string;
+  authors: string[];
+  publication_year: string | null;
+  venue: string | null;
+  match_kind: 'identifier' | 'suggestion';
   arxiv_id: string | null;
   doi: string | null;
   url: string;
@@ -234,6 +245,7 @@ export interface OperationProgress {
 
 export type ReaderTarget =
   | { kind: 'internal'; location: ReadingLocation }
+  | { kind: 'reference'; reference: ReferenceItem }
   | { kind: 'external'; url: string };
 
 export interface PdfReaderProps {
@@ -251,6 +263,6 @@ export interface PdfReaderProps {
   on_location_change: (location: ReadingLocation) => void;
   on_navigate: (target: ReaderTarget) => void;
   on_selection: (selection: SelectionContext | null) => void;
-  on_references: (references: ReferenceItem[]) => void;
+  on_references: (references: ReferenceItem[], status?: 'loading' | 'ready' | 'error') => void;
   on_error: (message: string) => void;
 }
