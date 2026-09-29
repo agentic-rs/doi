@@ -839,7 +839,7 @@ export function PdfReader(props: PdfReaderProps) {
       </div>
       {immersive && reading_active && <button type="button" className="pdf-controls-accessible" onClick={() => props.on_toggle_controls?.()}>{controls_visible ? 'Hide reading controls' : 'Show reading controls'}</button>}
       {immersive && reading_active && !controls_visible && show_tap_hint && <div className="pdf-tap-hint" aria-hidden="true">Tap the page to show reading controls</div>}
-      <div className="pdf-scroll" ref={setScrollRoot} onScroll={handleScroll} inert={Boolean(enlarged_figure)}
+      <div className={`pdf-scroll${reading ? ' reading-scroll' : ''}`} ref={setScrollRoot} onScroll={handleScroll} inert={Boolean(enlarged_figure)}
         onPointerDown={handlePointerDown}
         onPointerMove={(event) => moveReaderGesture(gesture.current, event.pointerId, event.clientX, event.clientY)}
         onPointerUp={handlePointerUp}

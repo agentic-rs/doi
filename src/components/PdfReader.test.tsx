@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { PdfReaderProps, ReadingLayout, ReadingLocation } from '../lib/types';
 import { PdfReader } from './PdfReader';
 
@@ -136,6 +137,8 @@ const page_bottom = 168;
 const resize_callbacks = new Set<() => void>();
 const original_scroll_to = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo');
 const original_computed_style = window.getComputedStyle;
+const reader_styles = ['pdf-reader.css', 'reading-view.css', 'reference-components.css']
+  .map((name) => readFileSync(new URL(name, import.meta.url), 'utf8')).join('\n');
 
 function pageLayout(scroll: HTMLElement) {
   let top = page_top;
@@ -1455,6 +1458,106 @@ describe('reference details in both reading modes', () => {
     fireEvent.click(button);
     expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7' }) });
     expect(props.on_toggle_controls).not.toHaveBeenCalled();
+  });
+
+  describe('Reading preview paint', () => {
+    let styles: HTMLStyleElement;
+
+    beforeEach(() => {
+      styles = document.createElement('style');
+      styles.textContent = reader_styles;
+      document.head.append(styles);
+      vi.stubGlobal('IntersectionObserver', class {
+        constructor(private callback: IntersectionObserverCallback) {}
+        observe(target: HTMLElement) {
+          const isIntersecting = target.dataset.blockId !== 'p3-original';
+          const bounds = target.getBoundingClientRect();
+          this.callback([{
+            target, isIntersecting, intersectionRatio: isIntersecting ? 1 : 0,
+            boundingClientRect: bounds, intersectionRect: bounds, rootBounds: null, time: 0,
+          }], this as unknown as IntersectionObserver);
+        }
+        disconnect() {}
+      });
+    });
+
+    afterEach(() => styles.remove());
+
+    it.each(['finish', 'cancel'] as const)('keeps only cropped paper painted during Safari pinch and restores passage controls on %s', async (ending) => {
+      bibliography();
+      const props = readingProps();
+      reading_fixture.layout!.blocks[2].text = 'This follows earlier work [7].';
+      const view = render(<PdfReader {...props} />);
+      await waitFor(() => expect(document.querySelector('.reference-strip button')).toBeTruthy());
+      await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+      const page = readingBlock('p1-body');
+      await waitFor(() => expect(page.querySelector<HTMLElement>('.textLayer')!.hidden).toBe(false));
+      const scroll = screen.getByLabelText('Scrollable reading view');
+      const strip = scroll.querySelector<HTMLElement>('.pdf-pages')!;
+      const toolbar = screen.getByLabelText('PDF view controls');
+      const articles = [...scroll.querySelectorAll<HTMLElement>('article')];
+      const actions = [...scroll.querySelectorAll<HTMLElement>('.reading-block-actions, .reference-strip')];
+      const canvas = page.querySelector<HTMLCanvasElement>('canvas')!;
+      const original_pixels = { width: canvas.width, height: canvas.height };
+      const original_page_size = { width: page.style.width, height: page.style.height };
+      const toolbar_bounds = toolbar.getBoundingClientRect();
+      const anchor = croppedPdfPointAt('p1-body', 180, 180);
+      const baseline = heavyWork(props);
+      const original_zoom = latestLocation(props).zoom;
+      expect(readingBlock('p3-original').querySelector('canvas')).toBeNull();
+      expect(getComputedStyle(scroll).backgroundColor).toBe('rgb(244, 243, 237)');
+      // The stationary scroll viewport must paint the full background, even
+      // where an enlarged crop overflows the content strip horizontally.
+      expect(getComputedStyle(strip).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      for (const article of articles) expect(getComputedStyle(article).backgroundColor).toBe('rgb(255, 255, 255)');
+      for (const action of actions) expect(getComputedStyle(action).visibility).toBe('visible');
+
+      vi.useFakeTimers();
+      dispatchSafariGesture(scroll, 'gesturestart', 1);
+      for (const scale of [1.5, 0.7, 1.4]) {
+        dispatchSafariGesture(scroll, 'gesturechange', scale);
+        await advancePreviewFrame();
+        expect(heavyWork(props)).toEqual(baseline);
+        expect({ width: canvas.width, height: canvas.height }).toEqual(original_pixels);
+        expect({ width: page.style.width, height: page.style.height }).toEqual(original_page_size);
+        expect(previewTransform(page.parentElement).scale).toBeCloseTo(scale);
+        expect(croppedPdfPointAt('p1-body', 180, 180)[0]).toBeCloseTo(anchor[0]);
+        expect(croppedPdfPointAt('p1-body', 180, 180)[1]).toBeCloseTo(anchor[1]);
+        expect(getComputedStyle(page).backgroundColor).toBe('rgb(255, 255, 255)');
+        for (const article of articles) {
+          expect(getComputedStyle(article).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+          expect(article.style.transform).toBe('');
+        }
+        for (const action of actions) {
+          expect(getComputedStyle(action).visibility).toBe('hidden');
+          expect(getComputedStyle(action).display).not.toBe('none');
+          expect(action.style.transform).toBe('');
+        }
+        expect(getComputedStyle(readingBlock('p3-original').parentElement!).visibility).toBe('hidden');
+        expect(toolbar.getBoundingClientRect()).toMatchObject({
+          left: toolbar_bounds.left, top: toolbar_bounds.top, width: toolbar_bounds.width, height: toolbar_bounds.height,
+        });
+        expect(toolbar.style.transform).toBe('');
+        expect(getComputedStyle(scroll).backgroundColor).toBe('rgb(244, 243, 237)');
+      }
+
+      if (ending === 'finish') dispatchSafariGesture(scroll, 'gestureend', 1.4);
+      else {
+        dispatchSafariGesture(scroll, 'gesturechange', 2);
+        view.rerender(<PdfReader {...props} reading_active={false} />);
+      }
+      await advancePreviewFrame();
+      expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+      expect(page.parentElement!.style.transform).toBe('');
+      for (const article of articles) expect(getComputedStyle(article).backgroundColor).toBe('rgb(255, 255, 255)');
+      for (const action of actions) expect(getComputedStyle(action).visibility).toBe('visible');
+      expect(getComputedStyle(scroll).backgroundColor).toBe('rgb(244, 243, 237)');
+      expect(getComputedStyle(strip).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      expect(latestLocation(props).zoom).toBeCloseTo(original_zoom * (ending === 'finish' ? 1.4 : 1));
+      if (ending === 'cancel') expect(heavyWork(props)).toEqual(baseline);
+      else expect(canvas.width).toBe(Math.floor(Number.parseFloat(page.style.width)));
+      expect(props.on_error).not.toHaveBeenCalled();
+    });
   });
 
   it('associates a block through native citation geometry when its text cannot identify the citation', async () => {
