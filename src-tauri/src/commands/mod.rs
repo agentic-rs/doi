@@ -205,8 +205,8 @@ pub async fn save_annotation_file(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn reader_capabilities() -> reader::ReaderCapabilities {
-  reader::capabilities()
+pub async fn reader_capabilities(app: AppHandle) -> Result<reader::ReaderCapabilities> {
+  reader::capabilities(app).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -215,4 +215,9 @@ pub async fn set_reader_orientation(
   orientation: reader::ReaderOrientation,
 ) -> Result<reader::ReaderOrientation> {
   reader::set_orientation(app, orientation).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_reader_ai_mode(app: AppHandle, active: bool) -> Result<reader::ReaderOrientation> {
+  reader::set_ai_mode(app, active).await
 }

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiConversationView } from '../lib/useAiConversations';
 import { AiConversationCard } from './AiConversationCard';
@@ -23,7 +24,8 @@ const view: AiConversationView = {
 
 function props(override: Partial<AiConversationView> = {}) {
   return {
-    view: { ...view, ...override }, on_follow_up: vi.fn(), on_generate_note: vi.fn(), on_stop: vi.fn(),
+    view: { ...view, ...override }, follow_up_question: '', on_follow_up_question_change: vi.fn(),
+    on_follow_up: vi.fn(), on_generate_note: vi.fn(), on_stop: vi.fn(),
     on_edit_note: vi.fn(), on_retry_note_persistence: vi.fn(), on_save_note: vi.fn(), on_toggle_collapsed: vi.fn(),
   };
 }
@@ -63,7 +65,11 @@ describe('AI conversation card', () => {
   it('submits and clears a follow-up only when accepted, then blurs the mobile editor', () => {
     const callbacks = props();
     callbacks.on_follow_up.mockReturnValueOnce(false).mockReturnValueOnce(true);
-    render(<AiConversationCard {...callbacks} />);
+    function ControlledCard() {
+      const [question, setQuestion] = useState('');
+      return <AiConversationCard {...callbacks} follow_up_question={question} on_follow_up_question_change={setQuestion} />;
+    }
+    render(<ControlledCard />);
     const textarea = screen.getByRole('textbox', { name: 'Follow-up question' }) as HTMLTextAreaElement;
     textarea.focus();
     fireEvent.change(textarea, { target: { value: 'How does it compare?' } });
@@ -73,6 +79,20 @@ describe('AI conversation card', () => {
     expect(callbacks.on_follow_up).toHaveBeenCalledWith('How does it compare?');
     expect(textarea.value).toBe('');
     expect(document.activeElement).not.toBe(textarea);
+  });
+
+  it('restores an externally retained follow-up after the card remounts', () => {
+    const callbacks = props();
+    callbacks.follow_up_question = 'Keep this unfinished follow-up';
+    const first = render(<AiConversationCard {...callbacks} />);
+    expect((screen.getByRole('textbox', { name: 'Follow-up question' }) as HTMLTextAreaElement).value).toBe(callbacks.follow_up_question);
+    first.unmount();
+    render(<AiConversationCard {...callbacks} />);
+    const textarea = screen.getByRole('textbox', { name: 'Follow-up question' }) as HTMLTextAreaElement;
+    expect(textarea.value).toBe(callbacks.follow_up_question);
+    fireEvent.change(textarea, { target: { value: 'Updated question' } });
+    expect(callbacks.on_follow_up_question_change).toHaveBeenCalledWith('Updated question');
+    expect(callbacks.on_follow_up).not.toHaveBeenCalled();
   });
 
   it('offers editable note review, an explicit save, persistence retry, and an older-history notice', () => {

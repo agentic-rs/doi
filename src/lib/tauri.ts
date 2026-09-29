@@ -51,5 +51,7 @@ export const openExternal = (url: string) => invoke<void>('open_external', { url
 export const getReaderCapabilities = () => invoke<ReaderCapabilities>('reader_capabilities');
 export const setReaderOrientation = (orientation: ReaderOrientation) =>
   invoke<ReaderOrientation>('set_reader_orientation', { orientation });
+export const setReaderAiMode = (active: boolean) =>
+  invoke<ReaderOrientation>('set_reader_ai_mode', { active });
 export const onProgress = (handler: (progress: OperationProgress) => void) =>
   listen<OperationProgress>('operation-progress', (event) => handler(event.payload));

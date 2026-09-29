@@ -14,6 +14,7 @@ import { FloatingSelectionAction } from '../components/FloatingSelectionAction';
 import { SettingsDialog } from '../components/SettingsDialog';
 import { AiConversationCard } from '../components/AiConversationCard';
 import { useAiConversations } from '../lib/useAiConversations';
+import { usePhoneAiReader } from '../lib/usePhoneAiReader';
 import '../components/reading-workspace.css';
 import {
   deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
@@ -111,7 +112,7 @@ export function WorkspacePage() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [paperInfoOpen, setPaperInfoOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
-  const [readerCapabilities, setReaderCapabilities] = useState<ReaderCapabilities>({ supports_orientation: false });
+  const [readerCapabilities, setReaderCapabilities] = useState<ReaderCapabilities>({ supports_orientation: false, device_kind: 'unknown' });
   const [readerOrientation, setReaderOrientationState] = useState<ReaderOrientation>(getReaderDirection);
   const [orientationPending, setOrientationPending] = useState(false);
   const [viewportKey, setViewportKey] = useState(0);
@@ -136,6 +137,8 @@ export function WorkspacePage() {
   const [composerKind, setComposerKind] = useState<'ai' | 'note'>('ai');
   const [question, setQuestion] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
+  const [followUpDrafts, setFollowUpDrafts] = useState<Record<string, string>>({});
+  const [aiEntryPending, setAiEntryPending] = useState(false);
   const [annotationBusy, setAnnotationBusy] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -158,6 +161,8 @@ export function WorkspacePage() {
   const arxivInputRef = useRef<HTMLInputElement>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
   const notesPanelRef = useRef<HTMLDivElement>(null);
+  const aiDialogRef = useRef<HTMLElement>(null);
+  const aiEntrySequenceRef = useRef(0);
   const annotationChangesRef = useRef(new Map<string, { paper_id: string; pdf_hash: string; annotation: Annotation | null }>());
   const libraryButtonRef = useRef<HTMLButtonElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
@@ -165,6 +170,51 @@ export function WorkspacePage() {
   const readerActionsRef = useRef({ handleNavigate, toggleReadingControls });
   readerActionsRef.current = { handleNavigate, toggleReadingControls };
   const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
+  const isPhone = readerCapabilities.device_kind === 'phone';
+  const requiresPhoneAi = isNative && (isPhone || readerCapabilities.device_kind === 'unknown');
+  const phoneAi = usePhoneAiReader({
+    enabled: isNative && isPhone,
+    on_error: (message) => setNotice({ tone: 'error', message }),
+    on_orientation: (orientation) => {
+      setReaderOrientationState(orientation);
+      setViewportKey((value) => value + 1);
+    },
+  });
+  const aiTransition = phoneAi.pending || aiEntryPending;
+  const composingAi = composerKind === 'ai' && (!requiresPhoneAi || phoneAi.open);
+
+  const hideReadingControls = useCallback(() => {
+    aiEntrySequenceRef.current += 1;
+    setAiEntryPending(false);
+    phoneAi.close();
+    setControlsVisible(false);
+    setInspectorOpen(false);
+  }, [phoneAi.close]);
+
+  useLayoutEffect(() => {
+    if (!phoneAi.open || !inspectorOpen || settingsOpen) return;
+    const dialog = aiDialogRef.current;
+    dialog?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+    function trapFocus(event: KeyboardEvent) {
+      if (event.key !== 'Tab') return;
+      const controls = Array.from(dialog?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), summary, a[href]',
+      ) ?? []).filter((element) => !element.closest('[hidden], [inert]')
+        && (!element.closest('details:not([open])') || element.tagName === 'SUMMARY'));
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener('keydown', trapFocus);
+    return () => document.removeEventListener('keydown', trapFocus);
+  }, [phoneAi.open, inspectorOpen, settingsOpen]);
 
   function storeAnnotation(saved: Annotation) {
     annotationChangesRef.current.set(saved.annotation_id, { paper_id: saved.target.paper_id, pdf_hash: saved.target.pdf_hash, annotation: saved });
@@ -201,7 +251,7 @@ export function WorkspacePage() {
   }, []);
 
   const focusArxivInput = useCallback(() => {
-    if (paperInfoOpen || settingsOpen) return;
+    if (paperInfoOpen || settingsOpen || phoneAi.open || aiTransition) return;
     if (activeRef.current) {
       flushSync(() => setLibraryOpen(true));
       arxivInputRef.current?.focus();
@@ -211,18 +261,17 @@ export function WorkspacePage() {
     // so iOS can open its keyboard for the arXiv field.
     if (libraryOpen) flushSync(() => setLibraryOpen(false));
     arxivInputRef.current?.focus();
-  }, [libraryOpen, paperInfoOpen, settingsOpen]);
+  }, [libraryOpen, paperInfoOpen, settingsOpen, phoneAi.open, aiTransition]);
 
   useLayoutEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape' || event.defaultPrevented || !active || paperInfoOpen || settingsOpen || libraryOpen) return;
-      setControlsVisible(false);
-      setInspectorOpen(false);
+      hideReadingControls();
       document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"], [aria-label="Scrollable reading view"]')?.focus({ preventScroll: true });
     }
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [active, paperInfoOpen, settingsOpen, libraryOpen]);
+  }, [active, paperInfoOpen, settingsOpen, libraryOpen, hideReadingControls]);
 
   useEffect(() => {
     const media = window.matchMedia?.(compactLayoutQuery);
@@ -336,13 +385,8 @@ export function WorkspacePage() {
     setNoteDraft('');
   }
 
-  function hideReadingControls() {
-    setControlsVisible(false);
-    setInspectorOpen(false);
-  }
-
   function toggleReadingControls() {
-    if (paperInfoOpen || settingsOpen || libraryOpen) return;
+    if (paperInfoOpen || settingsOpen || libraryOpen || phoneAi.open || aiTransition) return;
     if (controlsVisible) hideReadingControls();
     else setControlsVisible(true);
   }
@@ -359,7 +403,7 @@ export function WorkspacePage() {
   }
 
   async function changeReaderDirection() {
-    if (orientationPending || !readerCapabilities.supports_orientation) return;
+    if (orientationPending || phoneAi.open || aiTransition || !readerCapabilities.supports_orientation) return;
     setOrientationPending(true);
     try {
       const next = readerOrientation === 'portrait' ? 'landscape' : 'portrait';
@@ -376,8 +420,8 @@ export function WorkspacePage() {
   }
 
   function applyDocument(document: ActiveDocument, notes: Annotation[], nextHistory: NavigationHistory, location: ReadingLocation) {
+    hideReadingControls();
     setLibraryOpen(false);
-    setInspectorOpen(false);
     setPaperInfoOpen(false);
     setControlsVisible(false);
     activeRef.current = document;
@@ -533,29 +577,69 @@ export function WorkspacePage() {
   const showSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
+  function revealConversation(conversationId: string, paperId: string) {
+    const notesPanel = notesPanelRef.current;
+    requestAnimationFrame(() => {
+      if (activeRef.current?.paper.paper_id !== paperId
+        || !notesPanel?.isConnected || notesPanelRef.current !== notesPanel) return;
+      const draft = document.getElementById(`ai-conversation-${conversationId}`);
+      if (!draft || !notesPanel.contains(draft)) return;
+      // Only scroll the Notes panel: scrollIntoView can pan the iOS viewport
+      // while the software keyboard closes.
+      const top = notesPanel.scrollTop + draft.getBoundingClientRect().top
+        - notesPanel.getBoundingClientRect().top - notesPanel.clientTop;
+      notesPanel.scrollTo?.({ top: Math.max(0, top),
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  }
+
+  async function openAi(conversationId?: string) {
+    const paperId = activeRef.current?.paper.paper_id;
+    if (!paperId || aiTransition || orientationPending) return;
+    const sequence = ++aiEntrySequenceRef.current;
+    let capabilities = readerCapabilities;
+    try {
+      if (isNative && capabilities.device_kind === 'unknown') {
+        setAiEntryPending(true);
+        capabilities = await getReaderCapabilities();
+        if (!mountedRef.current || sequence !== aiEntrySequenceRef.current) return;
+        if (capabilities.device_kind === 'unknown') throw new Error('The device type is unavailable. Please try again.');
+        flushSync(() => setReaderCapabilities(capabilities));
+      }
+      if (capabilities.device_kind === 'phone' && !await phoneAi.show()) return;
+      if (!mountedRef.current || sequence !== aiEntrySequenceRef.current
+        || activeRef.current?.paper.paper_id !== paperId) return;
+      flushSync(() => {
+        setComposerKind('ai');
+        setInspectorTab('notes');
+        setControlsVisible(true);
+        setInspectorOpen(true);
+        if (conversationId && aiConversations.conversations.find((view) => view.conversation.conversation_id === conversationId)?.collapsed) {
+          aiConversations.toggleCollapsed(conversationId);
+        }
+      });
+      if (conversationId) revealConversation(conversationId, paperId);
+    } catch (cause) {
+      if (mountedRef.current && sequence === aiEntrySequenceRef.current) {
+        setNotice({ tone: 'error', message: `Could not open AI: ${String(cause)}` });
+      }
+    } finally {
+      if (mountedRef.current && sequence === aiEntrySequenceRef.current) setAiEntryPending(false);
+    }
+  }
+
   async function submitSelection(event: FormEvent) {
     event.preventDefault();
     const paper = activeRef.current?.paper;
     const capturedSelection = selectionRef.current;
     if (!paper || !capturedSelection || annotationBusy) return;
-    if (composerKind === 'ai') {
+    if (composingAi) {
       if (!question.trim()) return;
       const conversationId = aiConversations.ask(paper, capturedSelection, question);
-      const notesPanel = notesPanelRef.current;
+      if (!conversationId) return;
       setQuestion('');
       askInputRef.current?.blur();
-      requestAnimationFrame(() => {
-        if (activeRef.current?.paper.paper_id !== paper.paper_id
-          || !notesPanel?.isConnected || notesPanelRef.current !== notesPanel) return;
-        const draft = document.getElementById(`ai-conversation-${conversationId}`);
-        if (!draft || !notesPanel.contains(draft)) return;
-        // scrollIntoView also pans outer scroll containers, including the iOS
-        // viewport while its keyboard closes. Only the Notes panel should move.
-        const top = notesPanel.scrollTop + draft.getBoundingClientRect().top
-          - notesPanel.getBoundingClientRect().top - notesPanel.clientTop;
-        notesPanel.scrollTo?.({ top: Math.max(0, top),
-          behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-      });
+      revealConversation(conversationId, paper.paper_id);
       return;
     }
     if (!noteDraft.trim()) return;
@@ -715,7 +799,7 @@ export function WorkspacePage() {
     [active, annotations, targetLocation, targetAnchor, navigationKey, controlsVisible, inspectorOpen, viewportKey, paperInfoOpen, libraryOpen, settingsOpen, handleLocationChange, handleSelection]);
 
   return (
-    <div className={`app-shell ${active ? 'reading-mode' : ''} ${libraryOpen ? 'library-is-open' : ''}`}>
+    <div className={`app-shell ${active ? 'reading-mode' : ''} ${libraryOpen ? 'library-is-open' : ''} ${phoneAi.open ? 'phone-ai-open' : ''}`}>
       <aside ref={libraryRef} id="paper-library" className="library-sidebar" aria-label="Paper library" role={drawerLayout && libraryOpen ? 'dialog' : undefined} aria-modal={drawerLayout && libraryOpen ? true : undefined} inert={paperInfoOpen || settingsOpen || (Boolean(active) && !libraryOpen)}>
         <button type="button" className="icon-button mobile-library-close" aria-label="Close paper library" onClick={() => setLibraryOpen(false)}><X size={20} /></button>
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); focusArxivInput(); }} aria-label="Papertrail, open a paper">
@@ -759,7 +843,7 @@ export function WorkspacePage() {
           </div>
         </header>}
 
-        {active && controlsVisible && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening)} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={() => { setInspectorOpen(false); setLibraryOpen(true); }} on_info={showPaperInfo} on_inspector={() => setInspectorOpen((value) => !value)} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_hide={hideReadingControls} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
+        {active && controlsVisible && !phoneAi.open && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening) || aiTransition} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending || aiTransition} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={() => { hideReadingControls(); setLibraryOpen(true); }} on_info={showPaperInfo} on_inspector={() => setInspectorOpen((value) => !value)} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_hide={hideReadingControls} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
           const source = currentPositionRef.current ?? current;
           if (source) jumpTo({ ...source, reader_mode: source.reader_mode === 'reading' ? 'pdf' : 'reading', reading_block_id: null, zoom: 1, zoom_mode: 'fit_width' });
         }} />}
@@ -768,17 +852,13 @@ export function WorkspacePage() {
         {opening && <div className="operation-banner" role="status"><LoaderCircle size={15} className="spin" /><span>{progress?.message ?? `Opening ${opening.label}…`}</span>{progressPercent !== null && <span className="download-percent">{progressPercent}%</span>}<div className="operation-meter" style={{ width: `${progressPercent ?? 35}%` }} /></div>}
         {notice && <div className={`notice notice-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.tone === 'success' ? <Check size={15} /> : notice.tone === 'error' ? <CircleHelp size={15} /> : <CircleHelp size={15} />}<span>{notice.message}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
-        <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !inspectorOpen && !paperInfoOpen && !libraryOpen && !settingsOpen)} on_activate={() => {
-          setComposerKind('ai');
-          setInspectorTab('notes');
-          setControlsVisible(true);
-          setInspectorOpen(true);
-        }} />
+        {aiTransition && !phoneAi.open && <div className="phone-ai-transition" role="status"><LoaderCircle size={20} className="spin" /><span>Changing viewing direction…</span><button type="button" className="text-button" onClick={hideReadingControls}>Back to paper</button></div>}
+        <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !inspectorOpen && !paperInfoOpen && !libraryOpen && !settingsOpen && !aiTransition && !orientationPending)} on_activate={() => { void openAi(); }} />
 
         <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">
             {active ?
-              <div className="pdf-reader-mount" inert={inspectorOpen}>{reader}</div>
+              <div className="pdf-reader-mount" inert={inspectorOpen || aiTransition}>{reader}</div>
             : <div className="reader-welcome">
               <div className="welcome-eyebrow"><span /> FOLLOW A THOUGHT</div>
               <h1>One paper.<br />A world of ideas.</h1>
@@ -794,11 +874,11 @@ export function WorkspacePage() {
             </div>}
           </section>
 
-          {inspectorOpen && <aside id="paper-inspector" className="inspector" aria-label="References and annotations">
-            <div className="inspector-tabs" role="tablist" aria-label="Paper details">
+          {inspectorOpen && <aside ref={aiDialogRef} id="paper-inspector" className={`inspector ${phoneAi.open ? 'phone-ai-screen' : ''}`} role={phoneAi.open ? 'dialog' : undefined} aria-modal={phoneAi.open ? true : undefined} aria-label={phoneAi.open ? 'Ask AI' : 'References and annotations'}>
+            {phoneAi.open ? <header className="phone-ai-header"><button type="button" className="text-button" onClick={hideReadingControls}><ArrowLeft size={18} /> Back to paper</button><div><strong>Ask AI</strong><span>{active?.paper.title}</span></div><button type="button" className="icon-button" aria-label="AI provider settings" onClick={showSettings}><Settings2 size={18} /></button></header> : <div className="inspector-tabs" role="tablist" aria-label="Paper details">
               <button type="button" role="tab" id="references-tab" aria-controls="references-panel" aria-selected={inspectorTab === 'references'} className={inspectorTab === 'references' ? 'is-active' : ''} onClick={() => setInspectorTab('references')}><Link2 size={15} /> References {references.length > 0 && <span>{references.length}</span>}</button>
               <button type="button" role="tab" id="notes-tab" aria-controls="notes-panel" aria-selected={inspectorTab === 'notes'} className={inspectorTab === 'notes' ? 'is-active' : ''} onClick={() => setInspectorTab('notes')}><StickyNote size={15} /> Notes {annotations.length > 0 && <span>{annotations.length}</span>}</button>
-            </div>
+            </div>}
             {inspectorTab === 'references' ? <div id="references-panel" role="tabpanel" aria-labelledby="references-tab" className="inspector-content">
               <div className="inspector-intro"><h2>Follow the thread.</h2><p>Every paper is part of a bigger conversation.</p></div>
               {references.length ? <><div className="list-eyebrow">CITATIONS & LINKS <span>{references.length}</span></div><div className="reference-list">{references.map((reference, index) => {
@@ -812,18 +892,23 @@ export function WorkspacePage() {
                 </article>;
               })}</div></> : <div className="inspector-empty"><span className="empty-symbol"><Link2 size={24} strokeWidth={1.4} /></span><h3>{active ? 'Looking for connections' : 'The next idea is a citation away.'}</h3><p>{active ? 'Embedded paper links and detected bibliography entries appear here as the PDF loads. You can also follow links directly on a page.' : 'Open a paper to explore its references. Follow a link, then use Back to pick up where you left off.'}</p><div className="navigation-demo" aria-hidden="true"><span>Paper</span><span className="demo-arrow">↔</span><span>Reference</span></div></div>}
               {active && <details className="paper-about"><summary>About this paper <ChevronRight size={14} /></summary><p>{active.paper.abstract || 'No abstract available.'}</p><button type="button" className="text-button" onClick={() => { void openExternal(`https://arxiv.org/abs/${active.paper.arxiv_id}v${active.paper.arxiv_version}`).catch((cause) => setNotice({ tone: 'error', message: String(cause) })); }}>View on arXiv <ArrowUpRight size={13} /></button></details>}
-            </div> : <div id="notes-panel" ref={notesPanelRef} role="tabpanel" aria-labelledby="notes-tab" className="inspector-content notes-content">
+            </div> : <div id="notes-panel" ref={notesPanelRef} role={phoneAi.open ? undefined : 'tabpanel'} aria-labelledby={phoneAi.open ? undefined : 'notes-tab'} className="inspector-content notes-content">
               {selection && active ? <form className="selection-composer" onSubmit={(event) => { void submitSelection(event); }}>
                 <div className="selection-heading"><span><span className="selection-dot" /> SELECTED PASSAGE</span><button type="button" className="icon-button" onClick={clearSelection} aria-label="Dismiss selected passage"><X size={14} /></button></div>
                 <blockquote>{selection.selected_text}</blockquote><span className="selection-page">Page {selectedPages}</span>
-                <div className="composer-tabs"><button type="button" className={composerKind === 'ai' ? 'is-active' : ''} onClick={() => { setComposerKind('ai'); askInputRef.current?.focus(); }}><Sparkles size={14} /> Ask AI</button><button type="button" className={composerKind === 'note' ? 'is-active' : ''} onClick={() => setComposerKind('note')}><StickyNote size={14} /> Add a note</button></div>
-                {composerKind === 'ai' ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}><Sparkles size={15} />Ask</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
+                <div className="composer-tabs"><button type="button" className={composingAi ? 'is-active' : ''} onClick={() => { if (requiresPhoneAi && !phoneAi.open) void openAi(); else { setComposerKind('ai'); askInputRef.current?.focus(); } }}><Sparkles size={14} /> Ask AI</button>{!phoneAi.open && <button type="button" className={!composingAi ? 'is-active' : ''} onClick={() => setComposerKind('note')}><StickyNote size={14} /> Add a note</button>}</div>
+                {composingAi ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}><Sparkles size={15} />Ask</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
               </form> : <div className="notes-intro"><span className="empty-symbol"><MessageSquare size={23} strokeWidth={1.5} /></span><h2>Make room for a thought.</h2><p>Select a passage to ask a question or leave a note beside it.</p></div>}
               {aiConversations.loading && <p className="field-hint" role="status">Loading conversations…</p>}
               {aiConversations.load_error && <div className="inline-error" role="alert"><p>{aiConversations.load_error}</p><button type="button" className="text-button" onClick={() => { void aiConversations.reload(); }}>Retry conversations</button></div>}
               {aiConversations.conversations.length > 0 && <div className="ai-conversation-list">{aiConversations.conversations.map((view) => {
                 const id = view.conversation.conversation_id;
+                if (requiresPhoneAi && !phoneAi.open) return <button type="button" className="phone-conversation-preview" key={id} onClick={() => { void openAi(id); }}>
+                  <MessageSquare size={17} /><span><strong>{view.conversation.turns[0]?.question || 'AI conversation'}</strong><small>{view.conversation.turns.length} {view.conversation.turns.length === 1 ? 'question' : 'questions'} · Open conversation</small></span><ChevronRight size={16} />
+                </button>;
                 return <AiConversationCard key={id} view={view}
+                  follow_up_question={followUpDrafts[id] ?? ''}
+                  on_follow_up_question_change={(value) => setFollowUpDrafts((drafts) => ({ ...drafts, [id]: value }))}
                   on_follow_up={(question) => aiConversations.followUp(id, question)}
                   on_generate_note={() => { void aiConversations.generateNote(id); }}
                   on_stop={() => aiConversations.stop(id)}
@@ -832,7 +917,7 @@ export function WorkspacePage() {
                   on_save_note={() => { void aiConversations.saveNote(id); }}
                   on_toggle_collapsed={() => aiConversations.toggleCollapsed(id)} />;
               })}</div>}
-              <div className="notes-list-heading"><span className="list-eyebrow">SAVED NOTES <span>{annotations.length}</span></span>{active && <div className="sidecar-controls"><button type="button" className="icon-button" onClick={() => { void exportAnnotations(); }} aria-label="Export annotations as JSON" title="Export annotation sidecar JSON" disabled={exporting}>{exporting ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}</button><button type="button" className="icon-button" onClick={() => importInputRef.current?.click()} aria-label="Import annotation JSON" title="Import annotation sidecar JSON" disabled={importing}>{importing ? <LoaderCircle size={15} className="spin" /> : <Upload size={15} />}</button><input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { void importAnnotations(event); }} /></div>}</div>
+              {!phoneAi.open && <><div className="notes-list-heading"><span className="list-eyebrow">SAVED NOTES <span>{annotations.length}</span></span>{active && <div className="sidecar-controls"><button type="button" className="icon-button" onClick={() => { void exportAnnotations(); }} aria-label="Export annotations as JSON" title="Export annotation sidecar JSON" disabled={exporting}>{exporting ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}</button><button type="button" className="icon-button" onClick={() => importInputRef.current?.click()} aria-label="Import annotation JSON" title="Import annotation sidecar JSON" disabled={importing}>{importing ? <LoaderCircle size={15} className="spin" /> : <Upload size={15} />}</button><input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { void importAnnotations(event); }} /></div>}</div>
               {annotations.length ? <div className="annotation-list">{annotations.map((annotation) => <article className="annotation-card" key={annotation.annotation_id}>
                 <div className="annotation-meta"><span>{annotation.body.kind === 'ai_answer' ? <Sparkles size={13} /> : <StickyNote size={13} />}{annotation.body.kind === 'ai_answer' ? 'AI answer' : 'Your note'}</span><button type="button" className="annotation-page" onClick={() => jumpToAnnotation(annotation)}>p. {annotation.target.page_anchors[0]?.page_number} <ArrowUpRight size={11} /></button></div>
                 <button type="button" className="annotation-quote" onClick={() => jumpToAnnotation(annotation)} title="Go to annotated passage">“{annotationQuote(annotation)}”</button>
@@ -842,9 +927,9 @@ export function WorkspacePage() {
                 {annotation.body.kind === 'ai_answer' && <div className="annotation-model">{annotation.body.model_id}</div>}
                 <div className="annotation-footer"><span>{new Date(annotation.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{annotation.updated_at !== annotation.created_at ? ' · edited' : ''}</span><div><button type="button" className="text-button annotation-edit" onClick={() => { setEditId(annotation.annotation_id); setEditDraft(annotation.body.kind === 'note' ? annotation.body.content : annotation.body.note_content ?? annotation.body.answer); }} disabled={Boolean(annotationBusy)}>Edit</button><button type="button" className="icon-button delete-button" onClick={() => { void removeAnnotation(annotation); }} aria-label="Delete annotation" title="Delete annotation" disabled={Boolean(annotationBusy)}>{annotationBusy === annotation.annotation_id ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}</button></div></div>
               </article>)}</div> : <p className="no-notes">Your questions and observations will collect here, anchored to the original passage.</p>}
-              {active && <p className="annotation-format-hint"><FileText size={12} /> Your notes use a portable JSON sidecar.</p>}
+              {active && <p className="annotation-format-hint"><FileText size={12} /> Your notes use a portable JSON sidecar.</p>}</>}
             </div>}
-            <div className="inspector-footer"><span className="inspector-footer-mark">✳</span> A trail worth following.</div>
+            {!phoneAi.open && <div className="inspector-footer"><span className="inspector-footer-mark">✳</span> A trail worth following.</div>}
           </aside>}
         </div>
       </main>

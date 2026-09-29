@@ -11,6 +11,8 @@ Papertrail embeds [Tokn](https://github.com/tokn-ai/tokn)'s Rust provider compon
 
 Model discovery uses the entered key without saving it. Saving settings stores the key in the native credential store. Switching providers or changing the endpoint clears an unsaved key, and an endpoint never inherits another endpoint's saved key. To remove a saved key, select the removal checkbox and save settings.
 
+On iPhone, Ask AI and saved conversations open full screen in portrait. **Back to paper** restores your previous reading direction; unsent questions, edited note drafts, and running requests remain available when you return. References and saved notes still work in landscape. iPad and Mac retain their AI panel in either orientation.
+
 Papertrail sends the selected passage, nearby text, paper metadata, and your question to the chosen provider. Follow-ups and note generation also send the completed questions and answers in that conversation. Model discovery requests its model list without sending paper text. Saved AI notes retain the source answer, model, endpoint, question, and supplied context in the annotation sidecar.
 
 The app does not require a Tokn gateway or a separate Tokn configuration. Cloud providers work directly from each device. A custom network endpoint must use HTTPS; HTTP is accepted for loopback endpoints. On iPhone, localhost refers to the phone itself.

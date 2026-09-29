@@ -60,6 +60,7 @@ pub fn run() {
       commands::save_annotation_file,
       commands::reader_capabilities,
       commands::set_reader_orientation,
+      commands::set_reader_ai_mode,
     ])
     .run(tauri::generate_context!())
     .expect("Could not start Papertrail");

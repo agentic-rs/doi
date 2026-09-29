@@ -1,10 +1,11 @@
-import { useState } from 'react';
 import { Check, ChevronDown, ChevronRight, LoaderCircle, Save, Sparkles, Square } from 'lucide-react';
 import type { AiConversationView } from '../lib/useAiConversations';
 import './ai-conversation-card.css';
 
 interface AiConversationCardProps {
   view: AiConversationView;
+  follow_up_question: string;
+  on_follow_up_question_change: (value: string) => void;
   on_follow_up: (question: string) => boolean | void;
   on_generate_note: () => void;
   on_stop: () => void;
@@ -15,10 +16,9 @@ interface AiConversationCardProps {
 }
 
 export function AiConversationCard({
-  view, on_follow_up, on_generate_note, on_stop, on_edit_note,
+  view, follow_up_question: question, on_follow_up_question_change, on_follow_up, on_generate_note, on_stop, on_edit_note,
   on_retry_note_persistence, on_save_note, on_toggle_collapsed,
 }: AiConversationCardProps) {
-  const [question, setQuestion] = useState('');
   const { conversation } = view;
   const note = conversation.note_draft;
   const completed = conversation.turns.filter((turn) => turn.phase === 'complete').length;
@@ -66,10 +66,10 @@ export function AiConversationCard({
         if (blocked || !question.trim()) return;
         if (on_follow_up(question) === false) return;
         event.currentTarget.querySelector('textarea')?.blur();
-        setQuestion('');
+        on_follow_up_question_change('');
       }}>
         <label className="sr-only" htmlFor={questionId}>Follow-up question</label>
-        <textarea id={questionId} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a follow-up about this passage…" rows={2} disabled={blocked} />
+        <textarea id={questionId} value={question} onChange={(event) => on_follow_up_question_change(event.target.value)} placeholder="Ask a follow-up about this passage…" rows={2} disabled={blocked} />
         <button type="submit" className="button button-subtle" disabled={blocked || !question.trim()}><Sparkles size={14} /> Ask follow-up</button>
       </form>
       {completed > 0 && <button type="button" className="button button-subtle ai-generate-note" onClick={on_generate_note} disabled={blocked}>

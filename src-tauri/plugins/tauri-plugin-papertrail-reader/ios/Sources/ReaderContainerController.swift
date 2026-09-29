@@ -6,6 +6,7 @@ import UIKit
 final class ReaderContainerController: UIViewController {
   private let content_controller: UIViewController
   private var transitioning_landscape: Bool?
+  private var ai_mode_active = false
 
   private init(content_controller: UIViewController) {
     self.content_controller = content_controller
@@ -57,10 +58,18 @@ final class ReaderContainerController: UIViewController {
   override var childForHomeIndicatorAutoHidden: UIViewController? { content_controller }
   override var childForScreenEdgesDeferringSystemGestures: UIViewController? { content_controller }
   override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
-    content_controller.supportedInterfaceOrientations
+    ai_mode_active ? .portrait : content_controller.supportedInterfaceOrientations
   }
   override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation {
-    content_controller.preferredInterfaceOrientationForPresentation
+    ai_mode_active ? .portrait : content_controller.preferredInterfaceOrientationForPresentation
+  }
+
+  func setAiModeActive(_ active: Bool) {
+    guard ai_mode_active != active else { return }
+    ai_mode_active = active
+    if #available(iOS 16, *) {
+      setNeedsUpdateOfSupportedInterfaceOrientations()
+    }
   }
 
   override func viewWillTransition(to size: CGSize,

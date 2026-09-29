@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, Paper, PdfReaderProps, ReadingLocation, SelectionContext } from '../lib/types';
+import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, Paper, PdfReaderProps, ReaderOrientation, ReadingLocation, SelectionContext } from '../lib/types';
 import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
@@ -11,7 +11,7 @@ vi.mock('../lib/tauri', () => ({
   askAiConversation: vi.fn(), listAiConversations: vi.fn(), generateAiConversationNote: vi.fn(), updateAiConversationNote: vi.fn(), saveAiConversationNote: vi.fn(),
   onAiStream: vi.fn(), cancelAiRequest: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
   resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(), listAiModels: vi.fn(),
-  getReaderCapabilities: vi.fn(), setReaderOrientation: vi.fn(),
+  getReaderCapabilities: vi.fn(), setReaderOrientation: vi.fn(), setReaderAiMode: vi.fn(),
 }));
 
 let lastReader: PdfReaderProps;
@@ -51,6 +51,20 @@ function mockLayout(compact: boolean) {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
   })));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function mockPhone() {
+  mockLayout(true);
+  vi.stubGlobal('innerWidth', 852);
+  vi.stubGlobal('innerHeight', 393);
+  vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind: 'phone' });
 }
 
 let conversations: Map<string, AiConversation>;
@@ -96,7 +110,8 @@ beforeEach(() => {
   readerRenderCount = 0;
   mockLayout(false);
   vi.mocked(backend.nativeAvailable).mockReturnValue(true);
-  vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: false });
+  vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: false, device_kind: 'desktop' });
+  vi.mocked(backend.setReaderAiMode).mockImplementation(async (active) => active ? 'portrait' : 'landscape');
   vi.mocked(backend.listPapers).mockResolvedValue([first, second]);
   vi.mocked(backend.getSettings).mockResolvedValue({ provider_kind: 'openai_compatible', base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
   vi.mocked(backend.onProgress).mockResolvedValue(() => {});
@@ -116,8 +131,9 @@ beforeEach(() => {
   });
   vi.mocked(backend.saveAiConversationNote).mockImplementation(async (id, noteId, content) => saveConversationNote(id, noteId, content));
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await act(async () => {});
   vi.unstubAllGlobals();
 });
 
@@ -198,7 +214,7 @@ describe('assembled paper workspace', () => {
   it('changes native direction without changing PDF rotation and reports a refused request', async () => {
     vi.stubGlobal('innerWidth', 393);
     vi.stubGlobal('innerHeight', 852);
-    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true });
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind: 'phone' });
     vi.mocked(backend.setReaderOrientation).mockResolvedValueOnce('landscape');
     await openFirst();
     const location = lastReader.target_location;
@@ -229,7 +245,7 @@ describe('assembled paper workspace', () => {
     vi.stubGlobal('innerHeight', 1180);
     const orientation = Object.assign(new EventTarget(), { type: 'portrait-primary' });
     vi.stubGlobal('screen', { orientation });
-    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true });
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind: 'tablet' });
     await openFirst();
     const location = lastReader.target_location;
 
@@ -241,6 +257,180 @@ describe('assembled paper workspace', () => {
     orientation.type = 'landscape-primary';
     act(() => orientation.dispatchEvent(new Event('change')));
     expect(screen.getByRole('button', { name: 'Switch viewer to portrait' })).toBeTruthy();
+  });
+
+  it('awaits confirmed phone portrait before opening full-screen AI and retains an unsent question across Back', async () => {
+    mockPhone();
+    const enter = deferred<ReaderOrientation>();
+    const restore = deferred<ReaderOrientation>();
+    vi.mocked(backend.setReaderAiMode).mockReturnValueOnce(enter.promise).mockReturnValueOnce(restore.promise);
+    await openFirst();
+    const reader = screen.getByTestId('reader');
+    const pdfData = lastReader.pdf_data;
+    const location = lastReader.target_location;
+    openSelection();
+    await waitFor(() => expect(backend.setReaderAiMode).toHaveBeenCalledWith(true));
+    expect(screen.queryByRole('dialog', { name: 'Ask AI' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Question about this selection' })).toBeNull();
+    expect(screen.getByText('Changing viewing direction…')).toBeTruthy();
+    expect(reader.closest('.pdf-reader-mount')?.hasAttribute('inert')).toBe(true);
+
+    await act(async () => enter.resolve('portrait'));
+    const dialog = await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect(dialog.classList.contains('phone-ai-screen')).toBe(true);
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(screen.getByTestId('reader')).toBe(reader);
+    expect(lastReader.pdf_data).toBe(pdfData);
+    expect(lastReader.target_location).toBe(location);
+    expect(screen.queryByRole('banner', { name: 'Reading controls' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Export annotations as JSON' })).toBeNull();
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Back to paper' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Question about this selection' }), { target: { value: 'Keep my unfinished question' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back to paper' }));
+    expect(screen.queryByRole('dialog', { name: 'Ask AI' })).toBeNull();
+    expect(screen.getByTestId('reader')).toBe(reader);
+    await waitFor(() => expect(backend.setReaderAiMode).toHaveBeenCalledWith(false));
+    expect(screen.getByText('Changing viewing direction…')).toBeTruthy();
+    await act(async () => restore.resolve('landscape'));
+    expect(screen.queryByText('Changing viewing direction…')).toBeNull();
+    expect(reader.closest('.pdf-reader-mount')?.hasAttribute('inert')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+    await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect((screen.getByRole('textbox', { name: 'Question about this selection' }) as HTMLTextAreaElement).value).toBe('Keep my unfinished question');
+    expect(backend.askAiConversation).not.toHaveBeenCalled();
+  });
+
+  it('continues phone AI in the background and preserves follow-up drafts when reopening a conversation', async () => {
+    mockPhone();
+    const answer = deferred<AiConversationResponse>();
+    vi.mocked(backend.askAiConversation).mockReturnValueOnce(answer.promise);
+    await openFirst();
+    openSelection();
+    await screen.findByRole('dialog', { name: 'Ask AI' });
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain this passage' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledTimes(1));
+    const request = vi.mocked(backend.askAiConversation).mock.calls[0][0];
+    fireEvent.click(screen.getByRole('button', { name: 'Back to paper' }));
+    await waitFor(() => expect(screen.queryByText('Changing viewing direction…')).toBeNull());
+    expect(backend.cancelAiRequest).not.toHaveBeenCalled();
+    await act(async () => answer.resolve(completeConversation(request)));
+    expect(screen.queryByText('An explanation')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    const preview = await screen.findByRole('button', { name: /Explain this passage.*Open conversation/ });
+    expect(screen.queryByRole('textbox', { name: 'Follow-up question' })).toBeNull();
+    fireEvent.click(preview);
+    await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect(screen.getByText('An explanation')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Follow-up question' }), { target: { value: 'What about the limitations?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back to paper' }));
+    await waitFor(() => expect(screen.queryByText('Changing viewing direction…')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+    await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect((screen.getByRole('textbox', { name: 'Follow-up question' }) as HTMLTextAreaElement).value).toBe('What about the limitations?');
+    expect(backend.askAiConversation).toHaveBeenCalledTimes(1);
+    expect(backend.cancelAiRequest).not.toHaveBeenCalled();
+    expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
+  });
+
+  it('keeps phone AI closed when portrait is refused and permits retry with the same passage', async () => {
+    mockPhone();
+    vi.mocked(backend.setReaderAiMode).mockRejectedValueOnce(new Error('Rotation was denied'));
+    await openFirst();
+    openSelection();
+    expect((await screen.findByRole('alert')).textContent).toContain('Rotation was denied');
+    await waitFor(() => expect(screen.queryByText('Changing viewing direction…')).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Ask AI' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Question about this selection' })).toBeNull();
+    expect(backend.askAiConversation).not.toHaveBeenCalled();
+    expect(vi.mocked(backend.setReaderAiMode).mock.calls).toEqual([[true], [false]]);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect(within(dialog).getByText('Selected passage')).toBeTruthy();
+    expect(within(dialog).getByRole('textbox', { name: 'Question about this selection' })).toBeTruthy();
+    expect(vi.mocked(backend.setReaderAiMode).mock.calls).toEqual([[true], [false], [true]]);
+  });
+
+  it('uses the regular AI panel on a narrow tablet without requesting phone portrait mode', async () => {
+    mockLayout(true);
+    vi.stubGlobal('innerWidth', 640);
+    vi.stubGlobal('innerHeight', 900);
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind: 'tablet' });
+    vi.mocked(backend.setReaderOrientation).mockResolvedValue('landscape');
+    await openFirst();
+    openSelection();
+    const panel = screen.getByRole('complementary', { name: 'References and annotations' });
+    expect(panel.classList.contains('phone-ai-screen')).toBe(false);
+    expect(screen.queryByRole('dialog', { name: 'Ask AI' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Question about this selection' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add a note' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Switch viewer to landscape' }));
+    await waitFor(() => expect(backend.setReaderOrientation).toHaveBeenCalledWith('landscape'));
+    expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBe(panel);
+    expect(backend.setReaderAiMode).not.toHaveBeenCalled();
+  });
+
+  it('keeps manual phone notes in the regular panel and opens conversation previews in portrait AI', async () => {
+    mockPhone();
+    completeConversation({ request_id: 'previous-turn', conversation_id: 'previous-conversation', question: 'Earlier question', source: { ...selection, paper_id: first.paper_id, pdf_hash: first.pdf_hash } });
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Select passage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Question about this selection' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Follow-up question' })).toBeNull();
+    expect(screen.queryByText('An explanation')).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note for this selection' }), { target: { value: 'A manual phone note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await screen.findByText('A manual phone note');
+    expect(lastReader.annotations[0].target.page_anchors).toEqual(selection.page_anchors);
+    expect(screen.getByRole('button', { name: 'Export annotations as JSON' })).toBeTruthy();
+    expect(backend.setReaderAiMode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Earlier question.*Open conversation/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect(within(dialog).getByText('An explanation')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Note for this selection' })).toBeNull();
+    expect(screen.queryByText('A manual phone note')).toBeNull();
+    expect(backend.setReaderAiMode).toHaveBeenCalledWith(true);
+    expect(backend.askAiConversation).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Collapse conversation/ }));
+    const collapsedHeading = within(dialog).getByRole('button', { name: /Expand conversation/ });
+    const back = within(dialog).getByRole('button', { name: 'Back to paper' });
+    back.focus();
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(collapsedHeading);
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(document.activeElement).toBe(back);
+  });
+
+  it('withholds AI inputs while native device detection fails and retries before opening phone AI', async () => {
+    mockLayout(true);
+    vi.mocked(backend.getReaderCapabilities).mockRejectedValueOnce(new Error('Device detection unavailable'));
+    completeConversation({ request_id: 'previous-turn', conversation_id: 'previous-conversation', question: 'Earlier question', source: { ...selection, paper_id: first.paper_id, pdf_hash: first.pdf_hash } });
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Select passage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect(screen.getByRole('textbox', { name: 'Note for this selection' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Question about this selection' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Follow-up question' })).toBeNull();
+    expect(screen.queryByRole('article', { name: /AI conversation/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Earlier question.*Open conversation/ })).toBeTruthy();
+    vi.mocked(backend.getReaderCapabilities).mockRejectedValueOnce(new Error('Detection retry failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Detection retry failed');
+    expect(screen.queryByRole('dialog', { name: 'Ask AI' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Question about this selection' })).toBeNull();
+    expect(backend.setReaderAiMode).not.toHaveBeenCalled();
+    expect(backend.askAiConversation).not.toHaveBeenCalled();
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValueOnce({ supports_orientation: true, device_kind: 'phone' });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask AI' }));
+    await screen.findByRole('dialog', { name: 'Ask AI' });
+    expect(backend.getReaderCapabilities).toHaveBeenCalledTimes(3);
+    expect(backend.setReaderAiMode).toHaveBeenCalledExactlyOnceWith(true);
+    expect(screen.getByRole('textbox', { name: 'Question about this selection' })).toBeTruthy();
+    expect(backend.askAiConversation).not.toHaveBeenCalled();
   });
 
   it('keeps mobile reading space available and retains a touch selection across panel changes', async () => {

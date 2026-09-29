@@ -37,6 +37,7 @@ export type ReaderOrientation = 'portrait' | 'landscape';
 
 export interface ReaderCapabilities {
   supports_orientation: boolean;
+  device_kind: 'phone' | 'tablet' | 'desktop' | 'unknown';
 }
 
 export interface Paper {
