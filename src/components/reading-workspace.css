@@ -1,5 +1,5 @@
 .app-shell.reading-mode { --reader-overlay-clearance: 125px; display: block; position: relative; padding: 0; min-height: 0; }
-.reading-mode .workbench { position: absolute; inset: 0; overflow: hidden; }
+.reading-mode .workbench { position: absolute; inset: 0; overflow: clip; }
 .reading-mode .library-sidebar { display: none; }
 .reading-mode.library-is-open .library-sidebar {
   display: flex;

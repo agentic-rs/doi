@@ -39,7 +39,8 @@ svg { flex-shrink: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .mobile-library-toggle, .mobile-library-close { display: none; }
 
-.app-shell { height: 100dvh; min-height: 480px; display: grid; grid-template-columns: 249px minmax(0, 1fr); overflow: hidden; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+/* Only the inner reading and inspector panes scroll, including on focus. */
+.app-shell { height: 100dvh; min-height: 480px; display: grid; grid-template-columns: 249px minmax(0, 1fr); overflow: clip; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
 .library-sidebar { display: flex; flex-direction: column; background: #f0f2e9; border-right: 1px solid #e0e4d8; padding: 30px 16px 22px; min-height: 0; }
 .brand { display: flex; align-items: flex-start; gap: 11px; margin: 0 12px 32px; text-decoration: none; color: #264a42; font: 25px/1.1 Georgia, 'Times New Roman', serif; letter-spacing: -.9px; }
 .brand-mark { width: 34px; height: 35px; display: grid; place-items: center; border: 1px solid #adc1b2; border-radius: 5px 5px 10px 5px; color: #356e5f; background: #e5ece0; transform: rotate(-5deg); margin-top: 1px; }
@@ -108,7 +109,7 @@ svg { flex-shrink: 0; }
 .notice-success { color: #4c7961; background: #edf5ec; border-color: #dbe9d9; }
 .reading-grid { flex: 1; min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .reading-grid.with-inspector { grid-template-columns: minmax(0, 1fr) 326px; }
-.reading-surface { min-height: 0; min-width: 0; overflow: hidden; background: #f9faf4; display: flex; flex-direction: column; }
+.reading-surface { min-height: 0; min-width: 0; overflow: clip; background: #f9faf4; display: flex; flex-direction: column; }
 .paper-heading { padding: 22px 28px 20px; background: #f9faf4; border-bottom: 1px solid #e9ece1; flex-shrink: 0; }
 .paper-eyebrow { font-size: 9px; letter-spacing: .3px; color: #7c9276; display: flex; align-items: center; gap: 0; margin-bottom: 7px; }
 .paper-eyebrow > span:last-child { margin-left: auto; color: #99a590; }

@@ -29,21 +29,25 @@ private struct OrientationRequest {
 final class ReaderPlugin: Plugin {
   private var pending: OrientationRequest?
   private var visibility_observer: NSObjectProtocol?
+  private weak var reader_webview: WKWebView?
+  private var keyboard_constraints: [NSLayoutConstraint] = []
 
   override func load(webview: WKWebView) {
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { return }
+      self.reader_webview = webview
       // The document uses viewport-fit=cover and CSS safe-area insets. Native
       // scroll insets would subtract the same space again and shift on focus.
       webview.scrollView.contentInsetAdjustmentBehavior = .never
+      webview.scrollView.bounces = false
       webview.scrollView.setContentOffset(.zero, animated: false)
       if self.visibility_observer == nil {
         // A webview can be created before its window becomes visible.
         self.visibility_observer = NotificationCenter.default.addObserver(
           forName: UIWindow.didBecomeVisibleNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.installStatusBarContainer() }
+        ) { [weak self] _ in self?.installReaderLayout() }
       }
-      self.installStatusBarContainer()
+      self.installReaderLayout()
     }
   }
 
@@ -53,10 +57,32 @@ final class ReaderPlugin: Plugin {
     }
   }
 
-  private func installStatusBarContainer() {
+  private func installReaderLayout() {
     if let controller = manager.viewController {
       ReaderContainerController.install(around: controller)
     }
+    guard #available(iOS 17, *),
+      let webview = reader_webview,
+      let host = webview.superview else { return }
+
+    // Tao keeps its own view equal to the full window on every layout pass.
+    // Constrain the webview inside that host, leaving Tao's frame ownership
+    // intact. This also keeps CSS scrolling and text selection enabled.
+    NSLayoutConstraint.deactivate(keyboard_constraints)
+    host.keyboardLayoutGuide.usesBottomSafeArea = false
+    webview.autoresizingMask = []
+    webview.translatesAutoresizingMaskIntoConstraints = false
+    keyboard_constraints = [
+      webview.topAnchor.constraint(equalTo: host.topAnchor),
+      webview.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+      webview.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+      webview.bottomAnchor.constraint(equalTo: host.keyboardLayoutGuide.topAnchor)
+    ]
+    NSLayoutConstraint.activate(keyboard_constraints)
+    // With no keyboard, usesBottomSafeArea=false preserves the full viewport;
+    // CSS applies safe areas once. A docked keyboard shrinks the layout viewport,
+    // while a floating iPad keyboard retains its normal overlay behavior.
+    host.setNeedsLayout()
   }
 
   @objc func setOrientation(_ invoke: Invoke) throws {
@@ -82,7 +108,7 @@ final class ReaderPlugin: Plugin {
         invoke.reject("Close the native dialog before changing the reading direction.")
         return
       }
-      self.installStatusBarContainer()
+      self.installReaderLayout()
       let orientation_controller = window.rootViewController ?? controller
       guard !orientation_controller.supportedInterfaceOrientations.intersection(options.orientation.mask).isEmpty else {
         invoke.reject("This window does not support the requested reading direction.")

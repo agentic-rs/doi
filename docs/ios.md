@@ -20,6 +20,8 @@ The minimum OS is set in `src-tauri/tauri.ios.conf.json`. The reader uses PDF.js
 
 A scoped PDF text-stream adapter uses the stream reader API supported by Safari 18 instead of the async iteration required by PDF.js's ordinary text extraction path. It supplies the selectable text layer and bibliography parser without modifying browser stream APIs globally.
 
+The native reader constrains the web view above the docked keyboard while leaving Tauri's host controller full-screen. This prevents input focus from panning the entire workspace and leaving the toolbar off-screen after dismissal. CSS applies safe-area padding once; PDF and Notes panes keep their own scrolling. Revealing a new AI response scrolls only Notes, and the direction button follows screen orientation rather than the keyboard-reduced viewport's aspect ratio.
+
 ## Simulator
 
 Build the Apple Silicon simulator package:

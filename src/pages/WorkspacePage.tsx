@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import {
@@ -58,6 +58,14 @@ interface ReferenceResolution {
 
 const compactLayoutQuery = '(max-width: 760px), (pointer: coarse) and (max-height: 500px)';
 
+function getReaderDirection(): ReaderOrientation {
+  // The keyboard changes the web viewport's shape, not the device direction.
+  const type = window.screen.orientation?.type;
+  if (type?.startsWith('portrait')) return 'portrait';
+  if (type?.startsWith('landscape')) return 'landscape';
+  return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+}
+
 function initialLocation(paper: Paper): ReadingLocation {
   return paper.last_location ?? {
     paper_id: paper.paper_id,
@@ -104,7 +112,7 @@ export function WorkspacePage() {
   const [paperInfoOpen, setPaperInfoOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const [readerCapabilities, setReaderCapabilities] = useState<ReaderCapabilities>({ supports_orientation: false });
-  const [readerOrientation, setReaderOrientationState] = useState<ReaderOrientation>(() => window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+  const [readerOrientation, setReaderOrientationState] = useState<ReaderOrientation>(getReaderDirection);
   const [orientationPending, setOrientationPending] = useState(false);
   const [viewportKey, setViewportKey] = useState(0);
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -149,6 +157,7 @@ export function WorkspacePage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const arxivInputRef = useRef<HTMLInputElement>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
+  const notesPanelRef = useRef<HTMLDivElement>(null);
   const annotationChangesRef = useRef(new Map<string, { paper_id: string; pdf_hash: string; annotation: Annotation | null }>());
   const libraryButtonRef = useRef<HTMLButtonElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
@@ -175,12 +184,20 @@ export function WorkspacePage() {
   }, [isNative]);
 
   useEffect(() => {
+    function handleDirection() {
+      setReaderOrientationState(getReaderDirection());
+    }
     function handleResize() {
-      setReaderOrientationState(window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+      handleDirection();
       setViewportKey((value) => value + 1);
     }
+    const orientation = window.screen.orientation;
+    orientation?.addEventListener('change', handleDirection);
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      orientation?.removeEventListener('change', handleDirection);
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   const focusArxivInput = useCallback(() => {
@@ -196,7 +213,7 @@ export function WorkspacePage() {
     arxivInputRef.current?.focus();
   }, [libraryOpen, paperInfoOpen, settingsOpen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape' || event.defaultPrevented || !active || paperInfoOpen || settingsOpen || libraryOpen) return;
       setControlsVisible(false);
@@ -500,7 +517,9 @@ export function WorkspacePage() {
     else void followUrl(target.url);
   }
 
-  useEffect(() => {
+  // Replace state-sensitive document shortcuts during the DOM commit. Waiting
+  // for passive effects leaves a newly visible modal using the old handler.
+  useLayoutEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -522,11 +541,20 @@ export function WorkspacePage() {
     if (composerKind === 'ai') {
       if (!question.trim()) return;
       const requestId = aiDrafts.ask(paper, capturedSelection, question);
+      const notesPanel = notesPanelRef.current;
       setQuestion('');
       askInputRef.current?.blur();
       requestAnimationFrame(() => {
-        if (activeRef.current?.paper.paper_id !== paper.paper_id) return;
-        document.getElementById(`ai-response-${requestId}`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+        if (activeRef.current?.paper.paper_id !== paper.paper_id
+          || !notesPanel?.isConnected || notesPanelRef.current !== notesPanel) return;
+        const draft = document.getElementById(`ai-response-${requestId}`);
+        if (!draft || !notesPanel.contains(draft)) return;
+        // scrollIntoView also pans outer scroll containers, including the iOS
+        // viewport while its keyboard closes. Only the Notes panel should move.
+        const top = notesPanel.scrollTop + draft.getBoundingClientRect().top
+          - notesPanel.getBoundingClientRect().top - notesPanel.clientTop;
+        notesPanel.scrollTo?.({ top: Math.max(0, top),
+          behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       });
       return;
     }
@@ -786,7 +814,7 @@ export function WorkspacePage() {
                 </article>;
               })}</div></> : <div className="inspector-empty"><span className="empty-symbol"><Link2 size={24} strokeWidth={1.4} /></span><h3>{active ? 'Looking for connections' : 'The next idea is a citation away.'}</h3><p>{active ? 'Embedded paper links and detected bibliography entries appear here as the PDF loads. You can also follow links directly on a page.' : 'Open a paper to explore its references. Follow a link, then use Back to pick up where you left off.'}</p><div className="navigation-demo" aria-hidden="true"><span>Paper</span><span className="demo-arrow">↔</span><span>Reference</span></div></div>}
               {active && <details className="paper-about"><summary>About this paper <ChevronRight size={14} /></summary><p>{active.paper.abstract || 'No abstract available.'}</p><button type="button" className="text-button" onClick={() => { void openExternal(`https://arxiv.org/abs/${active.paper.arxiv_id}v${active.paper.arxiv_version}`).catch((cause) => setNotice({ tone: 'error', message: String(cause) })); }}>View on arXiv <ArrowUpRight size={13} /></button></details>}
-            </div> : <div id="notes-panel" role="tabpanel" aria-labelledby="notes-tab" className="inspector-content notes-content">
+            </div> : <div id="notes-panel" ref={notesPanelRef} role="tabpanel" aria-labelledby="notes-tab" className="inspector-content notes-content">
               {selection && active ? <form className="selection-composer" onSubmit={(event) => { void submitSelection(event); }}>
                 <div className="selection-heading"><span><span className="selection-dot" /> SELECTED PASSAGE</span><button type="button" className="icon-button" onClick={clearSelection} aria-label="Dismiss selected passage"><X size={14} /></button></div>
                 <blockquote>{selection.selected_text}</blockquote><span className="selection-page">Page {selectedPages}</span>

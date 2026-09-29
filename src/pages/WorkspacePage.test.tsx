@@ -124,6 +124,29 @@ describe('assembled paper workspace', () => {
     expect(lastReader.controls_visible).toBe(false);
   });
 
+  it('keeps the library shortcut blocked as soon as an asynchronously loaded paper sheet appears', async () => {
+    const { container } = render(<WorkspacePage />);
+    const shortcut = vi.fn(() => document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'k', ctrlKey: true, bubbles: true,
+    })));
+    // Mutation observers run after the DOM commit, without waiting for passive
+    // effects. A keyboard event then must already respect the visible modal.
+    const observer = new MutationObserver(() => {
+      if (!container.querySelector('.paper-info-sheet')) return;
+      observer.disconnect();
+      shortcut();
+    });
+    observer.observe(container, { childList: true, subtree: true });
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: /^First paper/ }));
+      await screen.findByRole('dialog', { name: 'First paper' });
+      await waitFor(() => expect(shortcut).toHaveBeenCalledOnce());
+      expect(screen.queryByRole('dialog', { name: 'Paper library' })).toBeNull();
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it('changes native direction without changing PDF rotation and reports a refused request', async () => {
     vi.stubGlobal('innerWidth', 393);
     vi.stubGlobal('innerHeight', 852);
@@ -151,6 +174,25 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
     expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Close references and notes panel' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps the device direction when a keyboard makes a portrait viewport wider than it is tall', async () => {
+    vi.stubGlobal('innerWidth', 820);
+    vi.stubGlobal('innerHeight', 1180);
+    const orientation = Object.assign(new EventTarget(), { type: 'portrait-primary' });
+    vi.stubGlobal('screen', { orientation });
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true });
+    await openFirst();
+    const location = lastReader.target_location;
+
+    vi.stubGlobal('innerHeight', 500);
+    fireEvent(window, new Event('resize'));
+    expect(screen.getByRole('button', { name: 'Switch viewer to landscape' })).toBeTruthy();
+    expect(lastReader.target_location).toBe(location);
+
+    orientation.type = 'landscape-primary';
+    act(() => orientation.dispatchEvent(new Event('change')));
+    expect(screen.getByRole('button', { name: 'Switch viewer to portrait' })).toBeTruthy();
   });
 
   it('keeps mobile reading space available and retains a touch selection across panel changes', async () => {
@@ -412,6 +454,67 @@ describe('assembled paper workspace', () => {
     expect(screen.getByText('Streaming answer')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(backend.cancelAiRequest).toHaveBeenCalledWith(requestId);
+  });
+
+  it.each([false, true])('reveals an AI response inside Notes without moving the reader (reduced motion: %s)', async (reducedMotion) => {
+    vi.mocked(backend.askSelection).mockReturnValue(new Promise(() => {}));
+    await openFirst();
+    openSelection();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => frames.push(callback)));
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: reducedMotion } as MediaQueryList);
+    const windowScroll = vi.fn();
+    vi.stubGlobal('scrollTo', windowScroll);
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+
+    const panel = screen.getByRole('tabpanel', { name: /Notes/ });
+    const draft = screen.getByRole('article', { name: 'AI response: Explain' });
+    const shell = document.querySelector<HTMLElement>('.app-shell')!;
+    const workbench = document.querySelector<HTMLElement>('.workbench')!;
+    const reader = screen.getByTestId('reader');
+    for (const element of [panel, shell, workbench, reader]) element.scrollTo = vi.fn();
+    draft.scrollIntoView = vi.fn();
+    panel.scrollTop = 120;
+    Object.defineProperty(panel, 'clientTop', { value: 1 });
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 80, 400, 280));
+    vi.spyOn(draft, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 600, 400, 240));
+    act(() => frames[0](0));
+
+    expect(panel.scrollTo).toHaveBeenCalledWith({ top: 639, behavior: reducedMotion ? 'auto' : 'smooth' });
+    expect(draft.scrollIntoView).not.toHaveBeenCalled();
+    expect(windowScroll).not.toHaveBeenCalled();
+    for (const element of [shell, workbench, reader]) {
+      expect(element.scrollTo).not.toHaveBeenCalled();
+      expect(element.scrollTop).toBe(0);
+    }
+  });
+
+  it.each(['reopened panel', 'discarded response', 'different paper'])('does not apply a stale AI reveal to a %s', async (destination) => {
+    vi.mocked(backend.askSelection).mockReturnValue(new Promise(() => {}));
+    await openFirst();
+    openSelection();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => frames.push(callback)));
+    const oldPanel = screen.getByRole('tabpanel', { name: /Notes/ });
+    oldPanel.scrollTo = vi.fn();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    if (destination === 'reopened panel') {
+      fireEvent.click(screen.getByRole('button', { name: 'Close references and notes panel' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    } else if (destination === 'discarded response') {
+      fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved response' }));
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+      await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    }
+    const currentPanel = screen.queryByRole('tabpanel', { name: /Notes/ });
+    if (currentPanel && currentPanel !== oldPanel) currentPanel.scrollTo = vi.fn();
+    act(() => frames[0](0));
+    expect(oldPanel.scrollTo).not.toHaveBeenCalled();
+    if (currentPanel) expect(currentPanel.scrollTo).not.toHaveBeenCalled();
   });
 
   it('edits a legacy AI annotation as a note while preserving its original answer and provenance', async () => {
