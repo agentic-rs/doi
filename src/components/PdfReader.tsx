@@ -4,11 +4,12 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan, E
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import worker_url from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import type { PageAnchor, PdfReaderProps, PdfZoomMode, ReadingLocation, ReaderMode, ReadingBlock, ReferenceItem } from '../lib/types';
+import type { PageAnchor, PdfReaderProps, PdfZoomMode, ReadingLocation, ReaderMode, ReaderTarget, ReadingBlock, ReferenceItem } from '../lib/types';
 import { anchorViewportPosition, clamp, safeReferenceUrl } from '../lib/pdf-geometry';
 import { extractReferences, referenceAtDestination, referencesForText } from '../lib/pdf-references';
 import { extractCitationLinks, referenceForUrl } from '../lib/pdf-citation-links';
 import type { CitationLink } from '../lib/pdf-citation-links';
+import { classifyPaperUrl } from '../lib/paper-links';
 import { selectionContext } from '../lib/pdf-selection';
 import { pdfContentLines } from '../lib/pdf-text';
 import { readPdfTextContent } from '../lib/pdf-compatibility';
@@ -123,6 +124,7 @@ export function PdfReader(props: PdfReaderProps) {
   const zoom_mode = useRef<PdfZoomMode>('custom');
   const fit_pending = useRef(false);
   const applied_navigation = useRef<{ paper_id: string; navigation_key: number } | null>(null);
+  const link_navigation = useRef(0);
   const viewport_size = useRef<{ width: number; height: number } | null>(null);
   const gesture = useRef<ReaderGesture | null>(null);
   const tap_timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -133,6 +135,13 @@ export function PdfReader(props: PdfReaderProps) {
   const rotation_ref = useRef(rotation);
   zoom_ref.current = zoom;
   rotation_ref.current = rotation;
+
+  useLayoutEffect(() => {
+    // Resolving named destinations/page references can outlive a history jump,
+    // mode switch, or document replacement.
+    link_navigation.current++;
+    return () => { link_navigation.current++; };
+  }, [navigation_key, reader_mode, paper.paper_id, pdf_data]);
 
   const register_page = useMemo(() => (region_id: string, page_data: SelectionPage | null) => {
     if (page_data) selection_pages.current.set(region_id, page_data);
@@ -147,6 +156,13 @@ export function PdfReader(props: PdfReaderProps) {
   const immersive = Boolean(props.on_toggle_controls);
   const controls_visible = props.controls_visible ?? true;
   const reading_active = (props.reading_active ?? true) && !enlarged_figure;
+
+  useLayoutEffect(() => {
+    // A dialog or inspector takes precedence over a pending destination. Only
+    // invalidate on deactivation: following a figure link closes its dialog
+    // and reactivates the reader while that new destination is resolving.
+    if (!reading_active) link_navigation.current++;
+  }, [reading_active]);
 
   function cancelPendingTap() {
     if (tap_timer.current) clearTimeout(tap_timer.current);
@@ -585,6 +601,7 @@ export function PdfReader(props: PdfReaderProps) {
   }
 
   function changeView(requested_zoom: number, next_rotation = rotation, next_mode: PdfZoomMode = 'custom') {
+    link_navigation.current++;
     clearZoomPreview();
     reportLocation();
     const source = pending_location.current ?? current_location.current;
@@ -611,25 +628,33 @@ export function PdfReader(props: PdfReaderProps) {
     setViewRevision((value) => value + 1);
   }
 
+  function navigate(target: ReaderTarget) {
+    link_navigation.current++;
+    callbacks.current.on_navigate(target);
+  }
+
   function navigatePage(page_number: number) {
     if (!loaded) return;
     reportLocation();
-    callbacks.current.on_navigate({
-      kind: 'internal',
+    navigate({
+      kind: 'pdf',
       location: { paper_id: paper.paper_id, page_number: clamp(page_number, 1, loaded.pages.length), page_position: [0, 0], zoom, zoom_mode: zoom_mode.current, rotation, reader_mode, reading_block_id: null },
     });
   }
 
   async function followLink(link: PdfLink, source_page: number) {
+    const request_id = ++link_navigation.current;
+    const isCurrent = () => request_id === link_navigation.current && loaded_ref.current?.document === loaded?.document;
     reportLocation();
     if (link.url) {
       const url = link.url;
       const reference = referenceForUrl(references, url);
       if (reference && link.rect.length) {
-        callbacks.current.on_navigate({ kind: 'reference', reference });
+        navigate({ kind: 'reference', reference });
         return;
       }
-      callbacks.current.on_navigate({ kind: 'external', url: link.url });
+      const target = classifyPaperUrl(url);
+      if (target) navigate(target);
       return;
     }
     if (!loaded) return;
@@ -640,15 +665,17 @@ export function PdfReader(props: PdfReaderProps) {
     }
     try {
       const destination = typeof link.destination === 'string' ? await loaded.document.getDestination(link.destination) : link.destination;
-      if (loaded_ref.current?.document !== loaded.document) return;
+      if (!isCurrent()) return;
       if (!destination) throw new Error('The citation destination is missing.');
       const ref = destination[0];
       const index = typeof ref === 'number' ? ref : await loaded.document.getPageIndex(ref as { num: number; gen: number });
-      if (loaded_ref.current?.document !== loaded.document) return;
+      if (!isCurrent()) return;
       const page = loaded.pages[index];
       if (!page) throw new Error('The citation points to an unavailable page.');
       const kind = (destination[1] as { name?: string })?.name;
-      const explicit_zoom = kind === 'XYZ' && typeof destination[4] === 'number' && destination[4] > 0 ? destination[4] : null;
+      // Reading zoom is relative to each crop; a PDF's absolute XYZ scale
+      // must not change it when following a section or figure link.
+      const explicit_zoom = !reading && kind === 'XYZ' && typeof destination[4] === 'number' && destination[4] > 0 ? destination[4] : null;
       const next_mode = explicit_zoom !== null ? 'custom' : zoom_mode.current;
       const next_zoom = explicit_zoom !== null ? clamp(explicit_zoom, minimum_zoom, maximum_zoom)
         : next_mode === 'fit_width' ? fittedWidth(index + 1, rotation) ?? zoom : zoom;
@@ -665,16 +692,19 @@ export function PdfReader(props: PdfReaderProps) {
       }
       const reference = link.rect.length ? referenceAtDestination(references, index + 1, [x, y]) : null;
       if (reference) {
-        callbacks.current.on_navigate({ kind: 'reference', reference });
+        navigate({ kind: 'reference', reference });
         return;
       }
       const [viewport_x, viewport_y] = viewport.convertToViewportPoint(x, y);
-      callbacks.current.on_navigate({
-        kind: 'internal',
-        location: { paper_id: paper.paper_id, page_number: index + 1, page_position: [clamp(viewport_x / viewport.width, 0, 1), clamp(viewport_y / viewport.height, 0, 1)], zoom: next_zoom, zoom_mode: next_mode, rotation, reader_mode: 'pdf', reading_block_id: null },
-      });
+      const location: ReadingLocation = {
+        paper_id: paper.paper_id, page_number: index + 1,
+        page_position: [clamp(viewport_x / viewport.width, 0, 1), clamp(viewport_y / viewport.height, 0, 1)],
+        zoom: next_zoom, zoom_mode: next_mode, rotation, reader_mode, reading_block_id: null,
+      };
+      if (reading && layout) location.reading_block_id = findReadingBlock(layout, location, loaded.pages)?.block_id ?? null;
+      navigate({ kind: 'pdf', location });
     } catch (failure) {
-      if (loaded_ref.current?.document === loaded.document) callbacks.current.on_error(failure instanceof Error ? failure.message : String(failure));
+      if (isCurrent()) callbacks.current.on_error(failure instanceof Error ? failure.message : String(failure));
     }
   }
 
@@ -710,7 +740,7 @@ export function PdfReader(props: PdfReaderProps) {
     const page = block && loaded?.pages[block.page_number - 1];
     const page_position = block && page
       ? locationInRegion([0, 0], regionGeometry(page, 1, rotation, block.source_rect)) : source.page_position;
-    callbacks.current.on_navigate({ kind: 'internal', location: {
+    navigate({ kind: 'pdf', location: {
       ...source, page_number: block?.page_number ?? source.page_number, page_position,
       reader_mode: 'pdf', reading_block_id: null, zoom_mode: 'fit_width', zoom: 1,
     } });
@@ -833,7 +863,7 @@ export function PdfReader(props: PdfReaderProps) {
             </div>
             <ReferenceStrip references={block_references.get(block.block_id) ?? []} on_select={(reference) => {
               reportLocation();
-              callbacks.current.on_navigate({ kind: 'reference', reference });
+              navigate({ kind: 'reference', reference });
             }} />
           </article>) :
           loaded.pages.map((page) => <PdfPage

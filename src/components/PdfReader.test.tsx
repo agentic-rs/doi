@@ -22,7 +22,10 @@ interface CanvasCopy {
 
 const pdf_fixture = vi.hoisted(() => ({
   page_sizes: Array.from({ length: 4 }, () => ({ width: 600, height: 800 })),
-  annotations: new Map<number, Array<{ subtype: string; id: string; rect: number[]; dest: unknown[] }>>(),
+  annotations: new Map<number, Array<{ subtype: string; id: string; rect: number[]; dest?: unknown[] | string; url?: string; action?: string }>>(),
+  destinations: new Map<string, unknown[] | null | Promise<unknown[] | null>>(),
+  page_indices: new Map<number, number | Promise<number>>(),
+  outline: [] as Array<{ title: string; dest?: unknown[] | string; url?: string; items: [] }>,
   defer_renders: false,
   defer_text: false,
   fail_text_page: null as number | null,
@@ -114,7 +117,9 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
       return {
         promise: Promise.resolve({
           numPages: pages.length, getPage: async (number: number) => pages[number - 1],
-          getOutline: async () => [], getPageIndex: async (ref: { num: number }) => ref.num - 1,
+          getOutline: async () => pdf_fixture.outline,
+          getDestination: async (name: string) => pdf_fixture.destinations.get(name) ?? null,
+          getPageIndex: async (ref: { num: number }) => pdf_fixture.page_indices.get(ref.num) ?? ref.num - 1,
         }),
         destroy: async () => {},
       };
@@ -185,6 +190,9 @@ beforeEach(() => {
   viewport_height = 760;
   pdf_fixture.page_sizes = Array.from({ length: 4 }, () => ({ width: 600, height: 800 }));
   pdf_fixture.annotations.clear();
+  pdf_fixture.destinations.clear();
+  pdf_fixture.page_indices.clear();
+  pdf_fixture.outline = [];
   pdf_fixture.defer_renders = false;
   pdf_fixture.defer_text = false;
   pdf_fixture.fail_text_page = null;
@@ -390,6 +398,53 @@ function croppedPdfPointAt(block_id: string, client_x: number, client_y: number)
 }
 
 describe('optional Reading view', () => {
+  it.each([0, 90, 180, 270].flatMap((rotation) => (['fit_width', 'custom'] as const).map((zoom_mode) => ({ rotation, zoom_mode }))))(
+    'keeps Reading mode and $zoom_mode zoom for a rotated $rotation° PDF destination', async ({ rotation, zoom_mode }) => {
+      pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'body', rect: [100, 600, 125, 612], dest: [0, { name: 'XYZ' }, 400, 500, 2.8] }]);
+      const props = readingProps('p1-intro');
+      props.target_location = { ...props.target_location!, rotation, zoom_mode, zoom: zoom_mode === 'custom' ? 1.25 : 1 };
+      const view = render(<PdfReader {...props} />);
+      await waitFor(() => expect(latestLocation(props).reader_mode).toBe('reading'));
+      const source = latestLocation(props);
+      fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+      const destination = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
+      if (destination.kind !== 'pdf') throw new Error('Expected a PDF destination');
+      const positions: Record<number, [number, number]> = {
+        0: [400 / 600, 300 / 800], 90: [500 / 800, 400 / 600],
+        180: [200 / 600, 500 / 800], 270: [300 / 800, 200 / 600],
+      };
+      expect(destination.location).toMatchObject({ reader_mode: 'reading', reading_block_id: 'p1-body', page_number: 1, zoom: source.zoom, zoom_mode, rotation });
+      expect(destination.location.page_position).toEqual(positions[rotation]);
+      view.rerender(<PdfReader {...props} target_location={destination.location} navigation_key={2} />);
+      await waitFor(() => expect(latestLocation(props)).toMatchObject({ reader_mode: 'reading', reading_block_id: 'p1-body', rotation, zoom: source.zoom, zoom_mode }));
+      expect(latestLocation(props).page_position[1]).toBeCloseTo(positions[rotation][1]);
+      view.rerender(<PdfReader {...props} target_location={source} navigation_key={3} />);
+      await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-intro'));
+      expect(props.on_error).not.toHaveBeenCalled();
+    },
+  );
+
+  it('maps a named outline destination in removed whitespace to the nearest Reading block', async () => {
+    pdf_fixture.outline = [{ title: 'Figure section', dest: 'figure-gap', items: [] }];
+    pdf_fixture.destinations.set('figure-gap', [1, { name: 'XYZ' }, 500, 360, 2]);
+    const props = readingProps('p1-intro');
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).reader_mode).toBe('reading'));
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Jump to a document section' }), { target: { value: '0' } });
+    await waitFor(() => expect(props.on_navigate).toHaveBeenCalledWith({ kind: 'pdf', location: expect.objectContaining({
+      reader_mode: 'reading', reading_block_id: 'p2-figure', page_number: 2, zoom: 1, zoom_mode: 'fit_width',
+    }) }));
+  });
+
+  it('keeps Reading mode when a PDF action advances a page', async () => {
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'next-page', rect: [100, 600, 125, 612], action: 'NextPage' }]);
+    const props = readingProps('p1-intro');
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).reader_mode).toBe('reading'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+    expect(props.on_navigate).toHaveBeenCalledWith({ kind: 'pdf', location: expect.objectContaining({ reader_mode: 'reading', page_number: 2, zoom: 1, zoom_mode: 'fit_width' }) });
+  });
+
   it('restores a specific crop when a moved figure separates two blocks from the same page', async () => {
     const props = readingProps();
     render(<PdfReader {...props} />);
@@ -415,7 +470,7 @@ describe('optional Reading view', () => {
     const reading_location = latestLocation(props);
     fireEvent.click(screen.getByRole('button', { name: 'View Figure 1 in PDF on page 2' }));
     const navigation = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
-    if (navigation.kind !== 'internal') throw new Error('Expected an original-PDF destination');
+    if (navigation.kind !== 'pdf') throw new Error('Expected an original-PDF destination');
     expect(navigation.location).toMatchObject({ reader_mode: 'pdf', reading_block_id: null, page_number: 2, page_position: [0.1, 0.125], zoom_mode: 'fit_width' });
     view.rerender(<PdfReader {...props} target_location={navigation.location} navigation_key={2} />);
     await waitFor(() => expect(latestLocation(props)).toMatchObject({ reader_mode: 'pdf', page_number: 2 }));
@@ -582,8 +637,8 @@ describe('immersive PDF view', () => {
     await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     const next = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
-    expect(next.kind).toBe('internal');
-    if (next.kind !== 'internal') throw new Error('Expected a page destination');
+    expect(next.kind).toBe('pdf');
+    if (next.kind !== 'pdf') throw new Error('Expected a page destination');
     expect(next.location).toMatchObject({ page_number: 2, zoom_mode: 'fit_width' });
     view.rerender(<PdfReader {...props} target_location={next.location} navigation_key={2} />);
     await waitFor(() => expect(latestLocation(props).page_number).toBe(2));
@@ -641,10 +696,10 @@ describe('immersive PDF view', () => {
     const props = readerProps();
     const view = render(<PdfReader {...props} />);
     await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Follow citation to its destination' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
     await waitFor(() => expect(props.on_navigate).toHaveBeenCalled());
     const destination = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
-    if (destination.kind !== 'internal') throw new Error('Expected an internal citation');
+    if (destination.kind !== 'pdf') throw new Error('Expected an internal citation');
     expect(destination.location).toMatchObject({ page_number: 2, zoom: 1.2, zoom_mode: 'custom' });
     view.rerender(<PdfReader {...props} target_location={destination.location} navigation_key={2} />);
     await waitFor(() => expect(latestLocation(props)).toMatchObject({ page_number: 2, zoom: 1.2, zoom_mode: 'custom' }));
@@ -661,7 +716,7 @@ describe('immersive PDF view', () => {
     await waitFor(() => expect(latestLocation(props).zoom_mode).toBe('fit_width'));
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     const destination = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
-    if (destination.kind !== 'internal') throw new Error('Expected a page destination');
+    if (destination.kind !== 'pdf') throw new Error('Expected a page destination');
     view.rerender(<PdfReader {...props} target_location={destination.location} navigation_key={2} />);
     await waitFor(() => expect(latestLocation(props).zoom).toBeCloseTo(336 / 1_600));
     expect(latestLocation(props).zoom_mode).toBe('fit_width');
@@ -1243,6 +1298,118 @@ describe('PDF zoom gestures and rendering', () => {
 });
 
 
+describe('PDF link targets', () => {
+  it.each([
+    { url: 'https://arxiv.org/pdf/1706.03762v7.pdf', kind: 'app', arxiv_id: '1706.03762v7' },
+    { url: 'https://example.com/paper', kind: 'external' },
+  ])('routes $kind URL links through the shared classifier', async ({ url, kind, arxiv_id }) => {
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'url', rect: [100, 500, 125, 512], url }]);
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    const label = kind === 'app' ? 'Open paper in Papertrail' : 'Open in browser';
+    fireEvent.click(await screen.findByRole('button', { name: `${label}: ${url}` }));
+    expect(props.on_navigate).toHaveBeenCalledWith(kind === 'app' ? { kind, url, arxiv_id } : { kind, url });
+  });
+
+  it.each(['destination', 'page index'])('discards a delayed %s after a later link is followed', async (stage) => {
+    let complete!: (value: unknown[] | number) => void;
+    if (stage === 'destination') {
+      pdf_fixture.destinations.set('slow', new Promise<unknown[]>((resolve) => { complete = (value) => resolve(value as unknown[]); }));
+    } else {
+      pdf_fixture.page_indices.set(2, new Promise<number>((resolve) => { complete = (value) => resolve(value as number); }));
+    }
+    pdf_fixture.annotations.set(1, [
+      { subtype: 'Link', id: 'slow', rect: [100, 500, 125, 512], dest: stage === 'destination' ? 'slow' : [{ num: 2, gen: 0 }, { name: 'Fit' }] },
+      { subtype: 'Link', id: 'latest', rect: [150, 500, 175, 512], dest: [2, { name: 'Fit' }] },
+    ]);
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    const links = await screen.findAllByRole('button', { name: 'Go to destination within this paper' });
+    fireEvent.click(links[0]);
+    fireEvent.click(links[1]);
+    expect(props.on_navigate).toHaveBeenCalledWith({ kind: 'pdf', location: expect.objectContaining({ page_number: 3 }) });
+    await act(async () => { complete(stage === 'destination' ? [1, { name: 'Fit' }] : 1); });
+    expect(props.on_navigate).toHaveBeenCalledTimes(1);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it.each(['history', 'mode', 'paper'])('discards a named destination after a %s change', async (change) => {
+    readingProps();
+    let complete!: (value: unknown[]) => void;
+    pdf_fixture.destinations.set('slow', new Promise<unknown[]>((resolve) => { complete = resolve; }));
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'slow', rect: [100, 600, 125, 612], dest: 'slow' }]);
+    const props = readerProps();
+    const view = render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_location_change).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+    const target = { ...latestLocation(props), ...(change === 'mode' ? { reader_mode: 'reading' as const } : { page_number: 3 }) };
+    if (change === 'paper') {
+      view.rerender(<PdfReader {...props} paper={{ ...props.paper, paper_id: 'new-paper' }} target_location={null} pdf_data={new Uint8Array([2])} navigation_key={2} />);
+      await waitFor(() => expect(latestLocation(props).paper_id).toBe('new-paper'));
+    } else {
+      view.rerender(<PdfReader {...props} target_location={target} navigation_key={2} />);
+      await waitFor(() => expect(latestLocation(props)).toMatchObject(change === 'mode' ? { reader_mode: 'reading' } : { page_number: 3 }));
+    }
+    await act(async () => { complete([1, { name: 'Fit' }]); });
+    expect(props.on_navigate).not.toHaveBeenCalled();
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('ignores a rejected destination after a page control has navigated', async () => {
+    let reject!: (error: Error) => void;
+    pdf_fixture.destinations.set('slow', new Promise<unknown[]>((_resolve, fail) => { reject = fail; }));
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'slow', rect: [100, 600, 125, 612], dest: 'slow' }]);
+    const props = readerProps();
+    render(<PdfReader {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await act(async () => { reject(new Error('Delayed invalid destination')); });
+    expect(props.on_navigate).toHaveBeenCalledTimes(1);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('discards a pending destination when the reader becomes inactive, including reactivation: %s', async (reactivate) => {
+    let complete!: (value: unknown[]) => void;
+    pdf_fixture.destinations.set('slow', new Promise<unknown[]>((resolve) => { complete = resolve; }));
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'slow', rect: [100, 600, 125, 612], dest: 'slow' }]);
+    const props = readerProps();
+    const view = render(<PdfReader {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+    view.rerender(<PdfReader {...props} reading_active={false} />);
+    if (reactivate) view.rerender(<PdfReader {...props} reading_active />);
+    await act(async () => { complete([1, { name: 'Fit' }]); });
+    expect(props.on_navigate).not.toHaveBeenCalled();
+    expect(props.on_error).not.toHaveBeenCalled();
+    if (reactivate) {
+      fireEvent.click(screen.getByRole('button', { name: 'Go to destination within this paper' }));
+      await waitFor(() => expect(props.on_navigate).toHaveBeenCalledWith({ kind: 'pdf', location: expect.objectContaining({ page_number: 2 }) }));
+    }
+  });
+
+  it('allows a figure link to finish after closing the figure reactivates the reader', async () => {
+    const show_modal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
+    try {
+      let complete!: (value: unknown[]) => void;
+      pdf_fixture.destinations.set('figure-target', new Promise<unknown[]>((resolve) => { complete = resolve; }));
+      pdf_fixture.annotations.set(2, [{ subtype: 'Link', id: 'figure-link', rect: [100, 600, 125, 612], dest: 'figure-target' }]);
+      const props = readingProps('p1-intro');
+      render(<PdfReader {...props} />);
+      fireEvent.click(await screen.findByRole('button', { name: /^Enlarge / }));
+      const dialog = await screen.findByRole('dialog');
+      await waitFor(() => expect(dialog.querySelector('.pdf-embedded-link')).toBeTruthy());
+      fireEvent.click(dialog.querySelector('.pdf-embedded-link')!);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      await act(async () => { complete([0, { name: 'XYZ' }, 400, 500, null]); });
+      expect(props.on_navigate).toHaveBeenCalledWith({ kind: 'pdf', location: expect.objectContaining({ reader_mode: 'reading', reading_block_id: 'p1-body', page_number: 1 }) });
+      expect(props.on_error).not.toHaveBeenCalled();
+    } finally {
+      if (show_modal) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', show_modal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+    }
+  });
+});
+
 describe('reference details in both reading modes', () => {
   function bibliography() {
     const item = (str: string, y: number) => ({ str, transform: [10, 0, 0, 10, 50, y], width: 260, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
@@ -1256,8 +1423,22 @@ describe('reference details in both reading modes', () => {
     render(<PdfReader {...props} />);
     await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ label: '7' })]), 'ready'));
     const baseline = pdf_fixture.render_requests.length;
-    fireEvent.click(await screen.findByRole('button', { name: 'Follow citation to its destination' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
     await waitFor(() => expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7', page_number: 4 }) }));
+    expect(pdf_fixture.render_requests.length).toBe(baseline);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it.each(['pdf', 'reading'] as const)('retains the reference popup for arXiv citation URLs in %s mode', async (mode) => {
+    const item = (str: string, y: number) => ({ str, transform: [10, 0, 0, 10, 50, y], width: 260, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
+    pdf_fixture.text_content.set(4, [item('References', 750), item('[7] Jane Doe. A useful paper. arXiv:1706.03762, 2021.', 700)]);
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'cite-url', rect: [100, 600, 125, 612], url: 'https://arxiv.org/abs/1706.03762' }]);
+    const props = mode === 'reading' ? readingProps('p1-intro') : readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ label: '7', arxiv_id: '1706.03762' })]), 'ready'));
+    const baseline = pdf_fixture.render_requests.length;
+    fireEvent.click(await screen.findByRole('button', { name: 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762' }));
+    expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7' }) });
     expect(pdf_fixture.render_requests.length).toBe(baseline);
     expect(props.on_error).not.toHaveBeenCalled();
   });

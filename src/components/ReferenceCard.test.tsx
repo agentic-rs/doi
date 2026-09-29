@@ -52,6 +52,18 @@ describe('reference cards', () => {
     expect(callbacks.on_find).toHaveBeenCalledWith(raw);
   });
 
+  it('recognizes arXiv URLs as app links even without a parsed identifier', () => {
+    const value = { ...reference, arxiv_id: null, url: 'https://arxiv.org/pdf/1706.03762v7' };
+    const callbacks = props(value);
+    render(<ReferenceCard {...callbacks} />);
+    const preview = screen.getByRole('button', { name: 'Preview paper' });
+    expect(preview.getAttribute('data-link-kind')).toBe('app');
+    expect(preview.title).toBe('Open paper in Papertrail');
+    expect(screen.queryByRole('button', { name: 'Find a match' })).toBeNull();
+    fireEvent.click(preview);
+    expect(callbacks.on_open).toHaveBeenCalledWith(value);
+  });
+
   it.each([
     { doi: '10.1234/example', url: null, label: 'Open DOI' },
     { doi: null, url: 'https://example.org/paper', label: 'Open link' },

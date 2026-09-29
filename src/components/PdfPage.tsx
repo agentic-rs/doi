@@ -8,6 +8,7 @@ import { regionGeometry, regionTextContent } from '../lib/pdf-region';
 import type { SelectionPage } from '../lib/pdf-selection';
 import { pdfContentText } from '../lib/pdf-text';
 import { readPdfTextContent } from '../lib/pdf-compatibility';
+import { classifyPaperUrl } from '../lib/paper-links';
 
 export interface PdfLink {
   link_id: string;
@@ -216,15 +217,20 @@ export function PdfPage({ page, source_rect, block_id, zoom, rotation, render_pa
               const right = Math.min(width, Math.max(rect[0], rect[2]));
               const bottom = Math.min(height, Math.max(rect[1], rect[3]));
               if (right <= left || bottom <= top) return null;
+              const target = link.url ? classifyPaperUrl(link.url) : null;
+              const link_kind = target?.kind ?? 'pdf';
+              const title = target?.kind === 'app' ? 'Open paper in Papertrail'
+                : target?.kind === 'external' ? 'Open in browser' : 'Within this paper';
               return (
                 <button
                   key={link.link_id}
                   type="button"
                   className="pdf-embedded-link"
+                  data-link-kind={link_kind}
                   disabled={render_paused}
                   style={{ left, top, width: right - left, height: bottom - top }}
-                  title={link.url ?? 'Follow citation'}
-                  aria-label={link.url ? `Open ${link.url}` : 'Follow citation to its destination'}
+                  title={target ? `${title}: ${target.url}` : title}
+                  aria-label={target ? `${title}: ${target.url}` : 'Go to destination within this paper'}
                   onClick={() => on_link(link, page.pageNumber)}
                 />
               );

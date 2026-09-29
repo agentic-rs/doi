@@ -243,10 +243,14 @@ export interface OperationProgress {
   retry_at?: string | null;
 }
 
-export type ReaderTarget =
-  | { kind: 'internal'; location: ReadingLocation }
-  | { kind: 'reference'; reference: ReferenceItem }
+export type PaperUrlTarget =
+  | { kind: 'app'; arxiv_id: string; url: string }
   | { kind: 'external'; url: string };
+
+export type ReaderTarget =
+  | { kind: 'pdf'; location: ReadingLocation }
+  | { kind: 'reference'; reference: ReferenceItem }
+  | PaperUrlTarget;
 
 export interface PdfReaderProps {
   paper: Paper;

@@ -54,4 +54,22 @@ describe('PDF quote anchors', () => {
     expect(safeReferenceUrl('javascript:alert(1)')).toBeNull();
     expect(safeReferenceUrl('file:///etc/passwd')).toBeNull();
   });
+
+  it('rejects embedded credentials and missing hosts', () => {
+    expect(safeReferenceUrl('https://username:password@example.org/paper')).toBeNull();
+    expect(safeReferenceUrl('https://username@example.org/paper')).toBeNull();
+    expect(safeReferenceUrl('https://:password@example.org/paper')).toBeNull();
+    expect(safeReferenceUrl('https://')).toBeNull();
+    expect(safeReferenceUrl('http://example.org:8080/paper')).toBe('http://example.org:8080/paper');
+  });
+
+  it('bounds both the original UTF-8 input and the canonical URL for native opening', () => {
+    const prefix = 'https://example.org/';
+    const limit = `${prefix}${'a'.repeat(8192 - prefix.length)}`;
+    expect(safeReferenceUrl(limit)).toBe(limit);
+    expect(safeReferenceUrl(`${limit}a`)).toBeNull();
+    expect(safeReferenceUrl(`${prefix}${'界'.repeat(2800)}`)).toBeNull();
+    expect(safeReferenceUrl(`${prefix}${'界'.repeat(1000)}`)).toBeNull();
+    expect(safeReferenceUrl(`${prefix}文章`)).toBe(`${prefix}%E6%96%87%E7%AB%A0`);
+  });
 });

@@ -1,5 +1,17 @@
 import type { NavigationHistory } from './history';
-import type { Paper, ReadingLocation, SelectionContext } from './types';
+import type { Paper, ReaderMode, ReadingLocation, SelectionContext } from './types';
+
+export interface PaperLinkSource {
+  paper_id: string;
+  reader_mode: ReaderMode;
+}
+
+export function locationInReaderMode(location: ReadingLocation, mode?: ReaderMode): ReadingLocation {
+  if (mode === undefined || (location.reader_mode ?? 'pdf') === mode) return location;
+  // PDF zoom and Reading crop zoom have different units. Keep the source-page
+  // point, then fit its corresponding page/block in the new presentation.
+  return { ...location, reader_mode: mode, reading_block_id: null, zoom: 1, zoom_mode: 'fit_width' };
+}
 
 export interface ReaderSession {
   paper: Paper;

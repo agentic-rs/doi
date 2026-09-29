@@ -60,6 +60,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('PDF region rendering', () => {
+  it('distinguishes PDF, app, and browser link hints without adding visible icons', async () => {
+    const { page } = pageFixture();
+    page.getAnnotations = async () => [
+      { subtype: 'Link', id: 'pdf', rect: [100, 430, 120, 450], dest: [0, { name: 'Fit' }] },
+      { subtype: 'Link', id: 'app', rect: [130, 430, 150, 450], url: 'https://arxiv.org/abs/1706.03762' },
+      { subtype: 'Link', id: 'external', rect: [160, 430, 180, 450], url: 'https://example.com/paper' },
+    ];
+    render(<PdfPage page={page} zoom={1} rotation={0} render_paused={false}
+      scroll_root={document.createElement('div')} annotations={[]} register_page={vi.fn()} on_link={vi.fn()} on_error={vi.fn()} />);
+    const pdf = await screen.findByRole('button', { name: 'Go to destination within this paper' });
+    const app = screen.getByRole('button', { name: 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762' });
+    const external = screen.getByRole('button', { name: 'Open in browser: https://example.com/paper' });
+    expect([pdf.dataset.linkKind, app.dataset.linkKind, external.dataset.linkKind]).toEqual(['pdf', 'app', 'external']);
+    expect([pdf.title, app.title, external.title]).toEqual([
+      'Within this paper', 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762', 'Open in browser: https://example.com/paper',
+    ]);
+    expect([pdf.childElementCount, app.childElementCount, external.childElementCount]).toEqual([0, 0, 0]);
+  });
+
   it('renders only the crop canvas and registers matching source coordinates and text', async () => {
     const { page, render_page } = pageFixture();
     const register_page = vi.fn<(id: string, selection: SelectionPage | null) => void>();
@@ -75,9 +94,9 @@ describe('PDF region rendering', () => {
     expect([canvas?.width, canvas?.height]).toEqual([280, 200]);
     const viewport = (render_page.mock.calls[0] as unknown as [{ viewport: PageViewport }])[0].viewport;
     expect(viewport.convertToViewportPoint(100, 450)).toEqual([40, 100]);
-    const link = screen.getByRole('button', { name: 'Open https://example.com/inside' });
+    const link = screen.getByRole('button', { name: 'Open in browser: https://example.com/inside' });
     expect([link.style.left, link.style.top, link.style.width, link.style.height]).toEqual(['200px', '100px', '80px', '40px']);
-    expect(screen.queryByRole('button', { name: 'Open https://example.com/outside' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open in browser: https://example.com/outside' })).toBeNull();
     expect(result.container.querySelector('.pdf-page-label')).toBeNull();
   });
 });

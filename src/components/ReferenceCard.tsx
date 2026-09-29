@@ -1,6 +1,7 @@
 import { ArrowUpRight, BookOpen, FileText, LoaderCircle, Search } from 'lucide-react';
 import type { ReferenceCandidate, ReferenceItem } from '../lib/types';
 import { referencePublication, referenceSubtitle } from '../lib/reference-presentation';
+import { referenceLinkTarget } from '../lib/paper-links';
 import './reference-components.css';
 
 export interface ReferenceResolution {
@@ -31,11 +32,12 @@ export function ReferenceCard(props: ReferenceCardProps) {
   const { reference, resolution } = props;
   const parsed = reference.parse_confidence === 'parsed' && Boolean(reference.title?.trim());
   const subtitle = parsed ? referenceSubtitle(reference) : reference.arxiv_id ? referencePublication(reference) : '';
-  const can_open = Boolean(reference.arxiv_id || reference.doi || reference.url);
+  const target = referenceLinkTarget(reference);
+  const app_link = target?.kind === 'app';
   const candidates = resolution?.candidates ?? [];
   const finding = Boolean(resolution?.busy);
   const disabled = props.busy || finding;
-  const open_label = reference.arxiv_id ? 'Preview paper' : reference.doi ? 'Open DOI' : 'Open link';
+  const open_label = app_link ? 'Preview paper' : reference.doi ? 'Open DOI' : 'Open link';
 
   return <article className="reference-entry" aria-label={reference.label ? `Reference ${reference.label}` : 'Reference'}>
     <header className="reference-entry-heading">
@@ -53,14 +55,17 @@ export function ReferenceCard(props: ReferenceCardProps) {
     {!parsed && subtitle && <p className="reference-entry-publication">{subtitle}</p>}
     {reference.doi && <p className="reference-entry-identifier">DOI: {reference.doi}</p>}
     <div className="reference-entry-actions">
-      {can_open && <button type="button" className="reference-entry-open" disabled={disabled} onClick={() => props.on_open(reference)}>
-        {reference.arxiv_id ? <BookOpen size={16} aria-hidden="true" /> : <ArrowUpRight size={16} aria-hidden="true" />}{open_label}
+      {target && <button type="button" className="reference-entry-open" disabled={disabled}
+        data-link-kind={target.kind} title={app_link ? 'Open paper in Papertrail' : `External website · ${target.url}`}
+        onClick={() => props.on_open(reference)}>
+        {app_link ? <BookOpen size={16} aria-hidden="true" /> : <ArrowUpRight size={16} aria-hidden="true" />}{open_label}
       </button>}
       {reference.arxiv_id && reference.doi && <button type="button" disabled={disabled}
+        data-link-kind="external" title="External website · DOI"
         onClick={() => props.on_open({ ...reference, arxiv_id: null })}>
         <ArrowUpRight size={16} aria-hidden="true" />Open DOI
       </button>}
-      {!reference.arxiv_id && candidates.length === 0 && <button type="button" disabled={disabled} onClick={() => props.on_find(reference)}>
+      {!app_link && candidates.length === 0 && <button type="button" disabled={disabled} onClick={() => props.on_find(reference)}>
         {finding ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Search size={16} aria-hidden="true" />}
         {finding ? 'Finding matches…' : 'Find a match'}
       </button>}
@@ -74,13 +79,18 @@ export function ReferenceCard(props: ReferenceCardProps) {
         : resolution.error ? <p className="reference-entry-error" role="alert">{resolution.error}</p>
           : candidates.length > 0 ? <>
             <p className="reference-entry-results-label">Choose a match</p>
-            <ul>{candidates.map((candidate, index) => <li key={`${candidate.arxiv_id ?? candidate.doi ?? candidate.url}-${index}`}>
-              <button type="button" className="reference-entry-candidate" disabled={props.busy}
-                aria-label={`Open ${candidate.match_kind === 'identifier' ? 'identifier match' : 'possible match'}: ${candidate.title}`}
-                onClick={() => props.on_open(candidate)}>
-                <CandidateDetails candidate={candidate} /><ArrowUpRight size={16} aria-hidden="true" />
-              </button>
-            </li>)}</ul>
+            <ul>{candidates.map((candidate, index) => {
+              const candidate_target = referenceLinkTarget(candidate);
+              return <li key={`${candidate.arxiv_id ?? candidate.doi ?? candidate.url}-${index}`}>
+                <button type="button" className="reference-entry-candidate" disabled={props.busy || !candidate_target}
+                  data-link-kind={candidate_target?.kind}
+                  title={candidate_target?.kind === 'app' ? 'Open paper in Papertrail' : candidate_target ? `External website · ${candidate_target.url}` : undefined}
+                  aria-label={`Open ${candidate.match_kind === 'identifier' ? 'identifier match' : 'possible match'}: ${candidate.title}`}
+                  onClick={() => props.on_open(candidate)}>
+                  <CandidateDetails candidate={candidate} />{candidate_target?.kind === 'app' ? <BookOpen size={16} aria-hidden="true" /> : <ArrowUpRight size={16} aria-hidden="true" />}
+                </button>
+              </li>;
+            })}</ul>
           </> : <p role="status">No matches found.</p>}
     </div>}
   </article>;

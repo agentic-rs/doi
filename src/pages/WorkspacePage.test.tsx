@@ -30,8 +30,8 @@ vi.mock('../components/PdfReader', () => ({
       {props.paper.title}
       <button onClick={() => props.on_toggle_controls?.()}>Toggle reading controls</button>
       <button onClick={() => props.on_location_change({ paper_id: props.paper.paper_id, page_number: 4, page_position: [0.1, 0.6], zoom: 1.5, rotation: 90 })}>Scroll source</button>
-      <button onClick={() => props.on_navigate({ kind: 'internal', location: { paper_id: props.paper.paper_id, page_number: 12, page_position: [0, 0.2], zoom: 1, rotation: 0 } })}>Follow internal citation</button>
-      <button onClick={() => props.on_navigate({ kind: 'external', url: 'https://arxiv.org/abs/1409.0473v3' })}>Follow cited paper</button>
+      <button onClick={() => props.on_navigate({ kind: 'pdf', location: { paper_id: props.paper.paper_id, page_number: 12, page_position: [0, 0.2], zoom: 1, rotation: 0, reader_mode: props.target_location?.reader_mode } })}>Follow internal citation</button>
+      <button onClick={() => props.on_navigate({ kind: 'app', arxiv_id: '1409.0473v3', url: 'https://arxiv.org/abs/1409.0473v3' })}>Follow cited paper</button>
       <button onClick={() => props.on_selection(selection)}>Select passage</button>
     </div>;
   },
@@ -118,6 +118,7 @@ beforeEach(() => {
   vi.mocked(backend.markPaperOpened).mockImplementation(async (id) => ({ ...([first, second].find((paper) => paper.paper_id === id) ?? first), last_opened_at: '2026-09-30T00:00:00Z' }));
   vi.mocked(backend.cancelPaperOperation).mockResolvedValue();
   vi.mocked(backend.removePaper).mockResolvedValue();
+  vi.mocked(backend.openExternal).mockResolvedValue();
   vi.mocked(backend.previewArxivPaper).mockResolvedValue(preview);
   vi.mocked(backend.downloadArxivPaper).mockResolvedValue(second);
   vi.mocked(backend.getSettings).mockResolvedValue({ provider_kind: 'openai_compatible', base_url: 'http://127.0.0.1:11434/v1', model_id: 'local-model', has_api_key: false });
@@ -566,6 +567,7 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
     await screen.findByTestId('reader');
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location?.reader_mode).toBe('reading');
       fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
@@ -602,7 +604,7 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
     fireEvent.click(screen.getByRole('button', { name: 'View bibliography on page 12' }));
     expect(lastReader.target_location).toMatchObject({
-      reader_mode: 'pdf', reading_block_id: null, page_number: 12, page_position: [0, 0],
+      reader_mode: 'reading', reading_block_id: null, page_number: 12, page_position: [0, 0],
     });
     expect(lastReader.target_anchor).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
@@ -1226,6 +1228,162 @@ describe('removal completion races', () => {
 });
 
 
+describe('classified hyperlink flows', () => {
+  it('keeps a superseded paper load from changing the reader behind external confirmation', async () => {
+    await openReadingBlock();
+    const location = lastReader.target_location;
+    const loading = deferred<Uint8Array<ArrayBuffer>>();
+    vi.mocked(backend.getPdfBytes).mockReturnValueOnce(loading.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    expect(backend.getPdfBytes).toHaveBeenLastCalledWith(second.paper_id);
+    act(() => lastReader.on_navigate({ kind: 'external', url: 'https://example.org/paper' }));
+    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    await act(async () => loading.resolve(new Uint8Array([4, 5, 6])));
+    expect(lastReader.paper.paper_id).toBe(first.paper_id);
+    expect(lastReader.target_location).toEqual(location);
+    expect(screen.getAllByRole('dialog')).toEqual([dialog]);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(lastReader.paper.paper_id).toBe(first.paper_id);
+    expect(backend.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('confirms outside links without moving the reader and cancellation never opens a browser', async () => {
+    await openReadingBlock();
+    const location = lastReader.target_location;
+    act(() => lastReader.on_navigate({ kind: 'external', url: 'https://example.org/research?q=paper#figure-2' }));
+    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    expect(within(dialog).getByText('example.org')).toBeTruthy();
+    expect(within(dialog).getByText('https://example.org/research?q=paper#figure-2')).toBeTruthy();
+    expect(lastReader.reading_active).toBe(false);
+    expect(backend.openExternal).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    expect(screen.getByTestId('reader')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(lastReader.reading_active).toBe(true);
+    expect(lastReader.target_location).toEqual(location);
+    expect(backend.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('keeps DOI failures in the confirmation dialog and restores the citation popup after retry', async () => {
+    await openFirst();
+    const reference: ReferenceItem = {
+      reference_id: 'doi-reference', label: '7', citation_text: '[7] A cited paper.', title: null,
+      authors: [], publication_year: null, venue: null, parse_confidence: 'raw', source_rect: null,
+      page_number: 9, arxiv_id: null, doi: '10.1234/example', url: null,
+    };
+    act(() => lastReader.on_navigate({ kind: 'reference', reference }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open DOI' }));
+    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.queryByRole('dialog', { name: 'Reference details' })).toBeNull();
+    expect(backend.openExternal).not.toHaveBeenCalled();
+    vi.mocked(backend.openExternal).mockRejectedValueOnce(new Error('Browser unavailable'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open in browser' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Browser unavailable');
+    expect(backend.openExternal).toHaveBeenCalledExactlyOnceWith('https://doi.org/10.1234/example');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open in browser' }));
+    await screen.findByRole('dialog', { name: 'Reference details' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(backend.openExternal).toHaveBeenCalledTimes(2);
+    expect(lastReader.paper.paper_id).toBe(first.paper_id);
+  });
+
+  it('confirms explicit View on arXiv browser actions and returns to the info sheet on Cancel', async () => {
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Show paper abstract and metadata' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View on arXiv' }));
+    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(within(dialog).getByText('https://arxiv.org/abs/1706.03762v7')).toBeTruthy();
+    expect(backend.openExternal).not.toHaveBeenCalled();
+    expect(backend.previewArxivPaper).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'View on arXiv' })).toBeTruthy();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
+  it('rejects unsafe browser targets even when they bypass PDF classification', async () => {
+    await openFirst();
+    act(() => lastReader.on_navigate({ kind: 'external', url: 'javascript:alert(1)' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('alert').textContent).toContain('not a valid HTTP or HTTPS URL');
+    expect(backend.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('opens a cached paper in the source mode while retaining its saved page and rotation', async () => {
+    const destination: ReadingLocation = {
+      paper_id: second.paper_id, page_number: 7, page_position: [.3, .6], rotation: 90,
+      reader_mode: 'pdf', zoom: 2.7, zoom_mode: 'custom', reading_block_id: null,
+    };
+    vi.mocked(backend.listPapers).mockResolvedValue([first, { ...second, last_location: destination }]);
+    await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location).toEqual({ ...destination, reader_mode: 'reading', zoom: 1, zoom_mode: 'fit_width' });
+    expect(backend.previewArxivPaper).not.toHaveBeenCalled();
+    expect(backend.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('carries Reading mode through abstract preview and explicit download', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Second paper' });
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Download & add to library' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location).toMatchObject({ reader_mode: 'reading', page_number: 1, zoom_mode: 'fit_width' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(backend.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('keeps PDF mode when a linked paper was previously saved in Reading view', async () => {
+    const destination: ReadingLocation = {
+      paper_id: second.paper_id, page_number: 3, page_position: [.1, .4], rotation: 0,
+      reader_mode: 'reading', zoom: 1.6, zoom_mode: 'custom', reading_block_id: 'page-3-block-2',
+    };
+    vi.mocked(backend.listPapers).mockResolvedValue([first, { ...second, last_location: destination }]);
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location).toEqual({ ...destination, reader_mode: 'pdf', zoom: 1, zoom_mode: 'fit_width', reading_block_id: null });
+  });
+
+  it('carries the source mode when metadata lookup discovers an already saved paper', async () => {
+    vi.mocked(backend.listPapers).mockResolvedValue([first]);
+    vi.mocked(backend.previewArxivPaper).mockResolvedValue({ ...preview, library_paper: second });
+    await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location?.reader_mode).toBe('reading');
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+  });
+
+  it('reuses an existing tab in the source mode and retains its previous mode in Back history', async () => {
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    const saved: ReadingLocation = {
+      paper_id: second.paper_id, reader_mode: 'pdf', page_number: 5, page_position: [.2, .4],
+      zoom: 2.2, zoom_mode: 'custom', rotation: 0,
+    };
+    act(() => lastReader.on_location_change(saved));
+    const tabs = screen.getByRole('navigation', { name: 'Open papers' });
+    fireEvent.click(within(tabs).getByRole('button', { name: 'First paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Reading view' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.target_location).toMatchObject({ reader_mode: 'reading', page_number: 5, page_position: [.2, .4], zoom: 1 });
+    expect(within(tabs).getAllByRole('button', { name: 'Second paper' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));
+    expect(lastReader.target_location).toEqual(saved);
+  });
+});
+
 describe('shared reference previews', () => {
   const reference: ReferenceItem = {
     reference_id: 'ref-7', label: '7', citation_text: '[7] Author. Related paper. 2020.',
@@ -1258,7 +1416,7 @@ describe('shared reference previews', () => {
     const original = await openReadingBlock();
     act(() => lastReader.on_navigate({ kind: 'reference', reference }));
     fireEvent.click(screen.getByRole('button', { name: 'View bibliography on page 12' }));
-    expect(lastReader.target_location).toMatchObject({ reader_mode: 'pdf', page_number: 12, reading_block_id: null });
+    expect(lastReader.target_location).toMatchObject({ reader_mode: 'reading', page_number: 12, reading_block_id: null });
     expect(lastReader.target_anchor?.quad_points).toEqual([[50, 640, 300, 640, 300, 610, 50, 610]]);
     fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Go back to previous reading location' }));

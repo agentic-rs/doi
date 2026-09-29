@@ -23,13 +23,15 @@ import { RemovePaperDialog } from '../components/RemovePaperDialog';
 import { ReferenceCard } from '../components/ReferenceCard';
 import type { ReferenceResolution } from '../components/ReferenceCard';
 import { ReferenceDetailsDialog } from '../components/ReferenceDetailsDialog';
-import { arxivIdFromUrl } from '../lib/pdf-references';
-import { findLibraryPaper, removePaperFromHistory, sortRecentPapers } from '../lib/reader-sessions';
-import type { ReaderSession } from '../lib/reader-sessions';
+import { ExternalLinkDialog } from '../components/ExternalLinkDialog';
+import { referenceLinkTarget } from '../lib/paper-links';
+import { useExternalLink } from '../lib/useExternalLink';
+import { findLibraryPaper, locationInReaderMode, removePaperFromHistory, sortRecentPapers } from '../lib/reader-sessions';
+import type { PaperLinkSource, ReaderSession } from '../lib/reader-sessions';
 import '../components/reading-workspace.css';
 import {
   deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
-  listAnnotations, listPapers, onProgress, openExternal,
+  listAnnotations, listPapers, onProgress,
   previewArxivPaper, downloadArxivPaper, cancelPaperOperation, markPaperOpened, removePaper,
   resolveReference, saveAnnotation, saveAnnotationFile, saveReadingPosition,
   getReaderCapabilities, setReaderOrientation,
@@ -176,11 +178,12 @@ export function WorkspacePage() {
   const draftsRef = useRef({ question, note_draft: noteDraft, composer_kind: composerKind, inspector_tab: inspectorTab, edit_id: editId, edit_draft: editDraft });
   draftsRef.current = { question, note_draft: noteDraft, composer_kind: composerKind, inspector_tab: inspectorTab, edit_id: editId, edit_draft: editDraft };
   const removedPapersRef = useRef(new Set<string>());
-  const lookupSourceRef = useRef<string | null>(null);
+  const lookupSourceRef = useRef<PaperLinkSource | null>(null);
   const tabIdsRef = useRef(tabIds);
   tabIdsRef.current = tabIds;
   const supportsTabs = !isNative || readerCapabilities.device_kind === 'tablet' || readerCapabilities.device_kind === 'desktop';
-  const modalOpen = Boolean(selectedReference || preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
+  const externalLink = useExternalLink((message) => setNotice({ tone: 'error', message }));
+  const modalOpen = Boolean(externalLink.request || selectedReference || preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
   const readerActionsRef = useRef({ handleNavigate, toggleReadingControls });
   readerActionsRef.current = { handleNavigate, toggleReadingControls };
   const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
@@ -480,10 +483,10 @@ export function WorkspacePage() {
     setTabIds((ids) => supportsTabs ? ids.includes(document.paper.paper_id) ? ids : [...ids, document.paper.paper_id] : [document.paper.paper_id]);
   }
 
-  async function lookupPaper(input: string, sourcePaperId: string | null = null) {
+  async function lookupPaper(input: string, source: PaperLinkSource | null = null) {
     if (!isNative || !input.trim()) return;
     stopOpening();
-    lookupSourceRef.current = sourcePaperId;
+    lookupSourceRef.current = source;
     const sequence = ++openSequenceRef.current;
     const operation: OpenOperation = { request_id: crypto.randomUUID(), label: input.trim(), kind: 'lookup' };
     openingRef.current = operation;
@@ -495,7 +498,7 @@ export function WorkspacePage() {
       const result = await previewArxivPaper(input.trim(), operation.request_id);
       if (sequence !== openSequenceRef.current || !mountedRef.current) return;
       if (result.library_paper) {
-        await openPaper(result.library_paper.arxiv_id, result.library_paper, sourcePaperId);
+        await openPaper(result.library_paper.arxiv_id, result.library_paper, source);
       } else setPreview(result);
     } catch (cause) {
       if (sequence === openSequenceRef.current && mountedRef.current) {
@@ -520,6 +523,7 @@ export function WorkspacePage() {
   async function confirmDownload() {
     if (!preview || openingRef.current) return;
     const captured = preview;
+    const source = lookupSourceRef.current;
     const sequence = ++openSequenceRef.current;
     const operation: OpenOperation = { request_id: crypto.randomUUID(), label: captured.metadata.title, kind: 'download' };
     openingRef.current = operation;
@@ -538,7 +542,7 @@ export function WorkspacePage() {
       removedPapersRef.current.delete(paper.paper_id);
       storePapers([paper, ...papersRef.current.filter((item) => item.paper_id !== paper.paper_id)]);
       setPreview(null);
-      await openPaper(paper.arxiv_id, paper, lookupSourceRef.current);
+      await openPaper(paper.arxiv_id, paper, source);
     } catch (cause) {
       if (sequence === openSequenceRef.current && mountedRef.current) setDownloadError(String(cause));
     } finally {
@@ -550,8 +554,8 @@ export function WorkspacePage() {
     }
   }
 
-  async function openPaper(input: string, cachedPaper?: Paper, sourcePaperId: string | null = null) {
-    if (!cachedPaper) { await lookupPaper(input, sourcePaperId); return; }
+  async function openPaper(input: string, cachedPaper?: Paper, source: PaperLinkSource | null = null) {
+    if (!cachedPaper) { await lookupPaper(input, source); return; }
     if (!isNative || removedPapersRef.current.has(cachedPaper.paper_id)) return;
     if (activeRef.current?.paper.paper_id === cachedPaper.paper_id) return;
     stopOpening();
@@ -571,14 +575,16 @@ export function WorkspacePage() {
       const session = sessionsRef.current.get(cachedPaper.paper_id);
       const last_location = session?.location ?? papersRef.current.find((paper) => paper.paper_id === cachedPaper.paper_id)?.last_location ?? storedPaper.last_location;
       const paper = { ...storedPaper, last_location };
-      const location = initialLocation(paper);
-      const nextHistory = supportsTabs ? session?.history ?? createHistory(location) : pushLocation(historyRef.current, location);
+      const saved_location = initialLocation(paper);
+      const location = locationInReaderMode(saved_location, source?.reader_mode);
+      let nextHistory = supportsTabs ? session?.history ?? createHistory(location) : pushLocation(historyRef.current, location);
+      if (supportsTabs && session && location !== saved_location) nextHistory = pushLocation(nextHistory, location);
       applyDocument({ paper, pdf_data: pdfData, initial_fit_width: !last_location }, notes, nextHistory, location, session);
       sessionsRef.current.set(paper.paper_id, {
         paper, location, history: nextHistory, selection: session?.selection ?? null,
         question: session?.question ?? '', note_draft: session?.note_draft ?? '', composer_kind: session?.composer_kind ?? 'ai',
         inspector_tab: session?.inspector_tab ?? 'references', edit_id: session?.edit_id ?? null, edit_draft: session?.edit_draft ?? '',
-        source_paper_id: sourcePaperId ?? session?.source_paper_id ?? null,
+        source_paper_id: source?.paper_id ?? session?.source_paper_id ?? null,
       });
       storePapers([paper, ...papersRef.current.filter((existing) => existing.paper_id !== paper.paper_id)]);
       setArxivInput('');
@@ -681,24 +687,33 @@ export function WorkspacePage() {
     setNavigationKey((value) => value + 1);
   }
 
-  async function followUrl(url: string) {
-    const arxivId = arxivIdFromUrl(url);
-    if (arxivId) {
-      const cached = findLibraryPaper(papersRef.current, arxivId);
-      await openPaper(arxivId, cached, activeRef.current?.paper.paper_id ?? null);
-      return;
-    }
-    try {
-      await openExternal(url);
-    } catch (cause) {
-      setNotice({ tone: 'error', message: String(cause) });
-    }
+  function currentLinkSource(): PaperLinkSource | null {
+    const location = currentPositionRef.current;
+    return location ? { paper_id: location.paper_id, reader_mode: location.reader_mode ?? 'pdf' } : null;
+  }
+
+  async function followPaper(arxiv_id: string) {
+    const source = currentLinkSource();
+    setSelectedReference(null);
+    const cached = findLibraryPaper(papersRef.current, arxiv_id);
+    await openPaper(arxiv_id, cached, source);
+  }
+
+  function requestExternalLink(url: string) {
+    // A later link action supersedes a cached-paper load still in flight.
+    // Its completion must not replace the paper behind this confirmation.
+    stopOpening();
+    externalLink.requestOpen(url);
   }
 
   function handleNavigate(target: ReaderTarget) {
-    if (target.kind === 'internal') jumpTo(target.location);
-    else if (target.kind === 'reference') setSelectedReference(target.reference);
-    else void followUrl(target.url);
+    if (target.kind === 'pdf') jumpTo(target.location);
+    else if (target.kind === 'reference') {
+      stopOpening();
+      setSelectedReference(target.reference);
+    }
+    else if (target.kind === 'app') void followPaper(target.arxiv_id);
+    else requestExternalLink(target.url);
   }
 
   // Replace state-sensitive document shortcuts during the DOM commit. Waiting
@@ -916,15 +931,8 @@ export function WorkspacePage() {
   }
 
   function openReference(reference: ReferenceItem | ReferenceCandidate) {
-    setSelectedReference(null);
-    if (reference.arxiv_id) {
-      const cached = findLibraryPaper(papersRef.current, reference.arxiv_id);
-      void openPaper(reference.arxiv_id, cached, activeRef.current?.paper.paper_id ?? null);
-    } else if (reference.doi) {
-      void followUrl(`https://doi.org/${reference.doi}`);
-    } else if (reference.url) {
-      void followUrl(reference.url);
-    }
+    const target = referenceLinkTarget(reference);
+    if (target) handleNavigate(target);
   }
 
   function showReferenceSource(reference: ReferenceItem) {
@@ -937,7 +945,7 @@ export function WorkspacePage() {
       quad_points: [[rect[0], rect[3], rect[2], rect[3], rect[2], rect[1], rect[0], rect[1]]],
       text_quote: { exact_text: reference.citation_text, prefix: '', suffix: '', normalization_version: 1 },
     } : null;
-    jumpTo({ ...location, page_number: reference.page_number, page_position: [0, 0], reader_mode: 'pdf', reading_block_id: null }, anchor);
+    jumpTo({ ...location, page_number: reference.page_number, page_position: [0, 0], reading_block_id: null }, anchor);
   }
 
   async function retryLibrary() {
@@ -1043,13 +1051,14 @@ export function WorkspacePage() {
           </aside>}
         </div>}
       </main>
-      {selectedReference && <ReferenceDetailsDialog reference={selectedReference} resolution={resolutions[selectedReference.reference_id]}
+      {selectedReference && !externalLink.request && <ReferenceDetailsDialog reference={selectedReference} resolution={resolutions[selectedReference.reference_id]}
         busy={Boolean(opening)} on_open={openReference} on_find={(item) => { void findReference(item); }}
         on_source={showReferenceSource} on_close={() => setSelectedReference(null)} />}
       {preview && <PaperPreviewDialog preview={preview} busy={opening?.kind === 'download'} message={opening?.kind === 'download' || progress?.phase === 'waiting' ? operationMessage : null} error={downloadError} on_confirm={() => { void confirmDownload(); }} on_cancel={cancelPreview} />}
       {active && opening?.kind === 'lookup' && !preview && <PaperLookupDialog label={opening.label} message={operationMessage} on_cancel={stopOpening} />}
       {removing && <RemovePaperDialog paper={removing} busy={removeBusy} error={removeError} on_confirm={() => { void confirmRemoval(); }} on_cancel={() => { if (!removeBusy) setRemoving(null); }} />}
-      {paperInfoOpen && active && <PaperInfoSheet paper={active.paper} resume={Boolean(active.paper.last_location)} on_close={closePaperInfo} on_open_source={() => { void openExternal(`https://arxiv.org/abs/${active.paper.arxiv_id}v${active.paper.arxiv_version}`).catch((cause) => setNotice({ tone: 'error', message: String(cause) })); }} />}
+      {paperInfoOpen && active && !externalLink.request && <PaperInfoSheet paper={active.paper} resume={Boolean(active.paper.last_location)} on_close={closePaperInfo} on_open_source={() => requestExternalLink(`https://arxiv.org/abs/${active.paper.arxiv_id}v${active.paper.arxiv_version}`)} />}
+      {externalLink.request && <ExternalLinkDialog {...externalLink.request} on_confirm={() => { void externalLink.confirmOpen(); }} on_cancel={externalLink.cancel} />}
       {settingsOpen && <SettingsDialog settings={settings} on_close={closeSettings} on_saved={(saved) => { setSettings(saved); setSettingsOpen(false); setNotice({ tone: 'success', message: 'AI provider settings saved.' }); }} />}
     </div>
   );

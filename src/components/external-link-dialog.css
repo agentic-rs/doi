@@ -1,0 +1,16 @@
+.external-link-dialog { width: min(100%, 520px); }
+.external-link-content { padding: 26px; }
+.external-link-symbol { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; color: var(--teal, #2f7068); background: #edf2e7; }
+.external-link-content h2 { margin: 18px 0 14px; font: 26px/1.2 Georgia, 'Times New Roman', serif; }
+.external-link-content p { margin: 0; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.external-link-destination { display: grid; gap: 16px; margin: 20px 0 0; }
+.external-link-destination dt { margin-bottom: 5px; color: #567068; font-size: 12px; font-weight: 600; }
+.external-link-destination dd { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.external-link-destination .external-link-url { padding: 12px 14px; border: 1px solid var(--line, #e4e6dc); border-radius: 9px; background: #f5f6ef; font-size: 13px; font-weight: 400; white-space: pre-wrap; user-select: text; }
+.external-link-content .library-dialog-message, .external-link-content .library-dialog-error { margin-top: 18px; }
+@media (max-width: 600px) { .external-link-content { padding: 22px; } }
+@media (orientation: landscape) and (max-height: 500px) {
+  .external-link-content { padding: 18px 24px; }
+  .external-link-symbol { display: none; }
+  .external-link-content h2 { margin-top: 0; }
+}

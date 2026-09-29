@@ -68,8 +68,12 @@ export function anchorViewportPosition(quads: QuadPoints[], viewport: PdfCoordin
 
 export function safeReferenceUrl(value: string): string | null {
   try {
+    if (value.length > 8192 || new TextEncoder().encode(value).byteLength > 8192) return null;
     const parsed = new URL(value);
-    return ['https:', 'http:'].includes(parsed.protocol) ? parsed.href : null;
+    if (!['https:', 'http:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) return null;
+    // The canonical URL is sent to native validation, so it must fit there too.
+    if (new TextEncoder().encode(parsed.href).byteLength > 8192) return null;
+    return parsed.href;
   } catch {
     return null;
   }
