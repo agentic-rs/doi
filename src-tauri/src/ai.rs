@@ -2,6 +2,8 @@ use crate::{credentials, error::Result, models::*, state::AppState, validation};
 use tauri::{AppHandle, Emitter};
 
 mod cancellation;
+mod conversations;
+pub use conversations::{ask_conversation, generate_conversation_note};
 mod provider;
 pub use cancellation::RequestRegistry;
 

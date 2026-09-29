@@ -179,7 +179,10 @@ fn embedded_drivers_preserve_context_and_apply_provider_transforms() {
         payload["tools"][0]["function"]["name"],
         "propose_annotation"
       );
-      assert_eq!(payload["messages"][0]["content"], SYSTEM_PROMPT);
+      assert_eq!(
+        payload["messages"][0]["content"],
+        format!("{SOURCE_PROMPT} {INITIAL_NOTE_PROMPT}")
+      );
       assert!(payload["messages"][1]["content"]
         .as_str()
         .unwrap()

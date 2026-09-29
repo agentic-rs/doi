@@ -7,11 +7,11 @@ Papertrail embeds [Tokn](https://github.com/tokn-ai/tokn)'s Rust provider compon
 3. Enter your provider's API key. Leave the field blank to retain a saved key for the same endpoint.
 4. Choose **Load models**, then select a model. If discovery is unavailable or your model is not listed, enter its ID manually.
 5. Save settings. Select a passage and use the sparkle icon to open **Ask AI**.
-6. Ask a question, review the answer and suggested note, then choose **Save note** when you want to keep it.
+6. Ask a question and continue with **Ask follow-up**. Choose **Generate note** to distill the conversation, review the draft, then **Save note** to annotate the passage.
 
 Model discovery uses the entered key without saving it. Saving settings stores the key in the native credential store. Switching providers or changing the endpoint clears an unsaved key, and an endpoint never inherits another endpoint's saved key. To remove a saved key, select the removal checkbox and save settings.
 
-Papertrail sends the selected passage, nearby text, paper metadata, and your question to the chosen provider. Model discovery requests its model list without sending paper text. Saved AI notes retain the original answer, model, endpoint, question, and supplied context in the annotation sidecar.
+Papertrail sends the selected passage, nearby text, paper metadata, and your question to the chosen provider. Follow-ups and note generation also send the completed questions and answers in that conversation. Model discovery requests its model list without sending paper text. Saved AI notes retain the source answer, model, endpoint, question, and supplied context in the annotation sidecar.
 
 The app does not require a Tokn gateway or a separate Tokn configuration. Cloud providers work directly from each device. A custom network endpoint must use HTTPS; HTTP is accepted for loopback endpoints. On iPhone, localhost refers to the phone itself.
 
@@ -19,9 +19,13 @@ The app does not require a Tokn gateway or a separate Tokn configuration. Cloud 
 
 **Ask** streams the response into a draft. When the provider returns thinking text, it appears in an expandable **Thinking** section, separate from the answer. Providers that do not expose thinking still show request activity. **Stop** cancels the request and leaves received text visible as an incomplete answer.
 
-The model can call `propose_annotation` to suggest a concise note. This tool prepares content for review; it never writes annotations. Edit the suggested note before choosing **Save note**. If the model does not propose a note, you can edit and save the full answer instead. Saving does not request another model response. A failed save retains the draft for retry.
+For the first answer, the model can call `propose_annotation` to suggest a concise note. This tool prepares content for review; it never writes annotations. If the first answer has no proposal, you can edit and save the answer instead.
 
-Drafts stay tied to the paper revision and passage selected when asking, even when you navigate to another paper. They remain available during the current app session; only an explicit save writes an annotation. Saved notes display the reviewed text and retain the complete answer for reference. Thinking text is not included in saved annotations or exports. Older annotations without a separate note continue to display their original answer.
+Use **Ask follow-up** to continue in the same conversation. Follow-ups produce answers without requesting new notes. **Generate note** explicitly asks the model to choose the useful takeaways from the completed conversation through `propose_annotation`. Review and edit that draft before choosing **Save note**. If the model cannot provide a valid tool proposal, the app shows an error and retains the previous draft. Saving does not request another model response, and a failed save retains the draft for retry.
+
+Conversations and note drafts persist locally, separately from annotations, and reopen with the same paper revision and original selected passage. Collapsing a conversation keeps its history. Interrupted answers are marked incomplete and excluded from future model context. Thinking is visible during the session but is not persisted or exported. Annotation exports include saved notes and their source answers; unsaved conversations and drafts are not exported. A note generated from a conversation retains the completed questions and answers it was based on.
+
+Further answers do not change a saved annotation or silently regenerate a draft. A draft based on earlier answers is labelled accordingly; generate a new draft to include later answers. Saving a new generated draft creates a new annotation. Saved notes display the reviewed text and retain their source answer for reference. Older annotations without a separate note continue to display their original answer.
 
 ## Connection troubleshooting
 
@@ -35,4 +39,4 @@ Tokn's provider crates are pinned to upstream revision `4db3eedb869604b460980956
 
 The full gateway and file-backed SDK client are not started. App settings remain in Papertrail's database, credentials remain in Keychain, and existing endpoint/model settings deserialize as a custom compatible provider. No Tokn auth file or request archive is created by this integration. Tokn may read an existing cache of public model metadata when constructing a provider.
 
-Answers use a bounded streaming parser with buffered-response compatibility. Tool arguments are validated before becoming a draft, and tool follow-ups are bounded. OAuth account setup and direct Anthropic BYOK are not part of this integration.
+Answers use a bounded streaming parser with buffered-response compatibility. Conversation history uses structured user/assistant messages; total context is bounded and oversized requests fail without silently discarding earlier turns. Tool arguments are validated before becoming a draft, and tool follow-ups are bounded. Explicit note generation disables DeepSeek thinking to support its required tool-call mode without storing reasoning history. OAuth account setup and direct Anthropic BYOK are not part of this integration.

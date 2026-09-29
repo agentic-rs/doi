@@ -181,6 +181,91 @@ pub struct AiAnswer {
   pub context_text: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiTurnPhase {
+  Pending,
+  Complete,
+  Incomplete,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiConversationOperation {
+  Answer,
+  Note,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AiConversationTurn {
+  pub turn_id: String,
+  pub question: String,
+  pub answer: String,
+  pub phase: AiTurnPhase,
+  pub provider_id: String,
+  pub model_id: String,
+  pub error: Option<String>,
+  pub created_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AiNoteDraft {
+  pub note_id: String,
+  pub content: String,
+  pub answer: String,
+  pub question: String,
+  pub provider_id: String,
+  pub model_id: String,
+  pub context_text: String,
+  pub created_at: String,
+  pub saved_annotation_id: Option<String>,
+  pub source_turn_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AiConversation {
+  pub conversation_id: String,
+  pub target: AnnotationTarget,
+  pub selected_text: String,
+  pub context_text: String,
+  pub paper_title: String,
+  pub created_at: String,
+  pub updated_at: String,
+  pub turns: Vec<AiConversationTurn>,
+  pub note_draft: Option<AiNoteDraft>,
+  pub active_request_id: Option<String>,
+  pub active_operation: Option<AiConversationOperation>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AiConversationSource {
+  pub paper_id: String,
+  pub pdf_hash: String,
+  pub selected_text: String,
+  pub context_text: String,
+  pub page_anchors: Vec<PageAnchor>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AiConversationRequest {
+  pub request_id: String,
+  pub conversation_id: String,
+  pub question: String,
+  pub source: Option<AiConversationSource>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AiConversationResponse {
+  pub conversation: AiConversation,
+  pub thinking: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AiConversationSaveResult {
+  pub conversation: AiConversation,
+  pub annotation: Annotation,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AiStreamKind {

@@ -151,6 +151,61 @@ export interface AiAnswer {
   context_text: string;
 }
 
+export interface AiConversationTurn {
+  turn_id: string;
+  question: string;
+  answer: string;
+  phase: 'pending' | 'complete' | 'incomplete';
+  provider_id: string;
+  model_id: string;
+  error: string | null;
+  created_at: string;
+}
+
+export interface AiNoteDraft {
+  note_id: string;
+  content: string;
+  answer: string;
+  question: string;
+  provider_id: string;
+  model_id: string;
+  context_text: string;
+  created_at: string;
+  saved_annotation_id: string | null;
+  source_turn_count: number;
+}
+
+export interface AiConversation {
+  conversation_id: string;
+  target: AnnotationTarget;
+  selected_text: string;
+  context_text: string;
+  paper_title: string;
+  created_at: string;
+  updated_at: string;
+  turns: AiConversationTurn[];
+  note_draft: AiNoteDraft | null;
+  active_request_id: string | null;
+  active_operation: 'answer' | 'note' | null;
+}
+
+export interface AiConversationRequest {
+  request_id: string;
+  conversation_id: string;
+  question: string;
+  source?: SelectionContext & { paper_id: string; pdf_hash: string };
+}
+
+export interface AiConversationResponse {
+  conversation: AiConversation;
+  thinking: string;
+}
+
+export interface AiConversationSaveResult {
+  conversation: AiConversation;
+  annotation: Annotation;
+}
+
 export interface AiStreamEvent {
   request_id: string;
   kind: 'status' | 'thinking_delta' | 'answer_delta';

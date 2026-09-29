@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AiAnswer, AiStreamEvent, Annotation, Paper, PdfReaderProps, ReadingLocation, SelectionContext } from '../lib/types';
+import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, Paper, PdfReaderProps, ReadingLocation, SelectionContext } from '../lib/types';
 import * as backend from '../lib/tauri';
 import { WorkspacePage } from './WorkspacePage';
 
 vi.mock('../lib/tauri', () => ({
   nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
   openArxivPaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
-  askSelection: vi.fn(), onAiStream: vi.fn(), cancelAiRequest: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
+  askAiConversation: vi.fn(), listAiConversations: vi.fn(), generateAiConversationNote: vi.fn(), updateAiConversationNote: vi.fn(), saveAiConversationNote: vi.fn(),
+  onAiStream: vi.fn(), cancelAiRequest: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
   resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(), listAiModels: vi.fn(),
   getReaderCapabilities: vi.fn(), setReaderOrientation: vi.fn(),
 }));
@@ -52,8 +53,46 @@ function mockLayout(compact: boolean) {
   })));
 }
 
+let conversations: Map<string, AiConversation>;
+
+function completeConversation(request: AiConversationRequest, answer = 'An explanation', content = 'A concise takeaway'): AiConversationResponse {
+  const previous = conversations.get(request.conversation_id);
+  const now = '2026-09-29T00:00:00Z';
+  const conversation: AiConversation = {
+    conversation_id: request.conversation_id,
+    target: previous?.target ?? { paper_id: request.source!.paper_id, pdf_hash: request.source!.pdf_hash, page_anchors: request.source!.page_anchors },
+    selected_text: previous?.selected_text ?? request.source!.selected_text,
+    context_text: previous?.context_text ?? request.source!.context_text,
+    paper_title: 'First paper', created_at: now, updated_at: now,
+    active_request_id: null, active_operation: null,
+    turns: [...previous?.turns ?? [], { turn_id: request.request_id, question: request.question, answer, phase: 'complete', provider_id: 'local', model_id: 'model', error: null, created_at: now }],
+    note_draft: previous?.note_draft ?? {
+      note_id: `note-${request.request_id}`, content, answer, question: request.question,
+      provider_id: 'local', model_id: 'model', context_text: 'Actual prompt', created_at: now,
+      saved_annotation_id: null, source_turn_count: 1,
+    },
+  };
+  conversations.set(conversation.conversation_id, conversation);
+  return { conversation, thinking: '' };
+}
+
+function saveConversationNote(conversationId: string, noteId: string, content: string) {
+  const conversation = conversations.get(conversationId)!;
+  const note = conversation.note_draft!;
+  const annotation: Annotation = {
+    schema_version: 1, annotation_id: noteId, target: conversation.target,
+    body: { kind: 'ai_answer', question: note.question, answer: note.answer, note_content: content,
+      provider_id: note.provider_id, model_id: note.model_id, context_text: note.context_text },
+    created_at: note.created_at, updated_at: note.created_at,
+  };
+  const updated = { ...conversation, note_draft: { ...note, content, saved_annotation_id: noteId } };
+  conversations.set(conversationId, updated);
+  return { conversation: updated, annotation };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
+  conversations = new Map();
   readerRenderCount = 0;
   mockLayout(false);
   vi.mocked(backend.nativeAvailable).mockReturnValue(true);
@@ -67,6 +106,15 @@ beforeEach(() => {
   vi.mocked(backend.listAnnotations).mockResolvedValue([]);
   vi.mocked(backend.saveReadingPosition).mockResolvedValue();
   vi.mocked(backend.saveAnnotation).mockImplementation(async (annotation) => annotation);
+  vi.mocked(backend.listAiConversations).mockImplementation(async (paperId) => [...conversations.values()].filter((conversation) => conversation.target.paper_id === paperId));
+  vi.mocked(backend.askAiConversation).mockImplementation(async (request) => completeConversation(request));
+  vi.mocked(backend.updateAiConversationNote).mockImplementation(async (id, _noteId, content) => {
+    const previous = conversations.get(id)!;
+    const updated = { ...previous, note_draft: { ...previous.note_draft!, content } };
+    conversations.set(id, updated);
+    return updated;
+  });
+  vi.mocked(backend.saveAiConversationNote).mockImplementation(async (id, noteId, content) => saveConversationNote(id, noteId, content));
 });
 afterEach(() => {
   cleanup();
@@ -400,15 +448,15 @@ describe('assembled paper workspace', () => {
 
   it('keeps late AI answers unsaved and saves the edited note to the original passage after navigation', async () => {
     await openFirst();
-    let resolveAnswer!: (answer: AiAnswer) => void;
-    vi.mocked(backend.askSelection).mockReturnValue(new Promise((resolve) => { resolveAnswer = resolve; }));
+    let resolveAnswer!: (answer: AiConversationResponse) => void;
+    vi.mocked(backend.askAiConversation).mockReturnValue(new Promise((resolve) => { resolveAnswer = resolve; }));
     openSelection();
     fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain this passage' } });
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
-    await waitFor(() => expect(backend.askSelection).toHaveBeenCalledWith(expect.objectContaining({ paper_id: first.paper_id, question: 'Explain this passage' })));
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ paper_id: first.paper_id }), question: 'Explain this passage' })));
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
-    await act(async () => resolveAnswer({ answer: 'An explanation', thinking: '', note_proposal: 'A concise takeaway', proposal_warning: null, provider_id: 'local', model_id: 'local-model', context_text: 'Actual prompt' }));
+    await act(async () => resolveAnswer(completeConversation(vi.mocked(backend.askAiConversation).mock.calls[0][0])));
     expect(backend.saveAnnotation).not.toHaveBeenCalled();
     expect(screen.queryByText('An explanation')).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Read paper' }));
@@ -421,28 +469,67 @@ describe('assembled paper workspace', () => {
     act(() => lastReader.on_selection({ ...selection, selected_text: 'A different selection', page_anchors: [{ ...selection.page_anchors[0], page_number: 9 }] }));
     fireEvent.change(screen.getByLabelText('Suggested note'), { target: { value: 'My edited takeaway' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
-    await waitFor(() => expect(backend.saveAnnotation).toHaveBeenCalled());
-    const saved = vi.mocked(backend.saveAnnotation).mock.calls[0][0];
+    await waitFor(() => expect(backend.saveAiConversationNote).toHaveBeenCalled());
+    const saved = lastReader.annotations[0];
     expect(saved.target).toMatchObject({ paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors });
     expect(saved.body).toMatchObject({ answer: 'An explanation', note_content: 'My edited takeaway' });
     expect(await screen.findByRole('button', { name: 'Saved' })).toBeTruthy();
-    expect(backend.askSelection).toHaveBeenCalledTimes(1);
+    expect(backend.askAiConversation).toHaveBeenCalledTimes(1);
     expect(lastReader.annotations).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Delete annotation' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Saved' })).toBeNull());
+    await waitFor(() => expect(lastReader.annotations).toHaveLength(0));
+    expect(screen.getByRole('article', { name: 'AI conversation: Explain this passage' })).toBeTruthy();
+  });
+
+  it('reopens a conversation and generates a note only when requested, keeping the original passage', async () => {
+    await openFirst();
+    openSelection();
+    fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain this passage' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    await screen.findByText('An explanation');
+    fireEvent.change(screen.getByLabelText('Follow-up question'), { target: { value: 'What are the limitations?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask follow-up' }));
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(backend.askAiConversation).mock.calls[1][0]).toMatchObject({ question: 'What are the limitations?' });
+    expect(vi.mocked(backend.askAiConversation).mock.calls[1][0].source).toBeUndefined();
+    expect(backend.generateAiConversationNote).not.toHaveBeenCalled();
+    expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
+    await waitFor(() => expect([...conversations.values()][0].turns).toHaveLength(2));
+
+    cleanup();
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
+    expect(await screen.findByText('What are the limitations?')).toBeTruthy();
+    expect(backend.askAiConversation).toHaveBeenCalledTimes(2);
+
+    vi.mocked(backend.generateAiConversationNote).mockImplementation(async (_requestId, id) => {
+      const previous = conversations.get(id)!;
+      const updated = { ...previous, note_draft: { ...previous.note_draft!, note_id: 'generated-note', content: 'Combined takeaway and limitations', source_turn_count: 2 } };
+      conversations.set(id, updated);
+      return { conversation: updated, thinking: '' };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate new note' }));
+    await waitFor(() => expect((screen.getByLabelText('Suggested note') as HTMLTextAreaElement).value).toBe('Combined takeaway and limitations'));
+    expect(backend.saveAiConversationNote).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(lastReader.annotations).toHaveLength(1));
+    expect(lastReader.annotations[0].target).toEqual({ paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors });
+    expect(lastReader.annotations[0].body).toMatchObject({ note_content: 'Combined takeaway and limitations' });
+    expect(backend.askAiConversation).toHaveBeenCalledTimes(2);
   });
 
   it('streams in the Notes panel without rendering the PDF again', async () => {
     let stream!: (event: AiStreamEvent) => void;
     vi.mocked(backend.onAiStream).mockImplementation(async (listener) => { stream = listener; return () => {}; });
-    vi.mocked(backend.askSelection).mockReturnValue(new Promise(() => {}));
+    vi.mocked(backend.askAiConversation).mockReturnValue(new Promise(() => {}));
     await openFirst();
     openSelection();
     fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain' } });
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
-    await waitFor(() => expect(backend.askSelection).toHaveBeenCalled());
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalled());
     const renders = readerRenderCount;
-    const requestId = vi.mocked(backend.askSelection).mock.calls[0][0].request_id;
+    const requestId = vi.mocked(backend.askAiConversation).mock.calls[0][0].request_id;
     act(() => {
       stream({ request_id: requestId, kind: 'thinking_delta', text: 'Provider reasoning' });
       stream({ request_id: requestId, kind: 'answer_delta', text: 'Streaming answer' });
@@ -457,7 +544,7 @@ describe('assembled paper workspace', () => {
   });
 
   it.each([false, true])('reveals an AI response inside Notes without moving the reader (reduced motion: %s)', async (reducedMotion) => {
-    vi.mocked(backend.askSelection).mockReturnValue(new Promise(() => {}));
+    vi.mocked(backend.askAiConversation).mockReturnValue(new Promise(() => {}));
     await openFirst();
     openSelection();
     const frames: FrameRequestCallback[] = [];
@@ -469,7 +556,7 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
 
     const panel = screen.getByRole('tabpanel', { name: /Notes/ });
-    const draft = screen.getByRole('article', { name: 'AI response: Explain' });
+    const draft = screen.getByRole('article', { name: 'AI conversation: Explain' });
     const shell = document.querySelector<HTMLElement>('.app-shell')!;
     const workbench = document.querySelector<HTMLElement>('.workbench')!;
     const reader = screen.getByTestId('reader');
@@ -490,8 +577,8 @@ describe('assembled paper workspace', () => {
     }
   });
 
-  it.each(['reopened panel', 'discarded response', 'different paper'])('does not apply a stale AI reveal to a %s', async (destination) => {
-    vi.mocked(backend.askSelection).mockReturnValue(new Promise(() => {}));
+  it.each(['reopened panel', 'different paper'])('does not apply a stale AI reveal to a %s', async (destination) => {
+    vi.mocked(backend.askAiConversation).mockReturnValue(new Promise(() => {}));
     await openFirst();
     openSelection();
     const frames: FrameRequestCallback[] = [];
@@ -503,9 +590,7 @@ describe('assembled paper workspace', () => {
     if (destination === 'reopened panel') {
       fireEvent.click(screen.getByRole('button', { name: 'Close references and notes panel' }));
       fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
-    } else if (destination === 'discarded response') {
-      fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved response' }));
+
     } else {
       fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
       await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
@@ -538,14 +623,14 @@ describe('assembled paper workspace', () => {
   });
 
   it('preserves a saved draft when a pending PDF load returns an older annotation snapshot', async () => {
-    vi.mocked(backend.askSelection).mockResolvedValue({ answer: 'Full answer', thinking: '', note_proposal: 'A takeaway', proposal_warning: null, provider_id: 'local', model_id: 'model', context_text: 'Context' });
+    vi.mocked(backend.askAiConversation).mockImplementation(async (request) => completeConversation(request, 'Full answer', 'A takeaway'));
     await openFirst();
     openSelection();
     fireEvent.change(screen.getByLabelText('Question about this selection'), { target: { value: 'Explain' } });
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
     await screen.findByLabelText('Suggested note');
     let completeSave!: () => void;
-    vi.mocked(backend.saveAnnotation).mockImplementationOnce((annotation) => new Promise((resolve) => { completeSave = () => resolve(annotation); }));
+    vi.mocked(backend.saveAiConversationNote).mockImplementationOnce((id, noteId, content) => new Promise((resolve) => { completeSave = () => resolve(saveConversationNote(id, noteId, content)); }));
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     let completePdf!: (data: Uint8Array<ArrayBuffer>) => void;
     vi.mocked(backend.getPdfBytes).mockReturnValueOnce(new Promise((resolve) => { completePdf = resolve; }));

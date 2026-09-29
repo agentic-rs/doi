@@ -114,6 +114,59 @@ pub async fn ask_selection(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn list_ai_conversations(
+  state: State<'_, AppState>,
+  paper_id: String,
+) -> Result<Vec<AiConversation>> {
+  state.database.list_ai_conversations(paper_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn ask_ai_conversation(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  request: AiConversationRequest,
+) -> Result<AiConversationResponse> {
+  ai::ask_conversation(&state, &app, request).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn generate_ai_conversation_note(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  request_id: String,
+  conversation_id: String,
+) -> Result<AiConversationResponse> {
+  ai::generate_conversation_note(&state, &app, request_id, conversation_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn update_ai_conversation_note(
+  state: State<'_, AppState>,
+  conversation_id: String,
+  note_id: String,
+  content: String,
+) -> Result<AiConversation> {
+  state
+    .database
+    .update_ai_conversation_note(conversation_id, note_id, content)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn save_ai_conversation_note(
+  state: State<'_, AppState>,
+  conversation_id: String,
+  note_id: String,
+  content: String,
+) -> Result<AiConversationSaveResult> {
+  state
+    .database
+    .save_ai_conversation_note(conversation_id, note_id, content)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn cancel_ai_request(state: State<'_, AppState>, request_id: String) -> Result<()> {
   validation::validate_id(&request_id)?;
   state.ai_requests.cancel(&request_id);

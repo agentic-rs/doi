@@ -243,29 +243,12 @@ svg { flex-shrink: 0; }
 .delete-button:hover:not(:disabled) { color: #a36755; background: #f6eee4; }
 .annotation-editor textarea { margin-top: 4px; font-size: 10px; }
 .annotation-editor > div { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 8px; }
-.ai-draft-list { display: flex; flex-direction: column; gap: 16px; margin-top: 18px; }
-.ai-draft { min-width: 0; padding: 14px; border: 1px solid #d8e3cc; border-radius: 6px; background: #fcfdf7; }
-.ai-draft-heading, .ai-draft-status { display: flex; align-items: center; gap: 8px; }
-.ai-draft-heading { justify-content: space-between; }
-.ai-draft-heading .icon-button { min-width: 36px; min-height: 36px; }
-.ai-draft-source, .ai-thinking, .annotation-full-answer { font-size: 12px; line-height: 1.6; color: #64765c; }
-.ai-draft-source summary, .ai-thinking summary, .annotation-full-answer summary { display: flex; align-items: center; justify-content: space-between; min-height: 36px; cursor: pointer; }
-.ai-draft-source[open] summary svg, .ai-thinking[open] summary svg, .annotation-full-answer[open] summary svg { transform: rotate(90deg); }
-.ai-draft-source blockquote { margin: 8px 0; border-left: 2px solid #c7d9aa; padding-left: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ai-draft-source p { margin: 4px 0; font-weight: 500; }
-.ai-draft .annotation-question { margin-top: 8px; font-size: 13px; color: #425c39; }
-.ai-draft-status { min-height: 36px; margin: 8px 0; font-size: 12px; color: #64765c; }
-.ai-draft-status .text-button { margin-left: auto; min-height: 36px; padding: 4px 8px; }
-.ai-draft-status.is-incomplete { color: #8b6632; }
+.ai-conversation-list { display: flex; flex-direction: column; gap: 16px; margin-top: 18px; }
+.ai-thinking, .annotation-full-answer { font-size: 12px; line-height: 1.6; color: #64765c; }
+.ai-thinking summary, .annotation-full-answer summary { display: flex; align-items: center; justify-content: space-between; min-height: 36px; cursor: pointer; }
+.ai-thinking[open] summary svg, .annotation-full-answer[open] summary svg { transform: rotate(90deg); }
 .ai-thinking { margin: 8px 0 12px; border: 1px solid #e3e9da; border-radius: 4px; background: #f5f7ef; padding: 0 10px; }
 .ai-thinking > div { max-height: 230px; overflow-y: auto; padding: 8px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ai-draft-answer { font-size: 13px; line-height: 1.75; color: #4c6243; }
-.ai-note-preview { border-top: 1px solid #e3e9da; margin-top: 18px; padding-top: 15px; }
-.ai-note-preview > label { display: block; font-size: 12px; font-weight: 600; color: #49613f; }
-.ai-note-preview textarea { width: 100%; min-height: 110px; padding: 10px; resize: vertical; border: 1px solid #d8e3cc; border-radius: 4px; background: #f4f7ed; font-size: 13px; line-height: 1.65; color: #425c39; }
-.ai-note-preview .field-hint, .ai-proposal-warning, .ai-draft-retention { font-size: 11px; line-height: 1.6; }
-.ai-proposal-warning { color: #88632f; }
-.ai-draft-retention { margin-bottom: 0; color: #64765c; }
 .annotation-full-answer { margin-top: 10px; border-top: 1px solid #e3e9da; }
 
 .modal-backdrop { position: fixed; inset: 0; background: #273d3357; backdrop-filter: blur(3px); z-index: 100; display: grid; place-items: center; padding: calc(25px + env(safe-area-inset-top, 0px)) calc(25px + env(safe-area-inset-right, 0px)) calc(25px + env(safe-area-inset-bottom, 0px)) calc(25px + env(safe-area-inset-left, 0px)); }
@@ -504,11 +487,8 @@ svg { flex-shrink: 0; }
 }
 
 @media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
-  .ai-note-preview textarea { font-size: 16px; }
-  .ai-draft-answer, .ai-draft .annotation-question, .ai-draft-source, .ai-thinking, .annotation-full-answer { font-size: 14px; }
-  .ai-note-preview > label, .ai-draft-status { font-size: 13px; }
-  .ai-draft-source summary, .ai-thinking summary, .annotation-full-answer summary, .ai-draft-heading .icon-button, .ai-draft-status .text-button, .ai-draft .composer-submit { min-height: 44px; }
-  .ai-draft-heading .icon-button, .ai-draft-status .text-button { min-width: 44px; }
+  .ai-thinking, .annotation-full-answer { font-size: 14px; }
+  .ai-thinking summary, .annotation-full-answer summary { min-height: 44px; }
 }
 
 @media (pointer: coarse) and (max-height: 500px) and (min-width: 761px) {

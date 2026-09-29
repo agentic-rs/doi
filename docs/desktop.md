@@ -41,4 +41,4 @@ Its output is `src-tauri/target/debug/bundle/macos/Papertrail.app`.
 
 ## Local library
 
-Downloaded PDFs, metadata, reading positions, and annotations persist in the desktop app data directory for `app.papertrail.reader`, including between development restarts. The desktop library is separate from the iPhone's sandboxed library; papers and notes are not automatically synchronized. Cached papers and notes work offline. Downloads, reference lookup, and remote AI requests need a connection.
+Downloaded PDFs, metadata, reading positions, annotations, and AI conversations persist in the desktop app data directory for `app.papertrail.reader`, including between development restarts. The desktop library is separate from the iPhone's sandboxed library; papers, conversations, and notes are not automatically synchronized. Cached papers, conversations, and notes work offline. Downloads, reference lookup, and remote AI requests need a connection.

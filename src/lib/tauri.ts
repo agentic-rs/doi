@@ -1,7 +1,8 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
-  AiAnswer, AiModel, AiRequest, AiSettings, AiStreamEvent, Annotation, OperationProgress, Paper,
+  AiAnswer, AiConversation, AiConversationRequest, AiConversationResponse, AiConversationSaveResult,
+  AiModel, AiRequest, AiSettings, AiStreamEvent, Annotation, OperationProgress, Paper,
   ReaderCapabilities, ReaderOrientation, ReadingLayout, ReadingLocation, ReferenceCandidate,
 } from './types';
 
@@ -31,6 +32,16 @@ export const saveSettings = (settings: AiSettings, api_key: string | null) =>
 export const listAiModels = (settings: AiSettings, api_key: string | null) =>
   invoke<AiModel[]>('list_ai_models', { settings, api_key });
 export const askSelection = (request: AiRequest) => invoke<AiAnswer>('ask_selection', { request });
+export const listAiConversations = (paper_id: string) =>
+  invoke<AiConversation[]>('list_ai_conversations', { paper_id });
+export const askAiConversation = (request: AiConversationRequest) =>
+  invoke<AiConversationResponse>('ask_ai_conversation', { request });
+export const generateAiConversationNote = (request_id: string, conversation_id: string) =>
+  invoke<AiConversationResponse>('generate_ai_conversation_note', { request_id, conversation_id });
+export const updateAiConversationNote = (conversation_id: string, note_id: string, content: string) =>
+  invoke<AiConversation>('update_ai_conversation_note', { conversation_id, note_id, content });
+export const saveAiConversationNote = (conversation_id: string, note_id: string, content: string) =>
+  invoke<AiConversationSaveResult>('save_ai_conversation_note', { conversation_id, note_id, content });
 export const cancelAiRequest = (request_id: string) => invoke<void>('cancel_ai_request', { request_id });
 export const onAiStream = (handler: (event: AiStreamEvent) => void) =>
   listen<AiStreamEvent>('ai-stream', (event) => handler(event.payload));

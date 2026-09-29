@@ -9,6 +9,9 @@ use std::{
   time::Duration,
 };
 
+mod conversations;
+pub(crate) use conversations::ConversationAnswer;
+
 #[derive(Clone)]
 pub struct Database {
   path: PathBuf,
@@ -23,7 +26,7 @@ impl Database {
     let version: u32 = connection
       .query_row("PRAGMA user_version", [], |row| row.get(0))
       .map_err(storage_error)?;
-    if version > 2 {
+    if version > 3 {
       return Err("The library was created by a newer Papertrail version.".into());
     }
     connection
@@ -54,10 +57,21 @@ impl Database {
          layout_version INTEGER NOT NULL,
          data TEXT NOT NULL
        );
-       PRAGMA user_version=2;
+       CREATE TABLE IF NOT EXISTS ai_conversations (
+         conversation_id TEXT PRIMARY KEY,
+         paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+         data TEXT NOT NULL,
+         active_request_id TEXT,
+         created_at TEXT NOT NULL,
+         updated_at TEXT NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS conversations_by_paper
+         ON ai_conversations(paper_id, created_at);
+       PRAGMA user_version=3;
        COMMIT;",
       )
       .map_err(storage_error)?;
+    conversations::recover_interrupted(&connection)?;
     Ok(database)
   }
 

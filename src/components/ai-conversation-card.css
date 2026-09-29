@@ -1,0 +1,59 @@
+.ai-conversation {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #d8e3cc;
+  border-radius: 6px;
+  background: #fcfdf7;
+}
+.ai-conversation-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  color: #425c39;
+  cursor: pointer;
+}
+.ai-conversation-heading .list-eyebrow { flex-shrink: 0; }
+.ai-conversation-heading > svg { margin-left: auto; flex-shrink: 0; }
+.ai-conversation-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.ai-conversation-source { font-size: 12px; line-height: 1.6; color: #64765c; }
+.ai-conversation-source summary { display: flex; align-items: center; justify-content: space-between; min-height: 36px; cursor: pointer; }
+.ai-conversation-source[open] summary svg { transform: rotate(90deg); }
+.ai-conversation-source blockquote { margin: 8px 0; border-left: 2px solid #c7d9aa; padding-left: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-conversation-source p { margin: 4px 0; font-weight: 500; }
+.ai-conversation-turn + .ai-conversation-turn { border-top: 1px solid #e3e9da; padding-top: 12px; margin-top: 18px; }
+.ai-conversation-turn h3 { margin: 12px 0 8px; font-size: 13px; line-height: 1.6; color: #425c39; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-conversation-answer { font-size: 13px; line-height: 1.75; color: #4c6243; }
+.ai-conversation-status { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: 12px; color: #64765c; }
+.ai-conversation-status .text-button { margin-left: auto; }
+.ai-conversation-incomplete, .ai-conversation-note-age { color: #8b6632; font-size: 12px; line-height: 1.6; }
+.ai-conversation-follow-up { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-top: 18px; }
+.ai-conversation-follow-up textarea, .ai-conversation-note textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px;
+  resize: vertical;
+  border: 1px solid #d8e3cc;
+  border-radius: 4px;
+  background: #f4f7ed;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #425c39;
+}
+.ai-conversation-note textarea { min-height: 110px; }
+.ai-generate-note { margin-top: 14px; }
+.ai-conversation-note { border-top: 1px solid #e3e9da; margin-top: 18px; padding-top: 15px; }
+.ai-conversation-note > label { display: block; font-size: 12px; font-weight: 600; color: #49613f; }
+.ai-conversation-note .field-hint, .ai-conversation-persistence { font-size: 11px; line-height: 1.6; color: #64765c; }
+.ai-conversation-persistence { min-height: 23px; padding-top: 4px; }
+.ai-conversation-note .composer-submit { width: 100%; margin-top: 8px; }
+@media (max-width: 760px), (max-height: 500px) and (orientation: landscape) {
+  .ai-conversation-follow-up textarea, .ai-conversation-note textarea { font-size: 16px; }
+  .ai-conversation-turn h3, .ai-conversation-answer, .ai-conversation-source { font-size: 14px; }
+  .ai-conversation-heading, .ai-conversation-source summary, .ai-conversation .button, .ai-conversation .text-button { min-height: 44px; }
+}

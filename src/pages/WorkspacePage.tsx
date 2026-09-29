@@ -12,8 +12,8 @@ import { PaperInfoSheet } from '../components/PaperInfoSheet';
 import { ReaderOverlay } from '../components/ReaderOverlay';
 import { FloatingSelectionAction } from '../components/FloatingSelectionAction';
 import { SettingsDialog } from '../components/SettingsDialog';
-import { AiAnswerDraft } from '../components/AiAnswerDraft';
-import { useAiDrafts } from '../lib/useAiDrafts';
+import { AiConversationCard } from '../components/AiConversationCard';
+import { useAiConversations } from '../lib/useAiConversations';
 import '../components/reading-workspace.css';
 import {
   deleteAnnotation, nativeAvailable, getPdfBytes, getSettings,
@@ -164,7 +164,7 @@ export function WorkspacePage() {
   const drawerLayout = compactLayout || Boolean(active);
   const readerActionsRef = useRef({ handleNavigate, toggleReadingControls });
   readerActionsRef.current = { handleNavigate, toggleReadingControls };
-  const aiDrafts = useAiDrafts(storeAnnotation);
+  const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
 
   function storeAnnotation(saved: Annotation) {
     annotationChangesRef.current.set(saved.annotation_id, { paper_id: saved.target.paper_id, pdf_hash: saved.target.pdf_hash, annotation: saved });
@@ -540,14 +540,14 @@ export function WorkspacePage() {
     if (!paper || !capturedSelection || annotationBusy) return;
     if (composerKind === 'ai') {
       if (!question.trim()) return;
-      const requestId = aiDrafts.ask(paper, capturedSelection, question);
+      const conversationId = aiConversations.ask(paper, capturedSelection, question);
       const notesPanel = notesPanelRef.current;
       setQuestion('');
       askInputRef.current?.blur();
       requestAnimationFrame(() => {
         if (activeRef.current?.paper.paper_id !== paper.paper_id
           || !notesPanel?.isConnected || notesPanelRef.current !== notesPanel) return;
-        const draft = document.getElementById(`ai-response-${requestId}`);
+        const draft = document.getElementById(`ai-conversation-${conversationId}`);
         if (!draft || !notesPanel.contains(draft)) return;
         // scrollIntoView also pans outer scroll containers, including the iOS
         // viewport while its keyboard closes. Only the Notes panel should move.
@@ -594,7 +594,6 @@ export function WorkspacePage() {
     setAnnotationBusy(annotation.annotation_id);
     try {
       await deleteAnnotation(annotation.annotation_id);
-      aiDrafts.dismiss(annotation.annotation_id);
       annotationChangesRef.current.set(annotation.annotation_id, { paper_id: annotation.target.paper_id, pdf_hash: annotation.target.pdf_hash, annotation: null });
       if (activeRef.current?.paper.paper_id === annotation.target.paper_id) setAnnotations((existing) => existing.filter((item) => item.annotation_id !== annotation.annotation_id));
       if (editId === annotation.annotation_id) setEditId(null);
@@ -710,7 +709,6 @@ export function WorkspacePage() {
   const progressPercent = progress?.total_bytes ? Math.round(progress.received_bytes / progress.total_bytes * 100) : null;
   const current = currentLocation(history);
   const pendingAnnotation = Boolean(annotationBusy);
-  const paperDrafts = aiDrafts.drafts.filter((draft) => draft.paper.paper_id === active?.paper.paper_id && draft.paper.pdf_hash === active.paper.pdf_hash);
   // Keep PDF rendering independent of streamed text and note editing. Event
   // actions read their latest implementation without invalidating this element.
   const reader = useMemo(() => active ? <PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!paperInfoOpen && !libraryOpen && !settingsOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection} on_references={(items) => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) setReferences(items); }} on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
@@ -821,7 +819,19 @@ export function WorkspacePage() {
                 <div className="composer-tabs"><button type="button" className={composerKind === 'ai' ? 'is-active' : ''} onClick={() => { setComposerKind('ai'); askInputRef.current?.focus(); }}><Sparkles size={14} /> Ask AI</button><button type="button" className={composerKind === 'note' ? 'is-active' : ''} onClick={() => setComposerKind('note')}><StickyNote size={14} /> Add a note</button></div>
                 {composerKind === 'ai' ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}><Sparkles size={15} />Ask</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
               </form> : <div className="notes-intro"><span className="empty-symbol"><MessageSquare size={23} strokeWidth={1.5} /></span><h2>Make room for a thought.</h2><p>Select a passage to ask a question or leave a note beside it.</p></div>}
-              {paperDrafts.length > 0 && <div className="ai-draft-list">{paperDrafts.map((draft) => <AiAnswerDraft key={draft.request_id} draft={draft} on_stop={() => aiDrafts.stop(draft.request_id)} on_edit={(content) => aiDrafts.editNote(draft.request_id, content)} on_save={() => { void aiDrafts.save(draft.request_id); }} on_dismiss={() => aiDrafts.dismiss(draft.request_id)} />)}</div>}
+              {aiConversations.loading && <p className="field-hint" role="status">Loading conversations…</p>}
+              {aiConversations.load_error && <div className="inline-error" role="alert"><p>{aiConversations.load_error}</p><button type="button" className="text-button" onClick={() => { void aiConversations.reload(); }}>Retry conversations</button></div>}
+              {aiConversations.conversations.length > 0 && <div className="ai-conversation-list">{aiConversations.conversations.map((view) => {
+                const id = view.conversation.conversation_id;
+                return <AiConversationCard key={id} view={view}
+                  on_follow_up={(question) => aiConversations.followUp(id, question)}
+                  on_generate_note={() => { void aiConversations.generateNote(id); }}
+                  on_stop={() => aiConversations.stop(id)}
+                  on_edit_note={(content) => aiConversations.editNote(id, content)}
+                  on_retry_note_persistence={() => { void aiConversations.retryNotePersistence(id); }}
+                  on_save_note={() => { void aiConversations.saveNote(id); }}
+                  on_toggle_collapsed={() => aiConversations.toggleCollapsed(id)} />;
+              })}</div>}
               <div className="notes-list-heading"><span className="list-eyebrow">SAVED NOTES <span>{annotations.length}</span></span>{active && <div className="sidecar-controls"><button type="button" className="icon-button" onClick={() => { void exportAnnotations(); }} aria-label="Export annotations as JSON" title="Export annotation sidecar JSON" disabled={exporting}>{exporting ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}</button><button type="button" className="icon-button" onClick={() => importInputRef.current?.click()} aria-label="Import annotation JSON" title="Import annotation sidecar JSON" disabled={importing}>{importing ? <LoaderCircle size={15} className="spin" /> : <Upload size={15} />}</button><input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { void importAnnotations(event); }} /></div>}</div>
               {annotations.length ? <div className="annotation-list">{annotations.map((annotation) => <article className="annotation-card" key={annotation.annotation_id}>
                 <div className="annotation-meta"><span>{annotation.body.kind === 'ai_answer' ? <Sparkles size={13} /> : <StickyNote size={13} />}{annotation.body.kind === 'ai_answer' ? 'AI answer' : 'Your note'}</span><button type="button" className="annotation-page" onClick={() => jumpToAnnotation(annotation)}>p. {annotation.target.page_anchors[0]?.page_number} <ArrowUpRight size={11} /></button></div>

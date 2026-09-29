@@ -33,23 +33,54 @@ pub fn validate_location(location: &ReadingLocation) -> Result<()> {
 
 pub fn validate_annotation(annotation: &Annotation) -> Result<()> {
   validate_id(&annotation.annotation_id)?;
-  validate_id(&annotation.target.paper_id)?;
   if annotation.schema_version != 1 {
     return Err("Unsupported annotation schema version.".into());
   }
-  if annotation.target.pdf_hash.len() != 64
-    || !annotation
-      .target
-      .pdf_hash
-      .bytes()
-      .all(|byte| byte.is_ascii_hexdigit())
+  validate_annotation_target(&annotation.target)?;
+  for timestamp in [&annotation.created_at, &annotation.updated_at] {
+    if !timestamp.is_empty() && chrono::DateTime::parse_from_rfc3339(timestamp).is_err() {
+      return Err("Annotation timestamps must use RFC3339.".into());
+    }
+  }
+  match &annotation.body {
+    AnnotationBody::Note { content } => require_text(content, "note", MAX_TEXT_BYTES)?,
+    AnnotationBody::AiAnswer {
+      question,
+      answer,
+      note_content,
+      provider_id,
+      model_id,
+      context_text,
+    } => {
+      require_text(question, "question", 8192)?;
+      require_text(answer, "AI answer", MAX_TEXT_BYTES)?;
+      if let Some(note) = note_content {
+        require_text(note, "AI note", MAX_TEXT_BYTES)?;
+      }
+      require_text(provider_id, "provider", 2048)?;
+      require_text(model_id, "model", 512)?;
+      bound_text(context_text, "AI context", MAX_TEXT_BYTES)?;
+    }
+  }
+  if serde_json::to_vec(annotation)
+    .map_err(|_| "Invalid annotation.".to_string())?
+    .len()
+    > 2 * 1024 * 1024
   {
+    return Err("Annotation is too large.".into());
+  }
+  Ok(())
+}
+
+pub fn validate_annotation_target(target: &AnnotationTarget) -> Result<()> {
+  validate_id(&target.paper_id)?;
+  if target.pdf_hash.len() != 64 || !target.pdf_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
     return Err("An annotation must identify the original PDF hash.".into());
   }
-  if annotation.target.page_anchors.is_empty() || annotation.target.page_anchors.len() > 100 {
+  if target.page_anchors.is_empty() || target.page_anchors.len() > 100 {
     return Err("An annotation must contain a bounded selection of page anchors.".into());
   }
-  for anchor in &annotation.target.page_anchors {
+  for anchor in &target.page_anchors {
     if anchor.page_number == 0
       || anchor.page_number > 100_000
       || anchor.quad_points.is_empty()
@@ -82,38 +113,6 @@ pub fn validate_annotation(annotation: &Annotation) -> Result<()> {
         return Err("Annotation quadrilaterals must enclose a non-empty area.".into());
       }
     }
-  }
-  for timestamp in [&annotation.created_at, &annotation.updated_at] {
-    if !timestamp.is_empty() && chrono::DateTime::parse_from_rfc3339(timestamp).is_err() {
-      return Err("Annotation timestamps must use RFC3339.".into());
-    }
-  }
-  match &annotation.body {
-    AnnotationBody::Note { content } => require_text(content, "note", MAX_TEXT_BYTES)?,
-    AnnotationBody::AiAnswer {
-      question,
-      answer,
-      note_content,
-      provider_id,
-      model_id,
-      context_text,
-    } => {
-      require_text(question, "question", 8192)?;
-      require_text(answer, "AI answer", MAX_TEXT_BYTES)?;
-      if let Some(note) = note_content {
-        require_text(note, "AI note", MAX_TEXT_BYTES)?;
-      }
-      require_text(provider_id, "provider", 2048)?;
-      require_text(model_id, "model", 512)?;
-      bound_text(context_text, "AI context", MAX_TEXT_BYTES)?;
-    }
-  }
-  if serde_json::to_vec(annotation)
-    .map_err(|_| "Invalid annotation.".to_string())?
-    .len()
-    > 2 * 1024 * 1024
-  {
-    return Err("Annotation is too large.".into());
   }
   Ok(())
 }
