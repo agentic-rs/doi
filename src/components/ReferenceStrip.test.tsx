@@ -18,14 +18,18 @@ describe('block reference summaries', () => {
     const view = render(<ReferenceStrip references={[reference]} on_select={select} />);
     expect(screen.getByRole('complementary', { name: 'References for this passage' })).toBeTruthy();
     expect(screen.getByText('Smi20')).toBeTruthy();
-    expect(screen.getByText('Example journal')).toBeTruthy();
+    expect(screen.getByText('J. Smith · 2020 · Example journal')).toBeTruthy();
     expect(screen.queryByText(/1817/)).toBeNull();
     expect(select).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Reference Smi20: A useful paper' }));
     expect(select).toHaveBeenCalledWith(reference);
     view.rerender(<ReferenceStrip references={[{ ...reference, arxiv_id: '1706.03762v2' }]} on_select={select} />);
-    expect(screen.getByText('arxiv:1706.03762v2')).toBeTruthy();
-    expect(screen.queryByText('Example journal')).toBeNull();
+    expect(screen.getByText('J. Smith · 2020 · arxiv:1706.03762v2')).toBeTruthy();
+    expect(screen.queryByText(/Example journal/)).toBeNull();
+    view.rerender(<ReferenceStrip references={[{ ...reference, venue: null }]} on_select={select} />);
+    expect(screen.getByText('J. Smith · 2020')).toBeTruthy();
+    view.rerender(<ReferenceStrip references={[{ ...reference, authors: [], publication_year: null }]} on_select={select} />);
+    expect(screen.getByText('Example journal')).toBeTruthy();
   });
 
   it('uses raw text for uncertain references without inventing a numeric label', () => {

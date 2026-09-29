@@ -2,7 +2,7 @@
 
 Reading view places compact, unscaled reference rows below the blocks that cite them. Tapping one opens reference details without moving the paper. Embedded bibliography citation links in the original PDF open the same details; figure, section, and other links retain their normal navigation.
 
-The line below a reference title shows `arxiv:xxxx` when an arXiv identifier is available, otherwise the publication venue without page numbers. Details and match results use the same ordering; authors and publication years remain available in details.
+The line below a reference title shows author, year, and `arxiv:xxxx` when an arXiv identifier is available, otherwise author, year, and the publication venue without page numbers. Missing fields are omitted. Compact rows use the first author; details and match results use the same ordering with the full author list.
 
 Details show conservatively parsed titles, authors, publication years, and venues. Printed labels are retained instead of renumbering the bibliography. Author/year bibliographies have no invented ordinal. The original citation remains available, and entries that cannot be separated confidently remain plain text. Parsing does not rewrite the PDF or annotation sidecars.
 

@@ -18,3 +18,12 @@ export function publicationVenue(venue: string | null): string {
 export function referencePublication(reference: { arxiv_id: string | null; venue: string | null }): string {
   return reference.arxiv_id ? `arxiv:${reference.arxiv_id}` : publicationVenue(reference.venue);
 }
+
+export function referenceSubtitle(
+  reference: Pick<ReferenceItem, 'authors' | 'publication_year' | 'arxiv_id' | 'venue'>,
+  compact = false,
+): string {
+  const authors = reference.authors.map((author) => author.trim()).filter(Boolean);
+  const author_text = compact ? authors[0] : authors.join(', ');
+  return [author_text, reference.publication_year?.trim(), referencePublication(reference)].filter(Boolean).join(' · ');
+}

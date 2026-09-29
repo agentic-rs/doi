@@ -1,6 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import type { ReferenceItem } from '../lib/types';
-import { referencePublication, referenceSummary } from '../lib/reference-presentation';
+import { referencePublication, referenceSubtitle, referenceSummary } from '../lib/reference-presentation';
 import './reference-components.css';
 
 export interface ReferenceStripProps {
@@ -13,14 +13,15 @@ export function ReferenceStrip({ references, on_select }: ReferenceStripProps) {
   return <aside className="reference-strip" aria-label="References for this passage">
     <ul>{references.map((reference) => {
       const summary = referenceSummary(reference);
-      const publication = reference.arxiv_id || reference.parse_confidence === 'parsed' ? referencePublication(reference) : '';
+      const subtitle = reference.parse_confidence === 'parsed' ? referenceSubtitle(reference, true)
+        : reference.arxiv_id ? referencePublication(reference) : '';
       return <li key={reference.reference_id}>
         <button type="button" aria-label={`Reference ${reference.label ? `${reference.label}: ` : ''}${summary}`}
-          onClick={() => on_select(reference)}>
+          title={subtitle || undefined} onClick={() => on_select(reference)}>
           <span className="reference-strip-label">{reference.label ?? 'Ref'}</span>
           <span className="reference-strip-content">
             <span className="reference-strip-title">{summary}</span>
-            {publication && <span className="reference-strip-publication">{publication}</span>}
+            {subtitle && <span className="reference-strip-publication">{subtitle}</span>}
           </span>
           <ChevronRight size={16} aria-hidden="true" />
         </button>

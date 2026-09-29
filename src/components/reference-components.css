@@ -3,7 +3,7 @@
 .reference-entry-label { font-weight: 650; color: #376b56; overflow-wrap: anywhere; }
 .reference-entry-metadata { margin-top: 9px; }
 .reference-entry-metadata h3 { margin: 0; font: 17px/1.45 Georgia, 'Times New Roman', serif; color: #2c4d3c; overflow-wrap: anywhere; }
-.reference-entry-authors, .reference-entry-publication { margin: 7px 0 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.reference-entry-publication { margin: 7px 0 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .reference-entry-publication { color: #68796b; }
 .reference-entry-citation, .reference-entry-original p { margin: 10px 0; font: 14px/1.65 Georgia, 'Times New Roman', serif; white-space: pre-wrap; overflow-wrap: anywhere; }
 .reference-entry-original { margin-top: 9px; }

@@ -156,3 +156,8 @@ Workspace integration tests use a mocked reader and command boundary; DOM select
 - All 26 affected reference UI/parser tests and the frontend build pass. Coverage includes arXiv precedence, raw entries with known identifiers, journal pagination, conference page ranges, and preserving meaningful venue numbers and the original citation.
 - The Attention and BERT fixtures retain 40/56 references and all 76/209 citation links. Their subtitles now show arXiv identifiers or venues without pagination; the joined Attention Visualizations heading no longer contaminates the final reference.
 - The macOS bundle and ad-hoc signed iPhone simulator build succeed. The simulator signature passes strict/deep verification, and the update was installed over the existing iPhone 16 app and launched. This refinement was checked with automated UI tests and real PDF extraction; native touch interaction and the physical-device app were not updated or verified in this pass.
+
+### Author and year retained in subtitles
+
+- The second line now combines author, year, and arXiv identifier or venue. Compact rows retain the first author; details and match results retain every author. Missing fields are omitted without stray separators, and uncertain entries keep their existing raw presentation.
+- All 13 affected reference UI tests pass, including arXiv priority, venue pagination removal, and missing-field fallbacks. The frontend and macOS/iOS simulator builds succeed. The signed simulator app was verified, installed over the existing library, and launched; this follow-up did not include native touch testing or a physical-device build.
