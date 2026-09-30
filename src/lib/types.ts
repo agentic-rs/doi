@@ -264,6 +264,8 @@ export interface PdfReaderProps {
   viewport_key?: number;
   initial_fit_width?: boolean;
   reading_active?: boolean;
+  edge_navigation?: 'back' | 'close' | null;
+  on_edge_navigation?: () => void;
   inline_notes?: boolean;
   annotation_busy?: string | null;
   annotation_edit?: { annotation_id: string; content: string } | null;

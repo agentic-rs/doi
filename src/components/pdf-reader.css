@@ -81,6 +81,29 @@
 }
 
 .pdf-toolbar-group { display: flex; align-items: center; gap: 6px; }
+.pdf-edge-feedback {
+  position: fixed;
+  z-index: 25;
+  top: clamp(calc(var(--reader-safe-top, env(safe-area-inset-top, 0px)) + 52px), var(--edge-swipe-y, 50%), calc(100% - env(safe-area-inset-bottom, 0px) - 52px));
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 13px 10px 9px;
+  border: 1px solid #c4d5cb;
+  border-radius: 24px;
+  background: #fcfcf6;
+  color: #32655b;
+  box-shadow: 0 3px 15px #203a3926;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: calc(0.65 + var(--edge-swipe-progress, 0) * 0.35);
+  transform: translate(calc(-12px + var(--edge-swipe-progress, 0) * 12px), -50%);
+  pointer-events: none;
+  user-select: none;
+}
+.pdf-edge-feedback[hidden] { display: none; }
+.pdf-edge-feedback[data-ready="true"] { background: #245b54; border-color: #245b54; color: white; }
 .pdf-toolbar button {
   display: grid;
   place-items: center;

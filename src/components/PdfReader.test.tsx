@@ -355,9 +355,10 @@ function expectPdfPointAt(page: HTMLElement, point: [number, number], client_x: 
   expect(actual[1]).toBeCloseTo(point[1]);
 }
 
-function dispatchTouch(element: HTMLElement, type: string, touches: Array<{ identifier: number; clientX: number; clientY: number }>): Event {
+function dispatchTouch(element: HTMLElement, type: string, touches: Array<{ identifier: number; clientX: number; clientY: number }>, changed_touches = touches): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, 'touches', { value: touches });
+  Object.defineProperty(event, 'changedTouches', { value: changed_touches });
   fireEvent(element, event);
   return event;
 }
@@ -410,6 +411,144 @@ function readingProps(block_id = 'p1-body'): PdfReaderProps {
 function readingBlock(block_id: string): HTMLElement {
   return document.querySelector<HTMLElement>(`[data-block-id="${block_id}"]`)!;
 }
+
+describe('left-edge reader navigation', () => {
+  const touch = (x: number, y = 240) => ({ identifier: 1, clientX: x, clientY: y });
+  const feedback = () => document.querySelector<HTMLDivElement>('.pdf-edge-feedback')!;
+
+  it.each(['pdf', 'reading'] as const)('previews Back without PDF work and navigates only on release in %s mode', async (mode) => {
+    vi.useFakeTimers();
+    const props = { ...(mode === 'reading' ? readingProps('p1-intro') : readerProps()), edge_navigation: 'back' as const, on_edge_navigation: vi.fn() };
+    render(<PdfReader {...props} />);
+    await advancePreviewFrame(40);
+    await advancePreviewFrame(40);
+    const scroll = screen.getByLabelText(mode === 'reading' ? 'Scrollable reading view' : 'Scrollable PDF pages');
+    const baseline = heavyWork(props);
+    dispatchTouch(scroll, 'touchstart', [touch(5)]);
+    for (const x of [24, 50, 90, 150]) {
+      expect(dispatchTouch(scroll, 'touchmove', [touch(x)]).defaultPrevented).toBe(true);
+      await advancePreviewFrame();
+    }
+    expect(feedback().hidden).toBe(false);
+    expect(feedback().textContent).toBe('Back');
+    expect(feedback().dataset.ready).toBe('true');
+    expect(feedback().closest('.pdf-pages')).toBeNull();
+    expect(heavyWork(props)).toEqual(baseline);
+    expect(props.on_edge_navigation).not.toHaveBeenCalled();
+    dispatchTouch(scroll, 'touchend', [], [touch(150)]);
+    expect(props.on_edge_navigation).toHaveBeenCalledExactlyOnceWith();
+    expect(feedback().hidden).toBe(true);
+    expect(props.on_location_change).toHaveBeenCalledTimes(baseline.location_reports + 1);
+    expect(vi.mocked(props.on_location_change).mock.invocationCallOrder.at(-1)).toBeLessThan(props.on_edge_navigation.mock.invocationCallOrder[0]);
+    await advancePreviewFrame(250);
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+    expect(heavyWork(props)).toEqual({ ...baseline, location_reports: baseline.location_reports + 1 });
+  });
+
+  it('cancels a short Close swipe without turning it into a reader tap', async () => {
+    vi.useFakeTimers();
+    const props = { ...readerProps(), edge_navigation: 'close' as const, on_edge_navigation: vi.fn() };
+    render(<PdfReader {...props} />);
+    await advancePreviewFrame(40);
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    fireEvent.pointerDown(scroll, { clientX: 5, clientY: 240 });
+    dispatchTouch(scroll, 'touchstart', [touch(5)]);
+    dispatchTouch(scroll, 'touchmove', [touch(30)]);
+    await advancePreviewFrame();
+    expect(feedback().textContent).toBe('Close');
+    expect(feedback().dataset.ready).toBe('false');
+    fireEvent.pointerUp(scroll, { clientX: 30, clientY: 240 });
+    dispatchTouch(scroll, 'touchend', [], [touch(30)]);
+    await advancePreviewFrame(250);
+    expect(feedback().hidden).toBe(true);
+    expect(props.on_edge_navigation).not.toHaveBeenCalled();
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+  });
+
+  it.each(['deactivated', 'navigation', 'action', 'viewport'] as const)('cancels an in-flight swipe when the reader changes: %s', async (change) => {
+    vi.useFakeTimers();
+    const props: PdfReaderProps = { ...readerProps(), edge_navigation: 'back', on_edge_navigation: vi.fn() };
+    const view = render(<PdfReader {...props} />);
+    await advancePreviewFrame(40);
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    dispatchTouch(scroll, 'touchstart', [touch(5)]);
+    dispatchTouch(scroll, 'touchmove', [touch(150)]);
+    await advancePreviewFrame();
+    expect(feedback().hidden).toBe(false);
+    const changed = change === 'deactivated' ? { reading_active: false }
+      : change === 'navigation' ? { navigation_key: props.navigation_key + 1 }
+      : change === 'action' ? { edge_navigation: 'close' as const } : { viewport_key: 1 };
+    view.rerender(<PdfReader {...props} {...changed} />);
+    expect(feedback().hidden).toBe(true);
+    dispatchTouch(scroll, 'touchend', [], [touch(150)]);
+    expect(props.on_edge_navigation).not.toHaveBeenCalled();
+  });
+
+  it('leaves selection, focused editing, and ordinary interactive controls alone', async () => {
+    vi.useFakeTimers();
+    const props = { ...readerProps(), edge_navigation: 'back' as const, on_edge_navigation: vi.fn() };
+    render(<PdfReader {...props} />);
+    await advancePreviewFrame(40);
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    const swipe = (target: HTMLElement) => {
+      dispatchTouch(target, 'touchstart', [touch(5)]);
+      expect(dispatchTouch(target, 'touchmove', [touch(150)]).defaultPrevented).toBe(false);
+      dispatchTouch(target, 'touchend', [], [touch(150)]);
+    };
+    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false, rangeCount: 1 } as Selection);
+    swipe(scroll);
+    selection.mockRestore();
+    const input = screen.getByRole('textbox', { name: 'Page number' });
+    input.focus();
+    swipe(scroll);
+    input.blur();
+    swipe(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(props.on_edge_navigation).not.toHaveBeenCalled();
+    expect(feedback().hidden).toBe(true);
+  });
+
+  it('yields to a two-finger pinch after an edge swipe starts', async () => {
+    vi.useFakeTimers();
+    const props = { ...readerProps(), edge_navigation: 'back' as const, on_edge_navigation: vi.fn() };
+    render(<PdfReader {...props} />);
+    await advancePreviewFrame(40);
+    const scroll = screen.getByLabelText('Scrollable PDF pages');
+    dispatchTouch(scroll, 'touchstart', [touch(5)]);
+    dispatchTouch(scroll, 'touchmove', [touch(25)]);
+    await advancePreviewFrame();
+    const second = { identifier: 2, clientX: 120, clientY: 240 };
+    dispatchTouch(scroll, 'touchstart', [touch(25), second]);
+    expect(feedback().hidden).toBe(true);
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(true);
+    dispatchTouch(scroll, 'touchmove', [touch(10), { ...second, clientX: 160 }]);
+    await advancePreviewFrame();
+    dispatchTouch(scroll, 'touchend', [], [touch(10), second]);
+    await advancePreviewFrame();
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+    expect(props.on_edge_navigation).not.toHaveBeenCalled();
+  });
+
+  it('disables the edge gesture while an enlarged figure is open', async () => {
+    vi.useFakeTimers();
+    const show_modal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+    const props = { ...readingProps('p1-intro'), edge_navigation: 'back' as const, on_edge_navigation: vi.fn() };
+    try {
+      render(<PdfReader {...props} />);
+      await advancePreviewFrame(40);
+      fireEvent.click(screen.getByRole('button', { name: 'Enlarge Figure Figure 1' }));
+      const scroll = screen.getByLabelText('Scrollable reading view');
+      dispatchTouch(scroll, 'touchstart', [touch(5)]);
+      expect(dispatchTouch(scroll, 'touchmove', [touch(150)]).defaultPrevented).toBe(false);
+      dispatchTouch(scroll, 'touchend', [], [touch(150)]);
+      expect(props.on_edge_navigation).not.toHaveBeenCalled();
+      expect(feedback().hidden).toBe(true);
+    } finally {
+      if (show_modal) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', show_modal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+    }
+  });
+});
 
 function croppedPdfPointAt(block_id: string, client_x: number, client_y: number): [number, number] {
   const bounds = readingBlock(block_id).getBoundingClientRect();

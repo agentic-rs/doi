@@ -15,6 +15,7 @@ import { pdfContentLines } from '../lib/pdf-text';
 import { readPdfTextContent } from '../lib/pdf-compatibility';
 import { interactiveReaderTarget, isReaderTap, moveReaderGesture, startReaderGesture } from '../lib/reader-gestures';
 import type { ReaderGesture } from '../lib/reader-gestures';
+import { attachReaderEdgeSwipe } from '../lib/reader-edge-swipe';
 import type { SelectionPage } from '../lib/pdf-selection';
 import { attachPdfZoomGestures } from '../lib/pdf-zoom-gestures';
 import type { PdfZoomPoint } from '../lib/pdf-zoom-gestures';
@@ -166,6 +167,8 @@ export function PdfReader(props: PdfReaderProps) {
   const link_navigation = useRef(0);
   const viewport_size = useRef<{ width: number; height: number } | null>(null);
   const gesture = useRef<ReaderGesture | null>(null);
+  const edge_feedback = useRef<HTMLDivElement | null>(null);
+  const edge_swiping = useRef(false);
   const tap_timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const last_scroll_at = useRef(Number.NEGATIVE_INFINITY);
   const last_selection_at = useRef(Number.NEGATIVE_INFINITY);
@@ -599,6 +602,50 @@ export function PdfReader(props: PdfReaderProps) {
     });
   }, [scroll_root, loaded, reading_active, paper.paper_id, reader_mode, layout, view_revision]);
 
+  useLayoutEffect(() => {
+    const action = props.edge_navigation;
+    if (!scroll_root || !loaded || !reading_active || !action || !props.on_edge_navigation) return;
+    const canSwipe = () => {
+      const current = callbacks.current;
+      const editing = document.activeElement?.matches('input, textarea, select, [contenteditable="true"]');
+      return current.paper.paper_id === paper.paper_id && current.navigation_key === navigation_key
+        && current.viewport_key === props.viewport_key && current.edge_navigation === action
+        && current.reading_active !== false && !current.annotation_edit && !editing
+        && !zoom_preview.current && !zoom_anchor.current && !pending_location.current && !hasSelection();
+    };
+    return attachReaderEdgeSwipe(scroll_root, {
+      can_start: (target) => canSwipe() && !interactiveReaderTarget(target),
+      is_current: canSwipe,
+      on_claim: () => {
+        edge_swiping.current = true;
+        gesture.current = null;
+        cancelPendingTap();
+      },
+      on_progress: (preview) => {
+        const feedback = edge_feedback.current;
+        if (feedback) {
+          feedback.hidden = !preview;
+          if (preview) {
+            feedback.style.setProperty('--edge-swipe-progress', String(preview.progress));
+            feedback.style.setProperty('--edge-swipe-y', `${preview.client_y}px`);
+            feedback.dataset.ready = String(preview.ready);
+          }
+        }
+        if (!preview && edge_swiping.current) {
+          edge_swiping.current = false;
+          gesture.current = null;
+          cancelPendingTap();
+          last_scroll_at.current = performance.now();
+        }
+      },
+      on_complete: () => {
+        // Capture the latest passage before reusing the app's Back/Close flow.
+        reportLocation();
+        callbacks.current.on_edge_navigation?.();
+      },
+    });
+  }, [scroll_root, loaded, reading_active, paper.paper_id, navigation_key, reader_mode, props.viewport_key, props.edge_navigation, Boolean(props.on_edge_navigation)]);
+
   useEffect(() => {
     if (!immersive || !reading_active || controls_visible || hinted_paper.current === paper.paper_id) return;
     hinted_paper.current = paper.paper_id;
@@ -870,7 +917,7 @@ export function PdfReader(props: PdfReaderProps) {
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     cancelPendingTap();
-    if (!reading_active || zoom_anchor.current) {
+    if (!reading_active || zoom_anchor.current || edge_swiping.current) {
       gesture.current = null;
       return;
     }
@@ -888,7 +935,7 @@ export function PdfReader(props: PdfReaderProps) {
   function handlePointerUp(event: PointerEvent<HTMLDivElement>) {
     const completed = gesture.current;
     gesture.current = null;
-    if (!callbacks.current.on_toggle_controls || !reading_active) return;
+    if (!callbacks.current.on_toggle_controls || !reading_active || edge_swiping.current) return;
     const pointer = {
       pointer_id: event.pointerId, client_x: event.clientX, client_y: event.clientY,
       timestamp: performance.now(), interactive_target: interactiveReaderTarget(event.target),
@@ -946,6 +993,9 @@ export function PdfReader(props: PdfReaderProps) {
       </div>
       {immersive && reading_active && <button type="button" className="pdf-controls-accessible" onClick={() => props.on_toggle_controls?.()}>{controls_visible ? 'Hide reading controls' : 'Show reading controls'}</button>}
       {immersive && reading_active && !controls_visible && show_tap_hint && <div className="pdf-tap-hint" aria-hidden="true">Tap the page to show reading controls</div>}
+      <div className="pdf-edge-feedback" ref={edge_feedback} hidden aria-hidden="true">
+        <ChevronLeft size={18} /><span>{props.edge_navigation === 'back' ? 'Back' : 'Close'}</span>
+      </div>
       <div className={`pdf-scroll${reading ? ' reading-scroll' : ''}`} ref={setScrollRoot} onScroll={handleScroll} inert={Boolean(enlarged_figure)}
         onPointerDown={handlePointerDown}
         onPointerMove={(event) => moveReaderGesture(gesture.current, event.pointerId, event.clientX, event.clientY)}

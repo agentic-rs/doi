@@ -183,8 +183,8 @@ export function WorkspacePage() {
   const inspectorBlocksReader = inspectorOpen && !isDesktop;
   const externalLink = useExternalLink((message) => setNotice({ tone: 'error', message }));
   const modalOpen = Boolean(externalLink.request || selectedReference || preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
-  const readerActionsRef = useRef({ handleNavigate, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation });
-  readerActionsRef.current = { handleNavigate, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation };
+  const readerActionsRef = useRef({ handleNavigate, handleEdgeNavigation, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation });
+  readerActionsRef.current = { handleNavigate, handleEdgeNavigation, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation };
   const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
   const isPhone = readerCapabilities.device_kind === 'phone';
   const requiresPhoneAi = isNative && (isPhone || readerCapabilities.device_kind === 'unknown');
@@ -198,6 +198,10 @@ export function WorkspacePage() {
   });
   const aiTransition = phoneAi.pending || aiEntryPending;
   const composingAi = composerKind === 'ai' && (!requiresPhoneAi || phoneAi.open);
+  const edgeNavigation = isNative && (isPhone || readerCapabilities.device_kind === 'tablet')
+    && active && !opening && !modalOpen && !inspectorOpen && !phoneAi.open && !aiTransition
+    && !orientationPending && !editId && !annotationBusy && !importing && !exporting
+    ? canGoBack(history) ? 'back' : 'close' : null;
 
   const hideReadingControls = useCallback((keep_sidebar = false) => {
     aiEntrySequenceRef.current += 1;
@@ -679,6 +683,20 @@ export function WorkspacePage() {
     }
   }
 
+  function handleEdgeNavigation(paper_id: string, action: 'back' | 'close' | null) {
+    // A released gesture belongs to the paper and action shown when it started.
+    // Recheck live state because a tab, dialog, or asynchronous load may have
+    // changed while the user's finger was still down.
+    if (!mountedRef.current || !action || edgeNavigation !== action
+      || activeRef.current?.paper.paper_id !== paper_id
+      || openingRef.current || annotationMutationRef.current) return;
+    if (document.activeElement?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+    const currentAction = canGoBack(historyRef.current) ? 'back' : 'close';
+    if (action !== currentAction) return;
+    if (action === 'back') void navigateHistory('back');
+    else closePaper(paper_id);
+  }
+
   function jumpTo(location: ReadingLocation, anchor: PageAnchor | null = null) {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
     stopOpening();
@@ -1006,13 +1024,15 @@ export function WorkspacePage() {
     on_delete_annotation={(annotation) => readerActionsRef.current.removeAnnotation(annotation)}
     on_navigate_annotation={(annotation, anchor) => readerActionsRef.current.jumpToAnnotation(annotation, anchor)}
     target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey}
+    edge_navigation={edgeNavigation}
+    on_edge_navigation={() => readerActionsRef.current.handleEdgeNavigation(active.paper.paper_id, edgeNavigation)}
     controls_visible={controlsVisible && !inspectorBlocksReader} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()}
     viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!modalOpen && !inspectorBlocksReader && !aiTransition}
     on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection}
     on_references={(items, status = 'ready') => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) { setReferences(items); setReferenceStatus(status); } }}
     on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
   [active, annotations, annotationBusy, annotationEdit, isDesktop, targetLocation, targetAnchor, navigationKey, controlsVisible,
-    inspectorBlocksReader, viewportKey, modalOpen, aiTransition, handleLocationChange, handleSelection]);
+    inspectorBlocksReader, viewportKey, modalOpen, aiTransition, edgeNavigation, handleLocationChange, handleSelection]);
 
   return (
     <div className={`app-shell library-workspace ${active ? 'reading-mode' : 'library-home-mode'} ${supportsTabs && tabIds.length ? 'has-paper-tabs' : ''} ${phoneAi.open ? 'phone-ai-open' : ''} ${isDesktop ? 'desktop-reader' : ''} ${isDesktop && inspectorOpen ? 'desktop-inspector-open' : ''}`}>

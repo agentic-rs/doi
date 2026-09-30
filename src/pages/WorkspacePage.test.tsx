@@ -29,6 +29,7 @@ vi.mock('../components/PdfReader', () => ({
     return <div data-testid="reader">
       {props.paper.title}
       <button onClick={() => props.on_toggle_controls?.()}>Toggle reading controls</button>
+      <button disabled={!props.edge_navigation} onClick={() => props.on_edge_navigation?.()}>Complete edge gesture</button>
       <button onClick={() => props.on_location_change({ paper_id: props.paper.paper_id, page_number: 4, page_position: [0.1, 0.6], zoom: 1.5, rotation: 90 })}>Scroll source</button>
       <button onClick={() => props.on_navigate({ kind: 'pdf', location: { paper_id: props.paper.paper_id, page_number: 12, page_position: [0, 0.2], zoom: 1, rotation: 0, reader_mode: props.target_location?.reader_mode } })}>Follow internal citation</button>
       <button onClick={() => props.on_navigate({ kind: 'app', arxiv_id: '1409.0473v3', url: 'https://arxiv.org/abs/1409.0473v3' })}>Follow cited paper</button>
@@ -294,12 +295,17 @@ describe('assembled paper workspace', () => {
     const reader = screen.getByTestId('reader');
     const pdfData = lastReader.pdf_data;
     const location = lastReader.target_location;
+    const edgeClose = lastReader.on_edge_navigation;
+    expect(lastReader.edge_navigation).toBe('close');
     openSelection();
     await waitFor(() => expect(backend.setReaderAiMode).toHaveBeenCalledWith(true));
     expect(screen.queryByRole('dialog', { name: 'Ask AI' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Question about this selection' })).toBeNull();
     expect(screen.getByText('Changing viewing direction…')).toBeTruthy();
     expect(reader.closest('.pdf-reader-mount')?.hasAttribute('inert')).toBe(true);
+    expect(lastReader.edge_navigation).toBeNull();
+    act(() => edgeClose?.());
+    expect(screen.getByTestId('reader')).toBe(reader);
 
     await act(async () => enter.resolve('portrait'));
     const dialog = await screen.findByRole('dialog', { name: 'Ask AI' });
@@ -308,6 +314,7 @@ describe('assembled paper workspace', () => {
     expect(screen.getByTestId('reader')).toBe(reader);
     expect(lastReader.pdf_data).toBe(pdfData);
     expect(lastReader.target_location).toBe(location);
+    expect(lastReader.edge_navigation).toBeNull();
     expect(screen.queryByRole('banner', { name: 'Reading controls' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a note' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Export annotations as JSON' })).toBeNull();
@@ -318,9 +325,11 @@ describe('assembled paper workspace', () => {
     expect(screen.getByTestId('reader')).toBe(reader);
     await waitFor(() => expect(backend.setReaderAiMode).toHaveBeenCalledWith(false));
     expect(screen.getByText('Changing viewing direction…')).toBeTruthy();
+    expect(lastReader.edge_navigation).toBeNull();
     await act(async () => restore.resolve('landscape'));
     expect(screen.queryByText('Changing viewing direction…')).toBeNull();
     expect(reader.closest('.pdf-reader-mount')?.hasAttribute('inert')).toBe(false);
+    expect(lastReader.edge_navigation).toBe('close');
     fireEvent.click(screen.getByRole('button', { name: 'Ask AI or add a note to this passage' }));
     await screen.findByRole('dialog', { name: 'Ask AI' });
     expect((screen.getByRole('textbox', { name: 'Question about this selection' }) as HTMLTextAreaElement).value).toBe('Keep my unfinished question');
@@ -1039,6 +1048,121 @@ describe('library, previews, and open papers', () => {
     await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
     expect(lastReader.target_location).toMatchObject({ page_number: 4, page_position: [0.1, 0.6], zoom: 1.5 });
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('uses the phone edge gesture for Back before Close and restores mode, zoom, and position', async () => {
+    mockPhone();
+    const readingLocation = await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow internal citation' }));
+    expect(lastReader.edge_navigation).toBe('back');
+    fireEvent.click(screen.getByRole('button', { name: 'Complete edge gesture' }));
+    expect(lastReader.target_location).toEqual(readingLocation);
+    expect(lastReader.edge_navigation).toBe('back');
+    const staleBack = lastReader.on_edge_navigation;
+    fireEvent.click(screen.getByRole('button', { name: 'Complete edge gesture' }));
+    expect(lastReader.target_location?.reader_mode ?? 'pdf').toBe('pdf');
+    expect(lastReader.edge_navigation).toBe('close');
+    act(() => staleBack?.());
+    expect(screen.getByTestId('reader')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Complete edge gesture' }));
+    expect(screen.queryByTestId('reader')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open First paper' })).toBeTruthy();
+    expect(backend.removePaper).not.toHaveBeenCalled();
+    expect(backend.saveReadingPosition).toHaveBeenCalledWith(readingLocation);
+  });
+
+  it('keeps a failed phone edge Back retryable and rejects duplicate or stale cross-paper gestures', async () => {
+    mockPhone();
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+    const source = { paper_id: first.paper_id, page_number: 4, page_position: [0.1, 0.6], zoom: 1.5, rotation: 90 };
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    const failedLoad = deferred<Awaited<ReturnType<typeof backend.getPdfBytes>>>();
+    vi.mocked(backend.getPdfBytes).mockReturnValueOnce(failedLoad.promise);
+    const back = lastReader.on_edge_navigation;
+    act(() => { back?.(); back?.(); });
+    expect(backend.getPdfBytes).toHaveBeenCalledTimes(3);
+    expect(lastReader.edge_navigation).toBeNull();
+    await act(async () => failedLoad.reject(new Error('Cached source unavailable')));
+    expect((await screen.findByRole('alert')).textContent).toContain('Cached source unavailable');
+    expect(lastReader.paper.paper_id).toBe(second.paper_id);
+    expect(lastReader.edge_navigation).toBe('back');
+    const staleSecond = lastReader.on_edge_navigation;
+    fireEvent.click(screen.getByRole('button', { name: 'Complete edge gesture' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    expect(lastReader.target_location).toMatchObject(source);
+    expect(lastReader.edge_navigation).toBe('close');
+    act(() => staleSecond?.());
+    expect(screen.getByTestId('reader').textContent).toContain('First paper');
+    expect(backend.previewArxivPaper).not.toHaveBeenCalled();
+    expect(backend.downloadArxivPaper).not.toHaveBeenCalled();
+    expect(backend.removePaper).not.toHaveBeenCalled();
+  });
+
+  it('closes only the current iPad tab and ignores a gesture started on the previous paper', async () => {
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind: 'tablet' });
+    await openFirst();
+    const staleFirst = lastReader.on_edge_navigation;
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    expect(lastReader.edge_navigation).toBe('close');
+    act(() => staleFirst?.());
+    expect(lastReader.paper.paper_id).toBe(second.paper_id);
+    const tabs = screen.getByRole('navigation', { name: 'Open papers' });
+    expect(within(tabs).getByRole('button', { name: 'First paper' })).toBeTruthy();
+    expect(within(tabs).getByRole('button', { name: 'Second paper' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Complete edge gesture' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    expect(within(tabs).queryByRole('button', { name: 'Second paper' })).toBeNull();
+    expect(within(tabs).getByRole('button', { name: 'First paper' })).toBeTruthy();
+    expect(backend.removePaper).not.toHaveBeenCalled();
+  });
+
+  it.each(['desktop', 'unknown'] as const)('disables edge navigation for the %s device kind', async (device_kind) => {
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: false, device_kind });
+    await openFirst();
+    expect(lastReader.edge_navigation).toBeNull();
+    act(() => lastReader.on_edge_navigation?.());
+    expect(screen.getByTestId('reader')).toBeTruthy();
+  });
+
+  it.each(['Show paper information', 'AI provider settings', 'Open references and notes panel'])(
+    'cancels a phone edge gesture when %s opens', async (button_name) => {
+      mockPhone();
+      await openFirst();
+      const staleClose = lastReader.on_edge_navigation;
+      fireEvent.click(screen.getByRole('button', { name: button_name }));
+      expect(lastReader.edge_navigation).toBeNull();
+      act(() => staleClose?.());
+      expect(screen.getByTestId('reader')).toBeTruthy();
+    },
+  );
+
+  it('blocks an edge gesture during orientation changes and inline note editing', async () => {
+    mockPhone();
+    const rotation = deferred<ReaderOrientation>();
+    vi.mocked(backend.setReaderOrientation).mockReturnValueOnce(rotation.promise);
+    await openFirst();
+    const staleClose = lastReader.on_edge_navigation;
+    fireEvent.click(screen.getByRole('button', { name: 'Switch viewer to portrait' }));
+    expect(lastReader.edge_navigation).toBeNull();
+    act(() => staleClose?.());
+    expect(screen.getByTestId('reader')).toBeTruthy();
+    await act(async () => rotation.resolve('portrait'));
+    expect(lastReader.edge_navigation).toBe('close');
+    const note: Annotation = {
+      schema_version: 1, annotation_id: 'editing-note',
+      target: { paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors },
+      body: { kind: 'note', content: 'Keep this draft' },
+      created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z',
+    };
+    act(() => lastReader.on_edit_annotation?.(note, 'Editing beside the paper'));
+    expect(lastReader.edge_navigation).toBeNull();
+    act(() => staleClose?.());
+    expect(lastReader.annotation_edit?.content).toBe('Editing beside the paper');
+    act(() => lastReader.on_edit_annotation?.(note, null));
+    expect(lastReader.edge_navigation).toBe('close');
   });
 
   it.each(['desktop', 'tablet'] as const)('keeps distinct tabs, histories, and draft questions on %s', async (deviceKind) => {

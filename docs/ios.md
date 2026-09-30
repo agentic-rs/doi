@@ -120,6 +120,8 @@ Pinch the PDF with two fingers to zoom the document while reading overlays keep 
 
 Back and Forward return directly to the saved PDF location, including across papers; they do not show the paper information sheet again. Use **Info** whenever you want to revisit the abstract or metadata.
 
+On iPhone and iPad, drag right from the left screen edge to go **Back**. If the current paper has no earlier jump, the indicator says **Close**: releasing closes the reader on iPhone or the current tab on iPad, leaving the paper in the library. A short swipe or dragging back cancels. The gesture works in both PDF and Reading modes, with a small indicator that keeps its normal size while the paper is zoomed. Selection, note editing, AI, dialogs, and open reference/notes panels take precedence; ordinary scrolling and pinch zoom remain available.
+
 Long-press PDF text, adjust the native selection handles, and tap the floating sparkle icon to ask AI or add a note. Drag the icon to move it out of the way. References and notes open over the reader. Close that panel or hide the reading controls to continue reading. The PDF stays loaded while information and controls are shown.
 
 In Reading view, saved notes also appear beneath their source blocks alongside references. Tap a note's first line to expand its content, quoted passage, Edit/Delete actions, and **Go to passage**. Inline notes scale with the paper and retain the reading position when expanded or collapsed. A selection spanning several blocks can show the same note beside each relevant block; the all-notes panel keeps a single entry per note. Original PDF view continues to use highlights and the Notes panel.
