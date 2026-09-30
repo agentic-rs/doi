@@ -18,12 +18,68 @@ describe('citation associations', () => {
     expect(referencesForText('Doe studied this for a long time before 2018a.', refs)).toEqual([]);
     expect(referencesForText('Doe (2018a)', [...refs, { ...refs[0], reference_id: 'duplicate' }])).toEqual([]);
   });
+  it.each([
+    ['Alec Radford', 'Rad-\nford et al. (2025)'],
+    ['Alec Radford', 'Rad\u00ad\nford et al. (2025)'],
+    ['John O’Connor', "O'Connor et al. (2025)"],
+    ["John O'Connor", 'O’Connor et al. (2025)'],
+    ['Jan Łukasiewicz', 'Łukasiewicz et al. (2025)'],
+    ['Anne Østby', 'Østby et al. (2025)'],
+    ['Alexandre Défossez', 'D´efossez et al. (2025)'],
+    ['Alexandre Défossez', 'D \u0301efossez et al. (2025)'],
+    ['Jane Smith', 'Smith et\u00a0al.\n(2025)'],
+    ['Jane Smith et al.', 'Smith et al. (2025)'],
+  ])('matches %s despite PDF name typography in %s', (author, text) => {
+    const reference = { ...numbered[0], authors: [author], publication_year: '2025' };
+    expect(referencesForText(text, [reference])).toEqual([reference]);
+  });
+  it('uses the parsed second surname for multiword two-author citations', () => {
+    const reference = referenceFromText('Erik F Tjong Kim Sang and Fien De Meulder. 2003. A useful paper. Journal.', 10, 0)!;
+    expect(referencesForText('Tjong Kim Sang and\nDe Meulder (2003)', [reference])).toEqual([reference]);
+    expect(referencesForText('Tjong Kim Sang & De Meulder, 2003', [reference])).toEqual([reference]);
+    expect(referencesForText('Sang and Other (2003)', [reference])).toEqual([]);
+    expect(referencesForText('Sang and the research by De Meulder (2003)', [reference])).toEqual([]);
+  });
+  it('matches complete grouped years and comma-before-parenthesis citations', () => {
+    const refs = ['2024', '2025', '2025a', '2025b'].map((year, index) => ({
+      ...numbered[0], reference_id: `smith-${index}`, authors: ['Jane Smith'], publication_year: year,
+    }));
+    expect(referencesForText('Smith et al. (2024, 2025)', refs)).toEqual(refs.slice(0, 2));
+    expect(referencesForText('Smith et al., (2025a; 2025b)', refs)).toEqual(refs.slice(2));
+    expect(referencesForText('Smith et al., 2025a', refs)).toEqual([refs[2]]);
+    expect(referencesForText('Smith et al. (2024, 2025)', [...refs, { ...refs[1], reference_id: 'duplicate' }])).toEqual([refs[0]]);
+  });
+  it('does not match surnames inside another name or years inside prose', () => {
+    const reference = { ...numbered[0], authors: ['Jane Smith'], publication_year: '2025' };
+    for (const text of ['Goldsmith et al. (2025)', "O'Smith et al. (2025)", 'Gold-Smith et al. (2025)', 'ŁSmith et al. (2025)', 'Smith studied this in 2025', 'Smith et al. (2025–2026)', 'Smith et al. (2025abcd)']) {
+      expect(referencesForText(text, [reference]), text).toEqual([]);
+    }
+    const accented = { ...reference, authors: ['Alexandre Défossez'] };
+    expect(referencesForText('D efossez et al. (2025)', [accented])).toEqual([]);
+    expect(referencesForText('Défossez studied this before 2025.', [accented])).toEqual([]);
+  });
   it('requires an unambiguous nearby destination on the same page', () => {
     const ref = { ...numbered[0], source_rect: [50, 600, 260, 640] as [number, number, number, number] };
     expect(referenceAtDestination([ref], 10, [46, 645])).toBe(ref);
     expect(referenceAtDestination([ref], 9, [50, 640])).toBeNull();
     expect(referenceAtDestination([ref], 10, [50, 700])).toBeNull();
     expect(referenceAtDestination([ref, { ...ref, reference_id: 'overlap' }], 10, [50, 640])).toBeNull();
+  });
+  it('matches margin anchors at an entry start before an adjacent column body', () => {
+    const left = { ...numbered[0], source_rect: [55.44, 680, 291, 780] as [number, number, number, number] };
+    const right = { ...numbered[1], source_rect: [307.44, 660, 540, 725] as [number, number, number, number] };
+    expect(referenceAtDestination([left, right], 10, [287.515, 726.932])).toBe(right);
+    expect(referenceAtDestination([left], 10, [35.515, 781.354])).toBe(left);
+    // Ordinary explicit destinations inside a reference still use its body.
+    expect(referenceAtDestination([left, right], 10, [330, 680])).toBe(right);
+    expect(referenceAtDestination([right], 10, [280, 726.932])).toBeNull();
+    expect(referenceAtDestination([right], 10, [287.515, 740])).toBeNull();
+  });
+  it('rejects ambiguous entry starts instead of falling back to a body match', () => {
+    const left = { ...numbered[0], source_rect: [55, 600, 291, 760] as [number, number, number, number] };
+    const right = { ...numbered[1], source_rect: [307, 620, 540, 725] as [number, number, number, number] };
+    const overlap = { ...right, reference_id: 'overlapping-start', source_rect: [309, 660, 540, 727] as [number, number, number, number] };
+    expect(referenceAtDestination([left, right, overlap], 10, [287, 728])).toBeNull();
   });
 });
 

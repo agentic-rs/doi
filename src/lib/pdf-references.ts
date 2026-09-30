@@ -11,8 +11,8 @@ export interface PageText {
 
 interface SourceLine { text: string; page_number: number; source_rect: PdfSourceRect | null }
 const heading_pattern = /^(?:\d+\.?\s+)?(?:references|bibliography|literature cited)\s*$/i;
-const end_pattern = /^(?:appendix\b|attention visualizations|supplement(?:ary|al)\b|acknowledg(?:e)?ments\b|author biographies\b|[A-Z]\.?\s+(?:proof|additional|supplementary)\b)/i;
-const label_pattern = /^(?:\[([\p{L}\d][\p{L}\d+_.:–-]{0,30})\]|(\d{1,3})[.)])\s*/u;
+const end_pattern = /^(?:appendix\b|attention visualizations|supplement(?:ary|al)\b|acknowledg(?:e)?ments\b|author biographies\b|[A-Z]\.?\s+(?:appendix|proof|additional|supplementary)\b)/i;
+const label_pattern = /^(?:\[([\p{L}\d][\p{L}\d+_.:–-]{0,30})\]|(\d{1,3})[.)](?=\s|$))\s*/u;
 const year_pattern = /\b((?:18|19|20)\d{2}[a-z]?)\b/;
 const id_pattern = /^(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Za-z]{2})?\/\d{2}(?:0[1-9]|1[0-2])\d{3})(?:v[1-9]\d{0,3})?$/;
 
@@ -55,11 +55,54 @@ function identifiers(text: string) {
 }
 
 function authorList(text: string): string[] {
-  const value = text.trim().replace(/[.\s,(]+$/, '');
+  // "Et al." describes omitted authors; it is never an author's surname.
+  // Retain the complete printed list in citation_text, and index only names.
+  const value = text.replace(/\s*([`´\u0300\u0301])(\p{L})/gu, (_, accent: string, letter: string) => `${letter}${/[`\u0300]/u.test(accent) ? '\u0300' : '\u0301'}`)
+    .normalize('NFC').trim().replace(/[\s,(]+$/, '')
+    .replace(/(?:,\s*|\s+)et\s+al\.?$/iu, '').replace(/[.\s,]+$/, '');
   if (!value || value.length > 900 || /\b(?:proceedings|journal|conference|preprint|volume|pages|https|arxiv)\b/i.test(value)) return [];
-  const words = value.replace(/\bet\s+al\.?/g, '').match(/[\p{L}][\p{L}'’.-]*/gu) ?? [];
+  // Do not consume a title before a year printed at the end of the entry.
+  // Full stops inside names must belong to initials or a familiar name suffix.
+  if (/\./.test(value.replace(/\b\p{Lu}\.(?=[\s,-]|\p{Lu}|$)/gu, '').replace(/\b(?:Jr|Sr|Dr|Prof)\./g, ''))) return [];
+  const words = value.match(/[\p{L}][\p{L}\p{M}'’.-]*/gu) ?? [];
   if (!words.length || words.some((word) => !/^[\p{Lu}]/u.test(word) && !/^(?:and|van|von|de|del|der|den|da|di|dos|du|la|le|al|et)$/i.test(word))) return [];
-  return value.split(/,\s*(?:and\s+)?|\s+and\s+|\s*&\s*/).map((name) => name.trim()).filter(Boolean);
+  const parts = value.split(/,\s*(?:and\s+)?|\s+and\s+|\s*&\s*/).map((name) => name.trim()).filter(Boolean);
+  const authors: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const initials = parts[index + 1];
+    // Commas separate both authors and inverted names. Only combine an
+    // unambiguous initials segment; "Smith, Jones" stays two named authors.
+    if (initials && /^(?:\p{Lu}\.(?:\s*|-))*\p{Lu}\.?$/u.test(initials)) {
+      authors.push(`${initials.replace(/\.?$/, '.')} ${parts[index]}`);
+      index += 1;
+    } else authors.push(parts[index]);
+  }
+  return authors;
+}
+
+function abbreviatedAuthorPrefix(text: string): { authors: string[]; remainder: string } | null {
+  const marker = /\bet\s+al\.\s+/iu.exec(text);
+  if (!marker || marker.index === undefined) return null;
+  const end = marker.index + marker[0].length;
+  const authors = authorList(text.slice(0, end));
+  return authors.length ? { authors, remainder: text.slice(end) } : null;
+}
+
+function authorTitlePrefix(text: string): { authors: string[]; remainder: string } | null {
+  const abbreviated = abbreviatedAuthorPrefix(text);
+  if (abbreviated) return abbreviated;
+  // The final initial in an inverted name is also the author/title boundary:
+  // "Smith, J. and Jones, M. A useful paper." Generic sentence splitting
+  // protects initials, so examine candidates using the author-list grammar.
+  for (const boundary of text.matchAll(/\.\s+(?=[\p{Lu}\d]|arXiv\b|https?:)/gu)) {
+    const end = boundary.index! + boundary[0].length;
+    const remainder = text.slice(end);
+    if (/^(?:\p{Lu}\.(?:[\s,-]|$)|and\b|et\s+al\b)/u.test(remainder)) continue;
+    const authors = authorList(text.slice(0, end));
+    if (!authors.length || authors.some((author) => !/[\p{L}'’-]{2,}$/u.test(author))) continue;
+    return { authors, remainder };
+  }
+  return null;
 }
 
 function sentences(text: string): string[] {
@@ -68,8 +111,24 @@ function sentences(text: string): string[] {
     .split(/\.\s+(?=[\p{Lu}\d]|arXiv\b|https?:)|(?<=[?!])\s+(?=[\p{Lu}])/u).map((part) => part.replaceAll('\u0001', '.').trim()).filter(Boolean);
 }
 
+function publicationYears(text: string): RegExpMatchArray[] {
+  // Conference names may repeat the plain year before the final publication
+  // year/suffix. Identifier digits (e.g. arXiv:2002.05202) are not dates.
+  const publication = text.split(/\b(?:doi\s*:|10\.\d{4,9}\/)/i, 1)[0]
+    .replace(/\bhttps?:\s*\/\/\S+/gi, (url) => ' '.repeat(url.length));
+  const years = [...publication.matchAll(/(?<![\p{L}\d/.:])((?:18|19|20)\d{2}[a-z]?)(?![\p{L}\d]|\.\d)/gu)];
+  if (!years.length && publication.length < text.length) {
+    // Some styles place the date after the DOI. Require an explicit comma
+    // separator so a wrapped DOI ending in year-like digits remains an ID.
+    const trailing = /((?:18|19|20)\d{2}[a-z]?)(?=\.?\s*$)/u.exec(text);
+    if (trailing && /,\s+$/.test(text.slice(0, trailing.index))) years.push(trailing);
+  }
+  return years;
+}
+
 function metadata(body: string) {
-  const year = body.match(year_pattern);
+  const years = publicationYears(body);
+  let year: RegExpMatchArray | undefined = years[0];
   let authors: string[] = [];
   let remainder = body;
   if (year && year.index !== undefined) {
@@ -77,10 +136,15 @@ function metadata(body: string) {
     if (authors.length) remainder = body.slice(year.index + year[0].length).replace(/^[\s.)]+/, '');
   }
   if (!authors.length) {
-    const parts = sentences(body);
-    authors = authorList(parts[0] ?? '');
-    if (authors.length && parts.length > 1) remainder = parts.slice(1).join('. ');
-    else authors = [];
+    year = years.at(-1);
+    const prefix = authorTitlePrefix(body);
+    if (prefix) ({ authors, remainder } = prefix);
+    else {
+      const parts = sentences(body);
+      authors = authorList(parts[0] ?? '');
+      if (authors.length && parts.length > 1) remainder = parts.slice(1).join('. ');
+      else authors = [];
+    }
   }
   const parts = sentences(remainder);
   const title = authors.length && parts[0] && parts[0].length > 5 && !/^(?:https?:|arxiv\b|doi\b|CoRR\b)/i.test(parts[0])
@@ -110,8 +174,14 @@ export function referenceFromText(citation_text: string, page_number: number, in
 /** Split explicit bibliographies using printed labels or hanging indentation.
  * Without those signals, only recognizable author/year entries or links qualify. */
 export function extractReferences(pages: PageText[]): ReferenceItem[] {
+  const page_headers = new Map<string, number>();
+  for (const page of pages) {
+    const header = page.lines?.find((line) => line.text.trim());
+    if (header) page_headers.set(header.text.trim(), (page_headers.get(header.text.trim()) ?? 0) + 1);
+  }
   const all_lines: SourceLine[] = pages.flatMap<SourceLine>((page) => page.lines
-    ? page.lines.map((line) => ({ ...line, page_number: page.page_number }))
+    ? page.lines.filter((line, index) => index !== 0 || (page_headers.get(line.text.trim()) ?? 0) < 2 || heading_pattern.test(line.text.trim()))
+      .map((line) => ({ ...line, page_number: page.page_number }))
     : page.text.split(/\r?\n/).map((text) => ({ text, page_number: page.page_number, source_rect: null })));
   let in_bibliography = false;
   let has_heading = false;
@@ -150,7 +220,8 @@ export function extractReferences(pages: PageText[]): ReferenceItem[] {
     const hanging = line.source_rect && hanging_starts.some((start) => Math.abs(start.x - line.source_rect![0]) < 2);
     const lookahead = lines.slice(index, index + 6).map((item) => item.text).join(' ').replace(/([\p{L}])-\s+(?=[\p{Ll}])/gu, '$1');
     const year = lookahead.match(year_pattern);
-    const author_start = /^[\p{Lu}]/u.test(line.text) && year?.index !== undefined && authorList(lookahead.slice(0, year.index)).length > 0;
+    const author_start = /^[\p{Lu}]/u.test(line.text) && year?.index !== undefined
+      && (authorList(lookahead.slice(0, year.index)).length > 0 || abbreviatedAuthorPrefix(lookahead) !== null);
     const start = numbered ? label_pattern.test(line.text) : hanging_starts.length ? hanging : author_start;
     if (start && current.length) { groups.push(current); current = []; }
     if (start || current.length) current.push(line);

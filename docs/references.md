@@ -1,6 +1,6 @@
 # References
 
-Reading view places compact, unscaled reference rows below the blocks that cite them. Tapping one opens the existing reference details popup without moving the paper. Recognized embedded bibliography citation links open the same popup in PDF and Reading modes. Citation handling takes precedence over ordinary hyperlink navigation.
+Reading view places compact reference rows below the blocks that cite them, scaling them with the paper. Tapping one opens the existing reference details popup without moving the paper. Recognized embedded bibliography citation links open the same popup in PDF and Reading modes. Citation handling takes precedence over ordinary hyperlink navigation.
 
 The line below a reference title shows author, year, and `arxiv:xxxx` when an arXiv identifier is available, otherwise author, year, and the publication venue without page numbers. Missing fields are omitted. Compact rows use the first author; details and match results use the same ordering with the full author list.
 
@@ -31,6 +31,7 @@ External confirmation shows the domain and complete URL as plain text, with **Op
 ## Detection and limits
 
 - Bibliography extraction examines the last 6–25 pages, depending on document length, and stops at an appendix/supplement heading. It recognizes numbered/alphabetic labels and hanging-indent author/year entries, including wrapped authors and page continuations.
-- Reading blocks combine unique printed-label or author/year matches with the PDF's own citation destinations. Repeated citations are deduplicated per block. Ambiguous duplicate labels or overlapping destination geometry are left unresolved.
-- Reference rows are outside PDF text, canvas, and pinch transforms. Their installation waits for an active pinch to finish and preserves the current source position.
+- Reading blocks combine unique printed-label or author/year matches with the PDF's own citation destinations. Forms such as `Smith et al. (2025)`, paired authors, and grouped full years are recognized, including year suffixes and PDF line wrapping. Bibliography parsing handles inverted initials and abbreviated author lists, and keeps DOI/arXiv identifiers separate from printed labels and publication years. Repeated citations are deduplicated per block; ambiguous author/year or printed-label matches remain unresolved.
+- A citation destination just before the first line of a bibliography entry takes precedence over a neighboring column's body text. Ambiguous entry starts or overlapping interior destinations remain unresolved.
+- Reference rows stay outside PDF text and canvas layers, while scaling together with their Reading block during pinch. Their installation waits for an active pinch to finish and preserves the current source position.
 - Original-PDF citation taps rely on embedded links. Scanned pages have no OCR; unusual bibliographies may retain raw text or be missed. Ordinary page and external links remain available even if extraction fails.

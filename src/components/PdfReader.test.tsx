@@ -1760,6 +1760,54 @@ describe('reference details in both reading modes', () => {
     expect(props.on_toggle_controls).not.toHaveBeenCalled();
   });
 
+  function authorYearBibliography() {
+    const item = (str: string, x: number, y: number) => ({ str, transform: [10, 0, 0, 10, x, y], width: 230, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
+    pdf_fixture.text_content.set(4, [
+      item('References', 50, 750),
+      item('Smith, J., Jones, M., and Doe, A.', 50, 700),
+      item('A useful paper. Example Journal, 2025.', 60, 688),
+      item('doi: 10.1000/example.', 60, 676),
+      item('Brown, A. and Green, B.', 50, 620),
+      item('A different useful title. Example Journal, 2022.', 60, 608),
+      item('Further research.', 60, 596),
+      item('Lee, A. and Kim, B.', 307, 650),
+      item('Another useful title. Example Journal, 2024.', 317, 638),
+      item('10.18653/v1/2024.example.1.', 317, 626),
+      item('Wang, C. et al. (2023). A third useful title.', 307, 600),
+      item('Example Journal.', 317, 588),
+    ]);
+  }
+
+  it('shows unlinked author–year citations beside their Reading block and opens the existing popup', async () => {
+    authorYearBibliography();
+    const props = readingProps('p1-intro');
+    reading_fixture.layout!.blocks[0].text = 'Following Smith et al. (2025) and Wang et al. (2023).';
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(document.querySelectorAll('.reference-strip button')).toHaveLength(2));
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('.reference-strip button')];
+    expect(buttons[0].textContent).toContain('A useful paper');
+    expect(buttons[1].textContent).toContain('A third useful title');
+    fireEvent.click(buttons[0]);
+    expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: null, title: 'A useful paper', publication_year: '2025' }) });
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it.each(['pdf', 'reading'] as const)('opens an author–year citation with a margin destination in %s mode', async (mode) => {
+    authorYearBibliography();
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'author-year-margin', rect: [100, 600, 180, 612], dest: [3, { name: 'XYZ' }, 287, 662, null] }]);
+    const props = mode === 'reading' ? readingProps('p1-intro') : readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ title: 'Another useful title', label: null })]), 'ready'));
+    if (mode === 'reading') {
+      await waitFor(() => expect(document.querySelector('.reference-strip button')?.textContent).toContain('Another useful title'));
+    }
+    const baseline = pdf_fixture.render_requests.length;
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+    await waitFor(() => expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ title: 'Another useful title', publication_year: '2024' }) }));
+    expect(pdf_fixture.render_requests.length).toBe(baseline);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
   describe('Reading preview paint', () => {
     let styles: HTMLStyleElement;
 
