@@ -53,7 +53,7 @@ function fixture(tall = false) {
   const block: ReadingBlock = {
     block_id: 'p2-figure', page_number: 2,
     source_rect: tall ? [60, 50, 300, 750] : [60, 380, 540, 700],
-    kind: 'figure', text: 'Figure 1. A graph.', figure_label: '1',
+    kind: 'figure', block_type: 'graph', text: 'Figure 1. A graph.', figure_label: '1',
   };
   return { page, block, annotations: [], on_close: vi.fn(), on_source: vi.fn(), on_link: vi.fn(), on_error: vi.fn(), render_page };
 }

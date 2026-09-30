@@ -1,7 +1,7 @@
 use crate::{error::Result, models::ReadingLayout, validation};
 use std::collections::HashSet;
 
-pub const LAYOUT_VERSION: u32 = 1;
+pub const LAYOUT_VERSION: u32 = 2;
 pub const MAX_LAYOUT_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn validate(layout: &ReadingLayout) -> Result<()> {
@@ -81,7 +81,7 @@ pub fn decode(data: &str, pdf_hash: &str) -> Option<ReadingLayout> {
 #[cfg(test)]
 pub(crate) mod tests {
   use super::*;
-  use crate::models::{ReadingBlock, ReadingBlockKind};
+  use crate::models::{ReadingBlock, ReadingBlockKind, ReadingBlockType};
 
   pub(crate) fn fixture_layout(pdf_hash: String) -> ReadingLayout {
     ReadingLayout {
@@ -95,6 +95,7 @@ pub(crate) mod tests {
           page_number,
           source_rect: [-10.0, 12.0, 400.0, 650.0],
           kind: ReadingBlockKind::Figure,
+          block_type: ReadingBlockType::Graph,
           text: "Figure 1. Results.".into(),
           figure_label: Some("1".into()),
         })
@@ -154,9 +155,49 @@ pub(crate) mod tests {
     assert_eq!(decode(&data, &layout.pdf_hash), Some(layout.clone()));
     assert!(decode(&data, &"b".repeat(64)).is_none());
     assert!(decode("{corrupt", &layout.pdf_hash).is_none());
-    let mut unsupported = layout.clone();
-    unsupported.layout_version = 2;
-    let data = serde_json::to_string(&unsupported).unwrap();
-    assert!(decode(&data, &layout.pdf_hash).is_none());
+    for version in [1, LAYOUT_VERSION + 1] {
+      let mut unsupported = layout.clone();
+      unsupported.layout_version = version;
+      let data = serde_json::to_string(&unsupported).unwrap();
+      assert!(decode(&data, &layout.pdf_hash).is_none());
+    }
+  }
+
+  #[test]
+  fn semantic_types_round_trip_independently_of_rendering_kind() {
+    let mut layout = fixture_layout("a".repeat(64));
+    for (block_type, serialized) in [
+      (ReadingBlockType::Content, "content"),
+      (ReadingBlockType::Equation, "equation"),
+      (ReadingBlockType::Graph, "graph"),
+      (ReadingBlockType::Table, "table"),
+      (ReadingBlockType::Reference, "reference"),
+      (ReadingBlockType::Title, "title"),
+      (ReadingBlockType::Others, "others"),
+    ] {
+      layout.blocks[0].block_type = block_type;
+      let data = encode(&layout).unwrap();
+      let value: serde_json::Value = serde_json::from_str(&data).unwrap();
+      assert_eq!(value["blocks"][0]["block_type"], serialized);
+      assert_eq!(value["blocks"][0]["kind"], "figure");
+      assert_eq!(decode(&data, &layout.pdf_hash), Some(layout.clone()));
+    }
+  }
+
+  #[test]
+  fn missing_or_unknown_semantic_types_are_cache_misses() {
+    let layout = fixture_layout("a".repeat(64));
+    let mut missing_type = serde_json::to_value(&layout).unwrap();
+    missing_type["blocks"][0]
+      .as_object_mut()
+      .unwrap()
+      .remove("block_type");
+    assert!(decode(&missing_type.to_string(), &layout.pdf_hash).is_none());
+    missing_type["layout_version"] = 1.into();
+    assert!(decode(&missing_type.to_string(), &layout.pdf_hash).is_none());
+
+    let mut unknown_type = serde_json::to_value(&layout).unwrap();
+    unknown_type["blocks"][0]["block_type"] = "unknown".into();
+    assert!(decode(&unknown_type.to_string(), &layout.pdf_hash).is_none());
   }
 }

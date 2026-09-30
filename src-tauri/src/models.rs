@@ -39,6 +39,18 @@ pub enum ReadingBlockKind {
   Original,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingBlockType {
+  Content,
+  Equation,
+  Graph,
+  Table,
+  Reference,
+  Title,
+  Others,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ReadingBlock {
   pub block_id: String,
@@ -46,6 +58,8 @@ pub struct ReadingBlock {
   /// [left, bottom, right, top] in the original PDF's user space.
   pub source_rect: [f64; 4],
   pub kind: ReadingBlockKind,
+  /// Semantic classification; `kind` still controls rendering and figure placement.
+  pub block_type: ReadingBlockType,
   pub text: String,
   pub figure_label: Option<String>,
 }

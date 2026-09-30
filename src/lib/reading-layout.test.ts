@@ -77,6 +77,8 @@ describe('conservative source-region analysis', () => {
     expect(left_blocks.every((block) => block.source_rect[2] >= 282)).toBe(true);
     expect(blocks.filter((block) => block.text.startsWith('Right')).every((block) => block.source_rect[0] <= 318)).toBe(true);
     expect(blocks[0].text).toContain('full width paper heading');
+    expect(blocks[0].block_type).toBe('title');
+    expect(blocks.find((block) => block.text === '1')?.block_type).toBe('others');
     page.expectCompleteCoverage(blocks);
   });
 
@@ -92,6 +94,7 @@ describe('conservative source-region analysis', () => {
     page.text(60, 254, 480, 'This paragraph discusses the complete figure and its plotted values.');
     const blocks = extractReadingPage(page.input);
     const figure = blocks.find((block) => block.kind === 'figure');
+    expect(figure?.block_type).toBe('graph');
     expect(figure?.figure_label).toBe('1');
     expect(figure?.text).toContain('First panel');
     expect(figure?.text).toContain('Second panel');
@@ -117,6 +120,7 @@ describe('conservative source-region analysis', () => {
     page.text(60, 226, 480, 'Figure 1: The architecture of the model.');
     const blocks = extractReadingPage(page.input);
     expect(blocks[0]).toMatchObject({ kind: 'text', text: '3 Model Architecture' });
+    expect(blocks[0].block_type).toBe('title');
     expect(blocks.find((block) => block.kind === 'figure')?.text).not.toContain('3 Model Architecture');
     page.expectCompleteCoverage(blocks);
   });
@@ -179,14 +183,14 @@ describe('conservative source-region analysis', () => {
 
   it('preserves a blank page as a full source region', () => {
     expect(extractReadingPage(pageFixture().input)).toMatchObject([
-      { kind: 'original', source_rect: [0, 0, 600, 800] },
+      { kind: 'original', block_type: 'others', source_rect: [0, 0, 600, 800] },
     ]);
   });
 });
 
 function block(block_id: string, text: string, figure_label: string | null = null): ReadingBlock {
   return { block_id, page_number: 1, source_rect: [0, 0, 500, 700],
-    kind: figure_label ? 'figure' : 'text', text, figure_label };
+    kind: figure_label ? 'figure' : 'text', block_type: figure_label ? 'graph' : 'content', text, figure_label };
 }
 
 describe('figure placement', () => {

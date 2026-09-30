@@ -18,13 +18,13 @@ function note(page_anchors: PageAnchor[], annotation_id = 'note'): Annotation {
 }
 
 const layout: ReadingLayout = {
-  layout_version: 1, pdf_hash: 'hash', page_count: 3,
+  layout_version: 2, pdf_hash: 'hash', page_count: 3,
   blocks: [
-    { block_id: 'left', page_number: 1, source_rect: [0, 0, 40, 100], kind: 'text', text: '', figure_label: null },
-    { block_id: 'moved-figure', page_number: 2, source_rect: [0, 60, 100, 100], kind: 'figure', text: '', figure_label: '1' },
-    { block_id: 'gutter', page_number: 1, source_rect: [45, 0, 55, 100], kind: 'text', text: '', figure_label: null },
-    { block_id: 'right', page_number: 1, source_rect: [60, 0, 100, 100], kind: 'text', text: '', figure_label: null },
-    { block_id: 'later-page', page_number: 3, source_rect: [0, 0, 100, 100], kind: 'original', text: '', figure_label: null },
+    { block_id: 'left', page_number: 1, source_rect: [0, 0, 40, 100], kind: 'text', block_type: 'content', text: '', figure_label: null },
+    { block_id: 'moved-figure', page_number: 2, source_rect: [0, 60, 100, 100], kind: 'figure', block_type: 'graph', text: '', figure_label: '1' },
+    { block_id: 'gutter', page_number: 1, source_rect: [45, 0, 55, 100], kind: 'text', block_type: 'content', text: '', figure_label: null },
+    { block_id: 'right', page_number: 1, source_rect: [60, 0, 100, 100], kind: 'text', block_type: 'content', text: '', figure_label: null },
+    { block_id: 'later-page', page_number: 3, source_rect: [0, 0, 100, 100], kind: 'original', block_type: 'others', text: '', figure_label: null },
   ],
 };
 

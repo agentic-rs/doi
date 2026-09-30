@@ -339,7 +339,7 @@ mod tests {
         .unwrap()
         .is_empty());
       assert!(database
-        .get_reading_layout(paper.paper_id.clone(), 1)
+        .get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
         .await
         .unwrap()
         .is_none());

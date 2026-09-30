@@ -1,18 +1,15 @@
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readPdfTextContent } from './pdf-compatibility';
+import { classifyReadingDocument, classifyReadingRegion, readingPageEvidence } from './reading-block-classification';
+import type { ReadingTextLine } from './reading-block-classification';
 import type { PdfSourceRect, ReadingBlock, ReadingLayout } from './types';
 
-export const READING_LAYOUT_VERSION = 1;
+export const READING_LAYOUT_VERSION = 2;
 
 type Rect = [number, number, number, number];
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;
 
-interface TextBox {
-  rect: Rect;
-  text: string;
-  font_size: number;
-  horizontal: boolean;
-}
+type TextBox = ReadingTextLine;
 
 interface Region {
   rect: Rect;
@@ -142,6 +139,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
   const scale = Math.hypot(viewport.transform[0], viewport.transform[1]);
   const { boxes, horizontal } = textGeometry(input);
   const lines = combineLines(boxes);
+  const page_evidence = readingPageEvidence(lines, page_number, viewport.width, viewport.height, scale);
   const ink = new Uint8Array(width * height);
   let bounds: Rect | null = null;
   for (let y = 0; y < height; y++) {
@@ -172,7 +170,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
   }
 
   const original = (): ReadingBlock[] => [{ block_id: `p${page_number}-b0`, page_number,
-    source_rect: sourceRect(crop), kind: 'original', text: textOf(lines), figure_label: null }];
+    source_rect: sourceRect(crop), kind: 'original', block_type: 'others', text: textOf(lines), figure_label: null }];
   if (!bounds || !boxes.length || viewport.rotation % 360 !== 0) return original();
 
   // Protect complete text boxes, not just their dark pixels. Every split below
@@ -215,7 +213,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
     if (caption && !has_body_above && graphic_pixels >= Math.max(20, 24 * scale * scale)
       && caption.rect[1] > figure_crop[1] + (figure_crop[3] - figure_crop[1]) * 0.6) {
       const figure: ReadingBlock = { ...original()[0], source_rect: sourceRect(figure_crop),
-        kind: 'figure', text: textOf(lines.filter((line) => line !== footer)), figure_label: captionLabel(caption.text) };
+        kind: 'figure', block_type: 'graph', text: textOf(lines.filter((line) => line !== footer)), figure_label: captionLabel(caption.text) };
       return footer ? [figure, { ...original()[0], block_id: `p${page_number}-b1`,
         source_rect: sourceRect([crop[0], footer.rect[1] - 3 * scale, crop[2], crop[3]]),
         kind: 'text', text: footer.text }] : [figure];
@@ -382,6 +380,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
     source_rect: sourceRect(value.rect),
     kind: figure_label ? 'figure' : value.lines.length && value.lines.every((line) => line.horizontal)
       && value.graphic_pixels < Math.max(20, 24 * scale * scale) ? 'text' : 'original',
+    block_type: classifyReadingRegion(value, page_evidence, figure_label),
     text: textOf(value.lines),
     figure_label,
   }));
@@ -471,5 +470,5 @@ export async function buildReadingLayout(
   }
   checkCancellation(signal);
   return { layout_version: READING_LAYOUT_VERSION, pdf_hash, page_count: pages.length,
-    blocks: placeFiguresNearReferences(blocks) };
+    blocks: placeFiguresNearReferences(classifyReadingDocument(blocks, new Map(pages.map((page) => [page.pageNumber, page.view])))) };
 }

@@ -22,7 +22,7 @@ export function useReadingLayout(pages: PDFPageProxy[] | null, pdf_hash: string,
       // A cache failure must not make an otherwise readable paper unavailable.
       const saved = nativeAvailable() ? await getReadingLayout(paper_id, READING_LAYOUT_VERSION).catch(() => null) : null;
       if (signal.aborted) return;
-      const result = saved?.pdf_hash === pdf_hash && saved.page_count === pages.length ? saved
+      const result = saved?.layout_version === READING_LAYOUT_VERSION && saved.pdf_hash === pdf_hash && saved.page_count === pages.length ? saved
         : await buildReadingLayout(pages, pdf_hash, signal, (completed, total) => {
           if (!signal.aborted) setProgress({ completed, total });
         });

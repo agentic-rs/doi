@@ -34,6 +34,15 @@ GlobalWorkerOptions.workerSrc = worker_url;
 
 const minimum_zoom = 0.1;
 const maximum_zoom = 3;
+const block_type_labels: Record<ReadingBlock['block_type'], string> = {
+  content: 'Content',
+  equation: 'Equation',
+  graph: 'Graph',
+  table: 'Table',
+  reference: 'Reference',
+  title: 'Title',
+  others: 'Others',
+};
 
 interface LoadedPdf {
   paper_id: string;
@@ -1003,6 +1012,7 @@ export function PdfReader(props: PdfReaderProps) {
         {loaded && (!reading || layout) && <div className={`pdf-pages ${reading ? `reading-pages ${controls_visible ? 'reading-pages-controls' : ''}` : ''}`}
           style={reading ? { '--reading-zoom': zoom } as CSSProperties : undefined}>
           {reading && layout ? layout.blocks.map((block) => <article className={`reading-block reading-block-${block.kind}`} key={`${paper.paper_id}-${block.block_id}`} data-figure-id={block.kind === 'figure' ? block.block_id : undefined}>
+            <div className="reading-block-type" aria-label={`Block type: ${block_type_labels[block.block_type]}`}>{block_type_labels[block.block_type]}</div>
             <PdfPage page={loaded.pages[block.page_number - 1]} zoom={blockZoom(block)} rotation={rotation}
               source_rect={block.source_rect} block_id={block.block_id} render_paused={render_paused} scroll_root={scroll_root}
               annotations={matching_annotations} register_page={register_page} on_link={(link, page_number) => void followLink(link, page_number)} on_error={report_error} />

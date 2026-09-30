@@ -3,18 +3,20 @@ export type ReaderMode = 'pdf' | 'reading';
 
 // Source rectangles are [left, bottom, right, top] in PDF user space.
 export type PdfSourceRect = [number, number, number, number];
+export type ReadingBlockType = 'content' | 'equation' | 'graph' | 'table' | 'reference' | 'title' | 'others';
 
 export interface ReadingBlock {
   block_id: string;
   page_number: number;
   source_rect: PdfSourceRect;
   kind: 'text' | 'figure' | 'original';
+  block_type: ReadingBlockType;
   text: string;
   figure_label: string | null;
 }
 
 export interface ReadingLayout {
-  layout_version: 1;
+  layout_version: 2;
   pdf_hash: string;
   page_count: number;
   blocks: ReadingBlock[];

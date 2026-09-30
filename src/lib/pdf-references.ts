@@ -1,6 +1,7 @@
 import type { PdfSourceRect, ReferenceItem } from './types';
 import { normalizePdfText, safeReferenceUrl } from './pdf-geometry';
 import { publicationVenue } from './reference-presentation';
+import { isReferenceHeading, isReferenceSectionEnd } from './reference-section';
 export { referenceAtDestination, referencesForText } from './citation-index';
 
 export interface PageText {
@@ -10,15 +11,13 @@ export interface PageText {
 }
 
 interface SourceLine { text: string; page_number: number; source_rect: PdfSourceRect | null }
-const heading_pattern = /^(?:\d+\.?\s+)?(?:references|bibliography|literature cited)\s*$/i;
-const end_pattern = /^(?:appendix\b|attention visualizations|supplement(?:ary|al)\b|acknowledg(?:e)?ments\b|author biographies\b|[A-Z]\.?\s+(?:appendix|proof|additional|supplementary)\b)/i;
 const label_pattern = /^(?:\[([\p{L}\d][\p{L}\d+_.:–-]{0,30})\]|(\d{1,3})[.)](?=\s|$))\s*/u;
 const year_pattern = /\b((?:18|19|20)\d{2}[a-z]?)\b/;
 const id_pattern = /^(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Za-z]{2})?\/\d{2}(?:0[1-9]|1[0-2])\d{3})(?:v[1-9]\d{0,3})?$/;
 
 export function hasReferenceHeading(page: PageText): boolean {
   const lines = page.lines?.map((line) => line.text) ?? page.text.split(/\r?\n/);
-  return lines.some((line) => heading_pattern.test(line.trim()));
+  return lines.some((line) => isReferenceHeading(line.trim()));
 }
 
 function trimPunctuation(value: string): string {
@@ -192,7 +191,7 @@ export function extractReferences(pages: PageText[]): ReferenceItem[] {
     if (header) page_headers.set(header.text.trim(), (page_headers.get(header.text.trim()) ?? 0) + 1);
   }
   const all_lines: SourceLine[] = pages.flatMap<SourceLine>((page) => page.lines
-    ? page.lines.filter((line, index) => index !== 0 || (page_headers.get(line.text.trim()) ?? 0) < 2 || heading_pattern.test(line.text.trim()))
+    ? page.lines.filter((line, index) => index !== 0 || (page_headers.get(line.text.trim()) ?? 0) < 2 || isReferenceHeading(line.text.trim()))
       .map((line) => ({ ...line, page_number: page.page_number }))
     : page.text.split(/\r?\n/).map((text) => ({ text, page_number: page.page_number, source_rect: null })));
   let in_bibliography = false;
@@ -200,8 +199,8 @@ export function extractReferences(pages: PageText[]): ReferenceItem[] {
   const lines: SourceLine[] = [];
   for (const source of all_lines) {
     const line = { ...source, text: source.text.trim() };
-    if (heading_pattern.test(line.text)) { in_bibliography = true; has_heading = true; continue; }
-    if (in_bibliography && end_pattern.test(line.text)) break;
+    if (isReferenceHeading(line.text)) { in_bibliography = true; has_heading = true; continue; }
+    if (in_bibliography && isReferenceSectionEnd(line.text)) break;
     if (in_bibliography && line.text && !/^\d+$/.test(line.text)) lines.push(line);
   }
   if (!has_heading) {

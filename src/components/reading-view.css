@@ -4,6 +4,26 @@
 .reading-block { position: relative; flex: none; margin-inline: auto; max-width: none; background: white; }
 .reading-block .pdf-page { box-shadow: none; }
 .reading-block .pdf-page-label { display: none; }
+/* Labels belong to the article, outside the selectable PDF. Their size and
+   spacing scale with the crop without setting its intrinsic width. */
+.reading-block-type {
+  box-sizing: border-box;
+  width: 0;
+  min-width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  padding: calc(3px * var(--reading-zoom, 1)) calc(8px * var(--reading-zoom, 1));
+  color: #677872;
+  background: #f4f3ed;
+  font-size: calc(10px * var(--reading-zoom, 1));
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
 /* Notes follow crop width without contributing their own intrinsic width. */
 .note-strip { --note-scale: var(--reading-zoom, 1); box-sizing: border-box; width: 0; min-width: 100%; max-width: 100%; padding: calc(8px * var(--reading-zoom, 1)); border-top: calc(1px * var(--reading-zoom, 1)) solid #e8dec1; background: #f7f3e7; }
 .note-strip .note-card + .note-card { margin-top: calc(6px * var(--reading-zoom, 1)); }

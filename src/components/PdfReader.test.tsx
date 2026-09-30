@@ -149,6 +149,9 @@ function pageLayout(scroll: HTMLElement) {
     const height = parseFloat(page.style.height);
     const left = page_padding + Math.max(0, (viewport_width - page_padding * 2 - width) / 2);
     const zoom = Number(page.closest<HTMLElement>('.reading-pages')?.style.getPropertyValue('--reading-zoom') || 1);
+    const article_top = top;
+    const label_height = page.closest('.reading-block')?.querySelector('.reading-block-type') ? 20 * zoom : 0;
+    top += label_height;
     const note_top = top + height;
     let note_height = 0;
     const notes = [...(page.closest('.reading-block')?.querySelectorAll<HTMLElement>('.note-card') ?? [])].map((element) => {
@@ -160,7 +163,7 @@ function pageLayout(scroll: HTMLElement) {
       return note;
     });
     if (notes.length) note_height += 16 * zoom;
-    const layout = { page, width, height, top, left, notes, note_height };
+    const layout = { page, width, height, top, left, notes, note_height, article_top, label_height };
     top += height + page_spacing + note_height;
     return layout;
   });
@@ -280,9 +283,9 @@ beforeEach(() => {
     const pages_container = Boolean(scroll && this.classList.contains('pdf-pages'));
     const preview = previewTransform(layout?.page.closest<HTMLElement>('.reading-block') ?? layout?.page.parentElement ?? null);
     const width = layout ? layout.width * preview.scale : note?.width ?? viewport_width;
-    const height = layout ? (layout.height + (wrapper_page ? 24 : 0) + (article_page ? layout.note_height : 0)) * preview.scale : note?.height ?? (pages_container
+    const height = layout ? (layout.height + (wrapper_page ? 24 : 0) + (article_page ? layout.note_height + layout.label_height : 0)) * preview.scale : note?.height ?? (pages_container
       ? contentDimensions(scroll!).height : this.classList.contains('pdf-toolbar') ? 56 : viewport_height);
-    const top = layout ? layout.top + preview.y - scroll!.scrollTop : note ? note.top - scroll!.scrollTop : pages_container ? -scroll!.scrollTop : 0;
+    const top = layout ? layout.article_top + (article_page ? 0 : layout.label_height * preview.scale) + preview.y - scroll!.scrollTop : note ? note.top - scroll!.scrollTop : pages_container ? -scroll!.scrollTop : 0;
     const left = layout ? layout.left + preview.x - scroll!.scrollLeft : note ? note.left - scroll!.scrollLeft : pages_container ? -scroll!.scrollLeft : 0;
     return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) };
   });
@@ -392,13 +395,13 @@ async function advancePreviewFrame(duration = 16) {
 
 function readingProps(block_id = 'p1-body'): PdfReaderProps {
   reading_fixture.layout = {
-    layout_version: 1, pdf_hash: 'a'.repeat(64), page_count: 4,
+    layout_version: 2, pdf_hash: 'a'.repeat(64), page_count: 4,
     blocks: [
-      { block_id: 'p1-intro', page_number: 1, source_rect: [60, 540, 300, 740], kind: 'text', text: 'Introduction', figure_label: null },
-      { block_id: 'p2-figure', page_number: 2, source_rect: [60, 380, 540, 700], kind: 'figure', text: 'Figure 1', figure_label: 'Figure 1' },
-      { block_id: 'p1-body', page_number: 1, source_rect: [320, 100, 560, 700], kind: 'text', text: 'Body paragraph', figure_label: null },
-      { block_id: 'p2-body', page_number: 2, source_rect: [60, 80, 300, 330], kind: 'text', text: 'Later paragraph', figure_label: null },
-      { block_id: 'p3-original', page_number: 3, source_rect: [0, 0, 600, 800], kind: 'original', text: '', figure_label: null },
+      { block_id: 'p1-intro', page_number: 1, source_rect: [60, 540, 300, 740], kind: 'text', block_type: 'title', text: 'Introduction', figure_label: null },
+      { block_id: 'p2-figure', page_number: 2, source_rect: [60, 380, 540, 700], kind: 'figure', block_type: 'graph', text: 'Figure 1', figure_label: 'Figure 1' },
+      { block_id: 'p1-body', page_number: 1, source_rect: [320, 100, 560, 700], kind: 'text', block_type: 'content', text: 'Body paragraph', figure_label: null },
+      { block_id: 'p2-body', page_number: 2, source_rect: [60, 80, 300, 330], kind: 'text', block_type: 'content', text: 'Later paragraph', figure_label: null },
+      { block_id: 'p3-original', page_number: 3, source_rect: [0, 0, 600, 800], kind: 'original', block_type: 'others', text: '', figure_label: null },
     ],
   };
   return readerProps({
@@ -682,7 +685,7 @@ describe('inline Reading notes', () => {
     await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-intro'));
     const card = document.querySelector<HTMLElement>('.note-card')!;
     const scroll = screen.getByLabelText('Scrollable reading view');
-    act(() => scroll.scrollTo({ top: card.getBoundingClientRect().top - 30 }));
+    act(() => scroll.scrollTo({ top: scroll.scrollTop + card.getBoundingClientRect().top - 30 }));
     const initial_top = card.getBoundingClientRect().top;
     fireEvent.click(card.querySelector('.note-card-heading')!);
     expect(card.getBoundingClientRect().top).toBeCloseTo(initial_top);
@@ -810,6 +813,42 @@ describe('inline Reading notes', () => {
 });
 
 describe('optional Reading view', () => {
+  it('shows every semantic type outside selectable crops while controls are hidden', async () => {
+    const props = readingProps('p1-intro');
+    const labels = ['Content', 'Equation', 'Graph', 'Table', 'Reference', 'Title', 'Others'] as const;
+    reading_fixture.layout!.blocks = labels.map((label, index) => ({
+      ...reading_fixture.layout!.blocks[0],
+      block_id: index ? `p1-${label.toLowerCase()}` : 'p1-intro',
+      block_type: label.toLowerCase() as ReadingLayout['blocks'][number]['block_type'],
+    }));
+    const styles = document.createElement('style');
+    styles.textContent = reader_styles;
+    document.head.append(styles);
+    try {
+      render(<PdfReader {...props} controls_visible={false} />);
+      await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-intro'));
+      const block_labels = [...document.querySelectorAll<HTMLElement>('.reading-block-type')];
+      expect(block_labels.map((label) => label.textContent)).toEqual(labels);
+      for (const label of block_labels) {
+        const style = getComputedStyle(label);
+        expect(label.closest('.pdf-page')).toBeNull();
+        expect(label.closest('.reading-block-actions')).toBeNull();
+        expect(label.parentElement?.classList.contains('reading-block')).toBe(true);
+        expect(style.display).not.toBe('none');
+        expect(style.visibility).toBe('visible');
+        expect(style.userSelect).toBe('none');
+        expect(style.width).toBe('0px');
+        expect(style.minWidth).toBe('100%');
+        expect(style.maxWidth).toBe('100%');
+      }
+      expect(document.querySelector('.reading-pages-controls')).toBeNull();
+      expect(getComputedStyle(document.querySelector('.reading-block-actions')!).opacity).toBe('0');
+      expect(props.on_error).not.toHaveBeenCalled();
+    } finally {
+      styles.remove();
+    }
+  });
+
   it.each([0, 90, 180, 270].flatMap((rotation) => (['fit_width', 'custom'] as const).map((zoom_mode) => ({ rotation, zoom_mode }))))(
     'keeps Reading mode and $zoom_mode zoom for a rotated $rotation° PDF destination', async ({ rotation, zoom_mode }) => {
       pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'body', rect: [100, 600, 125, 612], dest: [0, { name: 'XYZ' }, 400, 500, 2.8] }]);
@@ -2014,7 +2053,7 @@ describe('reference details in both reading modes', () => {
       const strip = scroll.querySelector<HTMLElement>('.pdf-pages')!;
       const toolbar = screen.getByLabelText('PDF view controls');
       const articles = [...scroll.querySelectorAll<HTMLElement>('article')];
-      const actions = [...scroll.querySelectorAll<HTMLElement>('.reading-block-actions, .reference-strip')];
+      const actions = [...scroll.querySelectorAll<HTMLElement>('.reading-block-type, .reading-block-actions, .reference-strip')];
       const article = page.closest<HTMLElement>('article')!;
       const reference = article.querySelector<HTMLElement>('.reference-strip')!;
       const canvas = page.querySelector<HTMLCanvasElement>('canvas')!;

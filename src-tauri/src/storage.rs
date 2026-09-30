@@ -625,7 +625,7 @@ mod tests {
       let paper = db.save_paper(fixture_paper()).await.unwrap();
       let layout = reading_layout::tests::fixture_layout(paper.pdf_hash.clone());
       assert!(db
-        .get_reading_layout(paper.paper_id.clone(), 1)
+        .get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
         .await
         .unwrap()
         .is_none());
@@ -635,16 +635,44 @@ mod tests {
       let reopened = Database::initialize(&path).unwrap();
       assert_eq!(
         reopened
-          .get_reading_layout(paper.paper_id.clone(), 1)
+          .get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
           .await
           .unwrap(),
         Some(layout.clone())
       );
       assert!(db
-        .get_reading_layout(paper.paper_id.clone(), 2)
+        .get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION + 1)
         .await
         .unwrap()
         .is_none());
+      let mut legacy = serde_json::to_value(&layout).unwrap();
+      legacy["layout_version"] = 1.into();
+      for block in legacy["blocks"].as_array_mut().unwrap() {
+        block.as_object_mut().unwrap().remove("block_type");
+      }
+      db.connect()
+        .unwrap()
+        .execute(
+          "UPDATE reading_layouts SET layout_version=1, data=?1 WHERE paper_id=?2",
+          params![legacy.to_string(), paper.paper_id],
+        )
+        .unwrap();
+      for requested_version in [1, reading_layout::LAYOUT_VERSION] {
+        assert!(db
+          .get_reading_layout(paper.paper_id.clone(), requested_version)
+          .await
+          .unwrap()
+          .is_none());
+      }
+      db.save_reading_layout(paper.paper_id.clone(), layout.clone())
+        .await
+        .unwrap();
+      assert_eq!(
+        db.get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
+          .await
+          .unwrap(),
+        Some(layout.clone())
+      );
       let mut wrong_revision = layout.clone();
       wrong_revision.pdf_hash = "b".repeat(64);
       assert!(db
@@ -659,7 +687,7 @@ mod tests {
       for corrupt_data in [
         "{broken".into(),
         serde_json::to_string(&ReadingLayout {
-          layout_version: 2,
+          layout_version: reading_layout::LAYOUT_VERSION + 1,
           ..layout.clone()
         })
         .unwrap(),
@@ -677,7 +705,7 @@ mod tests {
           )
           .unwrap();
         assert!(db
-          .get_reading_layout(paper.paper_id.clone(), 1)
+          .get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
           .await
           .unwrap()
           .is_none());
@@ -690,7 +718,7 @@ mod tests {
         .execute("UPDATE reading_layouts SET pdf_hash=?1", ["b".repeat(64)])
         .unwrap();
       assert!(db
-        .get_reading_layout(paper.paper_id, 1)
+        .get_reading_layout(paper.paper_id, reading_layout::LAYOUT_VERSION)
         .await
         .unwrap()
         .is_none());
@@ -711,7 +739,7 @@ mod tests {
       let upgraded = Database::initialize(&path).unwrap();
       assert_eq!(upgraded.list_papers().await.unwrap().len(), 1);
       assert!(upgraded
-        .get_reading_layout(paper.paper_id, 1)
+        .get_reading_layout(paper.paper_id, reading_layout::LAYOUT_VERSION)
         .await
         .unwrap()
         .is_none());
