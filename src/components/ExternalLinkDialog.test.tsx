@@ -54,6 +54,9 @@ describe('external link confirmation', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.pointerDown(view.container.firstElementChild!);
+    fireEvent.pointerUp(view.container.firstElementChild!);
+    expect(callbacks.on_cancel).toHaveBeenCalledTimes(2);
+    fireEvent.click(view.container.firstElementChild!);
     expect(callbacks.on_cancel).toHaveBeenCalledTimes(3);
     expect(callbacks.on_confirm).not.toHaveBeenCalled();
   });
@@ -66,6 +69,8 @@ describe('external link confirmation', () => {
     for (const button of screen.getAllByRole('button')) expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.pointerDown(view.container.firstElementChild!);
+    fireEvent.pointerUp(view.container.firstElementChild!);
+    fireEvent.click(view.container.firstElementChild!);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open in browser' }));
     expect(callbacks.on_cancel).not.toHaveBeenCalled();

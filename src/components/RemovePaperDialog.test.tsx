@@ -35,6 +35,8 @@ describe('remove paper confirmation', () => {
     expect(screen.getByRole('status').textContent).toContain('Removing paper');
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.pointerDown(view.container.firstElementChild!);
+    fireEvent.pointerUp(view.container.firstElementChild!);
+    fireEvent.click(view.container.firstElementChild!);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove paper' }));
     expect(cancel).not.toHaveBeenCalled();
@@ -54,6 +56,9 @@ describe('remove paper confirmation', () => {
     expect(cancel).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.pointerDown(view.container.firstElementChild!);
+    fireEvent.pointerUp(view.container.firstElementChild!);
+    expect(cancel).toHaveBeenCalledOnce();
+    fireEvent.click(view.container.firstElementChild!);
     expect(cancel).toHaveBeenCalledTimes(2);
   });
 });

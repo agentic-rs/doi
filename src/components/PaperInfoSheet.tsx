@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 import { ArrowRight, BookOpen, ExternalLink, X } from 'lucide-react';
 import type { Paper } from '../lib/types';
+import { DialogBackdrop } from './DialogBackdrop';
 import './paper-info.css';
 
 interface PaperInfoSheetProps {
@@ -67,9 +68,7 @@ export function PaperInfoSheet({ paper, on_close, on_open_source, resume = false
   }, []);
 
   return (
-    <div className="paper-info-backdrop" onPointerDown={(event) => {
-      if (event.target === event.currentTarget) on_close();
-    }}>
+    <DialogBackdrop class_name="paper-info-backdrop" dismissible on_dismiss={on_close}>
       <section className="paper-info-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={dialogRef}>
         <header className="paper-info-heading">
           <span className="paper-info-eyebrow"><BookOpen size={18} aria-hidden="true" /> About this paper</span>
@@ -105,6 +104,6 @@ export function PaperInfoSheet({ paper, on_close, on_open_source, resume = false
           <button type="button" className="paper-info-read" onClick={on_close}>{resume ? 'Resume reading' : 'Read paper'}<ArrowRight size={18} aria-hidden="true" /></button>
         </footer>
       </section>
-    </div>
+    </DialogBackdrop>
   );
 }

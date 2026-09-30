@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { DialogBackdrop } from './DialogBackdrop';
 import './library-dialog.css';
 
 interface LibraryDialogProps {
@@ -70,13 +71,11 @@ export function LibraryDialog(props: LibraryDialogProps) {
     };
   }, [props.dialog_key]);
 
-  return <div className="library-dialog-backdrop" onPointerDown={(event) => {
-    if (event.target === event.currentTarget && props.dismissible) props.on_cancel();
-  }}>
+  return <DialogBackdrop class_name="library-dialog-backdrop" dismissible={props.dismissible} on_dismiss={props.on_cancel}>
     <section ref={dialogRef} className={`library-dialog ${props.class_name ?? ''}`}
       role="dialog" aria-modal="true" aria-labelledby={props.title_id}
       aria-describedby={props.description_id} tabIndex={-1}>
       {props.children}
     </section>
-  </div>;
+  </DialogBackdrop>;
 }

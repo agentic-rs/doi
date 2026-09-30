@@ -176,10 +176,13 @@ describe('embedded Tokn settings', () => {
   it('keeps unsaved values after a save error and disables dismissal during saving', async () => {
     const pending = deferred<AiSettings>();
     vi.mocked(saveSettings).mockReturnValue(pending.promise);
-    const { on_close } = openSettings({ model_id: 'model-one' });
+    const { on_close, container } = openSettings({ model_id: 'model-one' });
     enterKey();
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.pointerDown(container.firstElementChild!);
+    fireEvent.pointerUp(container.firstElementChild!);
+    fireEvent.click(container.firstElementChild!);
     expect(on_close).not.toHaveBeenCalled();
     await act(async () => pending.reject('Could not save the key.'));
     expect(screen.getByRole('alert').textContent).toBe('Could not save the key.');
@@ -187,5 +190,18 @@ describe('embedded Tokn settings', () => {
     expect((screen.getByLabelText('Model') as HTMLInputElement).value).toBe('model-one');
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(on_close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the backdrop through press and release, then consumes the dismissal click', () => {
+    const { container, on_close } = openSettings();
+    const backdrop = container.firstElementChild!;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.mouseDown(backdrop);
+    fireEvent.pointerUp(backdrop);
+    fireEvent.mouseUp(backdrop);
+    expect(on_close).not.toHaveBeenCalled();
+    expect(fireEvent.click(backdrop)).toBe(false);
+    expect(on_close).toHaveBeenCalledOnce();
+    expect(saveSettings).not.toHaveBeenCalled();
   });
 });

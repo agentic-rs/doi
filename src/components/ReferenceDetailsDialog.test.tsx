@@ -59,6 +59,9 @@ describe('reference details dialog', () => {
     fireEvent.pointerDown(screen.getByRole('heading', { name: reference.title! }));
     expect(callbacks.on_close).not.toHaveBeenCalled();
     fireEvent.pointerDown(view.container.firstElementChild!);
+    fireEvent.pointerUp(view.container.firstElementChild!);
+    expect(callbacks.on_close).not.toHaveBeenCalled();
+    expect(fireEvent.click(view.container.firstElementChild!)).toBe(false);
     expect(callbacks.on_close).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Close reference details' }));
     expect(callbacks.on_close).toHaveBeenCalledTimes(2);

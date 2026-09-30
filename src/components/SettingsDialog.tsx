@@ -4,6 +4,7 @@ import { Check, KeyRound, LoaderCircle, RefreshCw, Settings2, X } from 'lucide-r
 import type { AiModel, AiProviderKind, AiSettings } from '../lib/types';
 import { AI_PROVIDERS, normalizeAiBaseUrl } from '../lib/ai-providers';
 import { listAiModels, saveSettings } from '../lib/tauri';
+import { DialogBackdrop } from './DialogBackdrop';
 import './settings-dialog.css';
 
 interface SettingsDialogProps {
@@ -138,9 +139,7 @@ export function SettingsDialog({ settings, on_close, on_saved }: SettingsDialogP
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !saving) on_close();
-    }}>
+    <DialogBackdrop class_name="modal-backdrop" dismissible={!saving} on_dismiss={on_close}>
       <div className="settings-dialog ai-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" ref={dialogRef}>
         <div className="dialog-heading">
           <span className="dialog-symbol"><Settings2 size={20} /></span>
@@ -193,6 +192,6 @@ export function SettingsDialog({ settings, on_close, on_saved }: SettingsDialogP
           </div>
         </form>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

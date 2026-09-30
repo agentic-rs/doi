@@ -86,6 +86,9 @@ describe('paper preview', () => {
     fireEvent.pointerDown(screen.getByRole('heading', { name: preview.metadata.title }));
     expect(latest).not.toHaveBeenCalled();
     fireEvent.pointerDown(view.container.firstElementChild!);
+    fireEvent.pointerUp(view.container.firstElementChild!);
+    expect(latest).not.toHaveBeenCalled();
+    fireEvent.click(view.container.firstElementChild!);
     expect(latest).toHaveBeenCalledOnce();
     expect(first).not.toHaveBeenCalled();
   });

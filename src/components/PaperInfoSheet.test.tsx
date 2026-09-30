@@ -65,6 +65,9 @@ describe('paper information sheet', () => {
     fireEvent.pointerDown(screen.getByRole('heading', { name: paper.title }));
     expect(close).not.toHaveBeenCalled();
     fireEvent.pointerDown(container.firstElementChild!);
+    fireEvent.pointerUp(container.firstElementChild!);
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.click(container.firstElementChild!);
     expect(close).toHaveBeenCalledOnce();
   });
 });
