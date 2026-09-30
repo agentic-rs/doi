@@ -810,6 +810,36 @@ describe('immersive PDF view', () => {
 });
 
 describe('PDF zoom gestures and rendering', () => {
+  it.each(['pdf', 'reading'] as const)('keeps %s pinch active through scrollbar-only resize notifications but cancels a real resize', async (mode) => {
+    const props = mode === 'reading' ? readingProps() : readerProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_location_change).toHaveBeenCalled());
+    const scroll = screen.getByLabelText(mode === 'reading' ? 'Scrollable reading view' : 'Scrollable PDF pages');
+    const crop = scroll.querySelector<HTMLElement>('.pdf-page')!;
+    const crop_width = crop.style.width;
+    vi.useFakeTimers();
+    dispatchSafariGesture(scroll, 'gesturestart', 1);
+    dispatchSafariGesture(scroll, 'gesturechange', 1.2);
+    await advancePreviewFrame();
+    Object.defineProperties(scroll, {
+      clientWidth: { configurable: true, get: () => viewport_width + 6 },
+      clientHeight: { configurable: true, get: () => viewport_height + 15 },
+    });
+    act(() => resize_callbacks.forEach((callback) => callback()));
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(true);
+    expect(crop.style.width).toBe(crop_width);
+    dispatchSafariGesture(scroll, 'gesturechange', 1.5);
+    await advancePreviewFrame();
+    const promoted = scroll.querySelector<HTMLElement>('[data-zoom-preview-page]')!;
+    expect(previewTransform(promoted).scale).toBeCloseTo(1.5);
+    resizeViewport(viewport_width, viewport_height + 100);
+    await advancePreviewFrame();
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+    expect(scroll.querySelector('[data-zoom-preview-page]')).toBeNull();
+    expect(scroll.style.getPropertyValue('--zoom-preview-width')).toBe('');
+    expect(latestLocation(props).zoom_mode).toBe('fit_width');
+  });
+
   it('captures ctrl-wheel inside the PDF, anchors its point, and renders at the full native pixel ratio', async () => {
     vi.stubGlobal('devicePixelRatio', 3);
     const props = readerProps();
@@ -1609,6 +1639,37 @@ describe('reference details in both reading modes', () => {
       expect(article.style.transform).toBe('');
       expect(article.hasAttribute('data-zoom-preview-page')).toBe(false);
       expect(getComputedStyle(reference).visibility).toBe('visible');
+    });
+
+    it('animates only nearby Reading blocks and brings prefetched blocks in without frame-time layout or PDF work', async () => {
+      const props = readingProps();
+      const view = render(<PdfReader {...props} />);
+      await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+      const distant = readingBlock('p1-intro').closest<HTMLElement>('article')!;
+      await waitFor(() => expect(distant.querySelector('canvas')).toBeTruthy());
+      const scroll = screen.getByLabelText('Scrollable reading view');
+      const baseline = heavyWork(props);
+      vi.useFakeTimers();
+      dispatchSafariGesture(scroll, 'gesturestart', 1);
+      await advancePreviewFrame();
+      expect(distant.hasAttribute('data-zoom-preview-page')).toBe(false);
+      expect(distant.style.transform).toBe('');
+      const layout_reads = vi.mocked(HTMLElement.prototype.getBoundingClientRect).mock.calls.length;
+      for (let frame = 0; frame < 60; frame++) {
+        dispatchSafariGesture(scroll, 'gesturechange', 1 + frame / 150);
+        await advancePreviewFrame();
+      }
+      expect(vi.mocked(HTMLElement.prototype.getBoundingClientRect).mock.calls.length).toBe(layout_reads);
+      expect(heavyWork(props)).toEqual(baseline);
+      expect(distant.hasAttribute('data-zoom-preview-page')).toBe(false);
+      dispatchSafariGesture(scroll, 'gesturechange', 0.2);
+      await advancePreviewFrame();
+      expect(distant.hasAttribute('data-zoom-preview-page')).toBe(true);
+      expect(getComputedStyle(distant).visibility).toBe('visible');
+      expect(heavyWork(props)).toEqual(baseline);
+      view.rerender(<PdfReader {...props} reading_active={false} />);
+      await advancePreviewFrame();
+      expect(scroll.querySelector('[data-zoom-preview-page]')).toBeNull();
     });
   });
 

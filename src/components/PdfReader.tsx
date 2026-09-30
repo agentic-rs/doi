@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, KeyboardEvent, PointerEvent } from 'react';
+import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan, Expand, FileText } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -60,15 +60,42 @@ function defaultLocation(paper_id: string): ReadingLocation {
 }
 
 interface ZoomPreview {
-  pages: Array<{ element: HTMLElement; origin: PdfZoomPoint }>;
+  pages: Array<{ element: HTMLElement; origin: PdfZoomPoint; width: number; height: number; promoted: boolean }>;
   scroll_root: HTMLDivElement;
   root_origin: PdfZoomPoint;
+  viewport: { width: number; height: number };
+  layout_width: number;
+  cull_offscreen: boolean;
   start_point: PdfZoomPoint;
   anchor_offset: PdfZoomPoint;
   point: PdfZoomPoint;
   base_zoom: number;
   zoom: number;
   updated: boolean;
+}
+
+function paintZoomPreview(preview: ZoomPreview, scale: number, point: PdfZoomPoint) {
+  // Bitmap prefetch extends much farther than the viewport. Do not turn all
+  // those articles (and their reference lists) into animated backing layers.
+  // Use the frozen geometry, so every frame stays free of layout reads.
+  const overscan = 128;
+  for (const page of preview.pages) {
+    const { element, origin } = page;
+    const x = point.client_x - origin.client_x - scale * (preview.start_point.client_x - origin.client_x);
+    const y = point.client_y - origin.client_y - scale * (preview.start_point.client_y - origin.client_y);
+    const left = origin.client_x + x - preview.root_origin.client_x;
+    const top = origin.client_y + y - preview.root_origin.client_y;
+    const visible = !preview.cull_offscreen || (left < preview.viewport.width + overscan && top < preview.viewport.height + overscan
+      && left + page.width * scale > -overscan && top + page.height * scale > -overscan);
+    if (visible) {
+      if (!page.promoted) element.setAttribute('data-zoom-preview-page', 'true');
+      element.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+    } else if (page.promoted) {
+      element.style.removeProperty('transform');
+      element.removeAttribute('data-zoom-preview-page');
+    }
+    page.promoted = visible;
+  }
 }
 
 export function PdfReader(props: PdfReaderProps) {
@@ -177,6 +204,7 @@ export function PdfReader(props: PdfReaderProps) {
         element.removeAttribute('data-zoom-preview-page');
       }
       preview.scroll_root.removeAttribute('data-zoom-preview');
+      preview.scroll_root.style.removeProperty('--zoom-preview-width');
     }
     zoom_preview.current = null;
     zoom_anchor.current = null;
@@ -367,6 +395,13 @@ export function PdfReader(props: PdfReaderProps) {
     if (!scroll_root || !loaded || scroll_root.clientWidth <= 0 || scroll_root.clientHeight <= 0) return;
     const size = { width: scroll_root.clientWidth, height: scroll_root.clientHeight };
     if (viewport_size.current?.width === size.width && viewport_size.current.height === size.height) return;
+    const preview = zoom_preview.current;
+    if (preview) {
+      const bounds = scroll_root.getBoundingClientRect();
+      // WebKit can reclaim the scrollbar gutter for overflow:hidden. That
+      // changes clientWidth/Height without resizing the reader itself.
+      if (bounds.width === preview.viewport.width && bounds.height === preview.viewport.height) return;
+    }
     clearZoomPreview();
     viewport_size.current = size;
     // The saved page-relative point predates the resize. Reading it from the
@@ -417,24 +452,26 @@ export function PdfReader(props: PdfReaderProps) {
         const bounds = nearest.getBoundingClientRect();
         if (bounds.width <= 0 || bounds.height <= 0) return false;
         const root_bounds = scroll_root.getBoundingClientRect();
+        const content_width = scroll_root.querySelector<HTMLElement>('.pdf-pages')!.getBoundingClientRect().width;
         // Reading references belong to their passage: preview the whole block
         // so its crop, background and reference rows move together. Keep this
-        // limited to mounted bitmaps and visible blocks (a long reference list
-        // can remain onscreen after its crop's bitmap has been unmounted).
+        // limited to mounted bitmaps and reference-bearing blocks (a long list
+        // can enter the viewport after its crop's bitmap has been unmounted).
         const preview_pages = pages.flatMap((page) => {
           const has_bitmap = Boolean(page.querySelector('canvas'));
           if (!reading && !has_bitmap) return [];
           const element = page.closest<HTMLElement>(reading ? '.reading-block' : '.pdf-page-wrap')!;
           const bounds = element.getBoundingClientRect();
-          const visible = reading && bounds.bottom > root_bounds.top && bounds.top < root_bounds.bottom
-            && bounds.right > root_bounds.left && bounds.left < root_bounds.right;
-          if (!has_bitmap && !visible) return [];
-          return [{ element, origin: { client_x: bounds.left, client_y: bounds.top } }];
+          if (!has_bitmap && !element.querySelector('.reference-strip')) return [];
+          return [{ element, origin: { client_x: bounds.left, client_y: bounds.top }, width: bounds.width, height: bounds.height, promoted: false }];
         });
         zoom_preview.current = {
           pages: preview_pages,
           scroll_root,
           root_origin: { client_x: root_bounds.left, client_y: root_bounds.top },
+          viewport: { width: root_bounds.width, height: root_bounds.height },
+          layout_width: scroll_root.clientWidth,
+          cull_offscreen: reading,
           start_point: point,
           anchor_offset: {
             client_x: clamp(point.client_x, bounds.left, bounds.right) - point.client_x,
@@ -445,7 +482,8 @@ export function PdfReader(props: PdfReaderProps) {
           zoom: zoom_ref.current,
           updated: false,
         };
-        for (const { element } of preview_pages) element.setAttribute('data-zoom-preview-page', 'true');
+        paintZoomPreview(zoom_preview.current, 1, point);
+        scroll_root.style.setProperty('--zoom-preview-width', `${content_width}px`);
         scroll_root.setAttribute('data-zoom-preview', 'true');
         setRenderPaused(true);
         zoom_anchor.current = locationAtElement(nearest, [
@@ -466,11 +504,7 @@ export function PdfReader(props: PdfReaderProps) {
         preview.point = point;
         preview.updated = true;
         const scale = next_zoom / preview.base_zoom;
-        for (const { element, origin } of preview.pages) {
-          const x = point.client_x - origin.client_x - scale * (preview.start_point.client_x - origin.client_x);
-          const y = point.client_y - origin.client_y - scale * (preview.start_point.client_y - origin.client_y);
-          element.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
-        }
+        paintZoomPreview(preview, scale, point);
       },
       on_end: (cancelled) => {
         const preview = zoom_preview.current;
@@ -729,7 +763,8 @@ export function PdfReader(props: PdfReaderProps) {
     const pages = scroll_root.querySelector<HTMLElement>('.pdf-pages');
     const style = pages ? getComputedStyle(pages) : null;
     const padding = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 20;
-    return zoom * Math.min(760, Math.max(40, scroll_root.clientWidth - padding - 4)) / region.width;
+    const available_width = zoom_preview.current?.layout_width ?? scroll_root.clientWidth;
+    return zoom * Math.min(760, Math.max(40, available_width - padding - 4)) / region.width;
   }
 
   function locationAtElement(element: HTMLElement, position: [number, number]) {
@@ -858,7 +893,8 @@ export function PdfReader(props: PdfReaderProps) {
             : <><LoaderCircle className="pdf-spinner" size={24} /><p>Preparing Reading view… {layout_progress.completed} / {layout_progress.total || loaded.pages.length} pages</p><p>Finding margins, columns, and figures on this device.</p></>}
           <button type="button" onClick={() => viewOriginal()}>Return to original PDF</button>
         </div>}
-        {loaded && (!reading || layout) && <div className={`pdf-pages ${reading ? `reading-pages ${controls_visible ? 'reading-pages-controls' : ''}` : ''}`}>
+        {loaded && (!reading || layout) && <div className={`pdf-pages ${reading ? `reading-pages ${controls_visible ? 'reading-pages-controls' : ''}` : ''}`}
+          style={reading ? { '--reading-zoom': zoom } as CSSProperties : undefined}>
           {reading && layout ? layout.blocks.map((block) => <article className={`reading-block reading-block-${block.kind}`} key={`${paper.paper_id}-${block.block_id}`} data-figure-id={block.kind === 'figure' ? block.block_id : undefined}>
             <PdfPage page={loaded.pages[block.page_number - 1]} zoom={blockZoom(block)} rotation={rotation}
               source_rect={block.source_rect} block_id={block.block_id} render_paused={render_paused} scroll_root={scroll_root}

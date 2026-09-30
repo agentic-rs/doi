@@ -1,6 +1,6 @@
 /* Paint the entire scroll viewport, including overflow beyond the page strip. */
 .reading-scroll { background: #f4f3ed; }
-.reading-pages { gap: 12px; }
+.reading-pages { --reading-zoom: 1; gap: calc(12px * var(--reading-zoom)); }
 .reading-block { position: relative; flex: none; margin-inline: auto; max-width: none; background: white; }
 .reading-block .pdf-page { box-shadow: none; }
 .reading-block .pdf-page-label { display: none; }
@@ -8,11 +8,12 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  min-height: 44px;
-  padding: 0 8px;
+  gap: calc(12px * var(--reading-zoom, 1));
+  min-height: calc(44px * var(--reading-zoom, 1));
+  padding: 0 calc(8px * var(--reading-zoom, 1));
   color: #677872;
-  font-size: 11px;
+  font-size: calc(11px * var(--reading-zoom, 1));
+  line-height: 1.4;
   user-select: none;
 }
 .reading-block-actions > span { margin-right: auto; }
@@ -32,9 +33,21 @@
   font: inherit;
   cursor: pointer;
 }
-.reading-block-actions .reading-source-button { width: 44px; height: 44px; padding: 0; border-radius: 50%; background: transparent; }
+/* Passage controls share the paper's committed scale. The figure dialog and
+   reader toolbar keep their regular control sizes outside the reading strip. */
+.reading-block-actions button {
+  gap: calc(5px * var(--reading-zoom, 1));
+  min-height: calc(44px * var(--reading-zoom, 1));
+  min-width: calc(44px * var(--reading-zoom, 1));
+  border-radius: calc(8px * var(--reading-zoom, 1));
+  padding: calc(6px * var(--reading-zoom, 1)) calc(8px * var(--reading-zoom, 1));
+}
+.reading-block-actions button > svg { width: calc(15px * var(--reading-zoom, 1)); height: calc(15px * var(--reading-zoom, 1)); }
+.reading-block-actions .reading-source-button { width: calc(44px * var(--reading-zoom, 1)); height: calc(44px * var(--reading-zoom, 1)); padding: 0; border-radius: 50%; background: transparent; }
+.reading-block-actions .reading-source-button > svg { width: calc(16px * var(--reading-zoom, 1)); height: calc(16px * var(--reading-zoom, 1)); }
 .reading-block-actions button:hover, .figure-dialog-toolbar button:hover, .pdf-loading button:hover { background: #e3ede5; }
 .reading-block-actions button:focus-visible, .figure-dialog-toolbar button:focus-visible { outline: 2px solid #2c8179; outline-offset: 2px; }
+.reading-block-actions button:focus-visible { outline-width: calc(2px * var(--reading-zoom, 1)); outline-offset: calc(2px * var(--reading-zoom, 1)); }
 .figure-dialog {
   position: fixed;
   inset: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
@@ -62,10 +75,10 @@
    wrapper. Grow the scroll content first, then center figures that still fit. */
 .figure-dialog-scroll > .pdf-page-wrap { width: max-content; min-width: 100%; }
 .figure-dialog-scroll[data-zoom-preview] { overflow: hidden; }
-.figure-dialog-scroll[data-zoom-preview] .pdf-page-wrap { pointer-events: none; }
+.figure-dialog-scroll[data-zoom-preview] .pdf-page-wrap { width: var(--zoom-preview-width); min-width: var(--zoom-preview-width); margin-inline: 0; pointer-events: none; }
 .figure-dialog-scroll .pdf-page-label { display: none; }
 @media (max-width: 480px) {
-  .reading-block-actions { gap: 2px; padding-inline: 0; }
+  .reading-block-actions { gap: calc(2px * var(--reading-zoom, 1)); padding-inline: 0; }
 }
 /* Keep cropped prose continuous; its source action appears with the reader
    controls or keyboard focus without adding a toolbar between paragraphs. */
@@ -74,7 +87,7 @@
   right: 0;
   bottom: 0;
   z-index: 4;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--reading-zoom, 1));
   opacity: 0;
   pointer-events: none;
 }

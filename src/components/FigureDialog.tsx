@@ -28,6 +28,7 @@ interface FigureAnchor {
 
 interface FigurePreview {
   wrapper: HTMLElement;
+  viewport: { width: number; height: number };
   origin: PdfZoomPoint;
   start: PdfZoomPoint;
   point: PdfZoomPoint;
@@ -62,6 +63,7 @@ export function FigureDialog(props: FigureDialogProps) {
     current?.wrapper.style.removeProperty('transform');
     current?.wrapper.removeAttribute('data-zoom-preview-page');
     scroll_root?.removeAttribute('data-zoom-preview');
+    scroll_root?.style.removeProperty('--zoom-preview-width');
     preview.current = null;
   }
 
@@ -108,6 +110,13 @@ export function FigureDialog(props: FigureDialogProps) {
       const next = { width: Math.max(40, scroll_root.clientWidth - 32), height: Math.max(40, scroll_root.clientHeight - 32) };
       const previous = size_ref.current;
       if (next.width === previous.width && next.height === previous.height) return;
+      const current = preview.current;
+      if (current) {
+        const bounds = scroll_root.getBoundingClientRect();
+        // Hiding native scrollbars for preview changes the inner dimensions,
+        // not the dialog's viewport. Keep the active pinch in that case.
+        if (bounds.width === current.viewport.width && bounds.height === current.viewport.height) return;
+      }
       detach_gestures.current?.();
       detach_gestures.current = null;
       clearPreview();
@@ -157,11 +166,14 @@ export function FigureDialog(props: FigureDialogProps) {
         if (!wrapper || !page || !anchor) return false;
         const bounds = page.getBoundingClientRect();
         const origin = wrapper.getBoundingClientRect();
+        const root = scroll_root.getBoundingClientRect();
         preview.current = {
+          viewport: { width: root.width, height: root.height },
           wrapper, origin: { client_x: origin.left, client_y: origin.top }, start: point, point, anchor,
           anchor_offset: [clamp(point.client_x, bounds.left, bounds.right) - point.client_x, clamp(point.client_y, bounds.top, bounds.bottom) - point.client_y],
           base_zoom: zoom_ref.current, zoom: zoom_ref.current,
         };
+        scroll_root.style.setProperty('--zoom-preview-width', `${origin.width}px`);
         scroll_root.setAttribute('data-zoom-preview', 'true');
         wrapper.setAttribute('data-zoom-preview-page', 'true');
         const selected = window.getSelection();

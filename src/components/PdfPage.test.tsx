@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { SelectionPage } from '../lib/pdf-selection';
+import type { Annotation } from '../lib/types';
 import { PdfPage } from './PdfPage';
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
@@ -60,6 +61,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('PDF region rendering', () => {
+  it('allocates a highlight layer only for actual page marks and preserves their geometry', async () => {
+    const { page } = pageFixture();
+    const props = { page, zoom: 2, rotation: 0, render_paused: false, scroll_root: document.createElement('div'),
+      register_page: vi.fn(), on_link: vi.fn(), on_error: vi.fn() };
+    const mark: Annotation = {
+      schema_version: 1, annotation_id: 'mark', created_at: '', updated_at: '', body: { kind: 'note', content: 'Note' },
+      target: { paper_id: 'paper', pdf_hash: '', page_anchors: [{ page_number: 3, quad_points: [[100, 450, 190, 450, 190, 440, 100, 440]],
+        text_quote: { exact_text: 'Inside crop', prefix: '', suffix: '', normalization_version: 1 } }] },
+    };
+    const view = render(<PdfPage {...props} annotations={[]} />);
+    await waitFor(() => expect(props.register_page).toHaveBeenCalled());
+    expect(view.container.querySelector('.pdf-highlight-layer')).toBeNull();
+    view.rerender(<PdfPage {...props} annotations={[mark]} />);
+    expect(view.container.querySelector('polygon')?.getAttribute('points')).toBe('200,700 380,700 380,720 200,720');
+    view.rerender(<PdfPage {...props} annotations={[{ ...mark, target: { ...mark.target,
+      page_anchors: [{ ...mark.target.page_anchors[0], quad_points: [] }] } }]} />);
+    expect(view.container.querySelector('.pdf-highlight-layer')).toBeNull();
+  });
+
   it('distinguishes PDF, app, and browser link hints without adding visible icons', async () => {
     const { page } = pageFixture();
     page.getAnnotations = async () => [

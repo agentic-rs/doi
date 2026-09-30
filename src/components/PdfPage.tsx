@@ -180,7 +180,7 @@ export function PdfPage({ page, source_rect, block_id, zoom, rotation, render_pa
   }, [page, region_id, visible, viewport, render_viewport, width, height, source_rect, render_paused, read_page_data, register_page, on_error]);
 
   const page_annotations = annotations.flatMap((annotation) => annotation.target.page_anchors
-    .filter((anchor) => anchor.page_number === page.pageNumber)
+    .filter((anchor) => anchor.page_number === page.pageNumber && anchor.quad_points.length > 0)
     .map((anchor, anchor_index) => ({ annotation, anchor, anchor_index })));
 
   return (
@@ -200,7 +200,7 @@ export function PdfPage({ page, source_rect, block_id, zoom, rotation, render_pa
               <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport} />
             </div>
           ) : <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport} />}
-          <svg className="pdf-highlight-layer" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+          {page_annotations.length > 0 && <svg className="pdf-highlight-layer" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
             {page_annotations.flatMap(({ annotation, anchor, anchor_index }) => anchor.quad_points.map((quad, index) => (
               <polygon
                 key={`${annotation.annotation_id}-${anchor_index}-${index}`}
@@ -208,7 +208,7 @@ export function PdfPage({ page, source_rect, block_id, zoom, rotation, render_pa
                 className={annotation.body.kind === 'ai_answer' ? 'pdf-highlight-ai' : 'pdf-highlight-note'}
               />
             )))}
-          </svg>
+          </svg>}
           <div className="pdf-link-layer">
             {links.map((link) => {
               const rect = render_viewport.convertToViewportRectangle(link.rect);

@@ -160,6 +160,31 @@ function sourcePoint(client_x: number, client_y: number) {
 }
 
 describe('enlarged PDF figures', () => {
+  it('ignores scrollbar-only size changes during pinch while still cancelling for a real viewport resize', async () => {
+    render(<FigureDialog {...fixture()} />);
+    await ready();
+    const scroll = screen.getByLabelText('Enlarged figure');
+    vi.useFakeTimers();
+    touch('touchstart', [[250, 310], [450, 310]]);
+    touch('touchmove', [[190, 310], [510, 310]]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    Object.defineProperties(scroll, {
+      clientWidth: { configurable: true, get: () => viewport_width + 6 },
+      clientHeight: { configurable: true, get: () => viewport_height + 15 },
+    });
+    act(() => resize_callbacks.forEach((callback) => callback()));
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(true);
+    touch('touchmove', [[150, 310], [550, 310]]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(scroll.querySelector<HTMLElement>('.pdf-page-wrap')!.style.transform).toContain('scale(2)');
+    act(() => {
+      viewport_width += 100;
+      resize_callbacks.forEach((callback) => callback());
+    });
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+    expect(scroll.querySelector<HTMLElement>('.pdf-page-wrap')!.style.transform).toBe('');
+  });
+
   it('fits the entire figure initially and preserves the viewport point with zoom buttons', async () => {
     const props = fixture(true);
     render(<FigureDialog {...props} />);
