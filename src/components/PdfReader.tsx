@@ -11,8 +11,7 @@ import { extractCitationLinks, referenceForUrl } from '../lib/pdf-citation-links
 import type { CitationLink } from '../lib/pdf-citation-links';
 import { classifyPaperUrl } from '../lib/paper-links';
 import { selectionContext } from '../lib/pdf-selection';
-import { pdfContentLines } from '../lib/pdf-text';
-import { readPdfTextContent } from '../lib/pdf-compatibility';
+import { readReferencePages } from '../lib/pdf-reference-discovery';
 import { interactiveReaderTarget, isReaderTap, moveReaderGesture, startReaderGesture } from '../lib/reader-gestures';
 import type { ReaderGesture } from '../lib/reader-gestures';
 import { attachReaderEdgeSwipe } from '../lib/reader-edge-swipe';
@@ -314,17 +313,10 @@ export function PdfReader(props: PdfReaderProps) {
       void document.getOutline().then((items) => {
         if (!disposed) setOutline(flattenOutline(items));
       }).catch(() => undefined);
-      // Bibliographies are usually near the end; cap background work for very
-      // large documents. Native link navigation is available on every page.
+      // Start near the end, then search backward for bibliographies that occur
+      // before long appendices. Native links remain available while this runs.
       void (async () => {
-        const reference_pages = pages.slice(-Math.min(25, Math.max(6, Math.ceil(pages.length * 0.45))));
-        const text_pages = [];
-        for (const page of reference_pages) {
-          const content = await readPdfTextContent(page);
-          if (disposed) return;
-          const lines = pdfContentLines(content);
-          text_pages.push({ page_number: page.pageNumber, text: lines.map((line) => line.text).join('\n'), lines });
-        }
+        const text_pages = await readReferencePages(pages, () => !disposed);
         if (disposed) return;
         const items = extractReferences(text_pages);
         const links = await extractCitationLinks(document, pages, items, () => !disposed);

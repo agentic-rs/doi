@@ -1853,6 +1853,37 @@ describe('PDF link targets', () => {
 });
 
 describe('reference details in both reading modes', () => {
+  it.each(['pdf', 'reading'] as const)('finds references before a long appendix and opens their margin citation in %s mode', async (mode) => {
+    const props = mode === 'reading' ? readingProps('p1-intro') : readerProps();
+    pdf_fixture.page_sizes = Array.from({ length: 67 }, () => ({ width: 612, height: 792 }));
+    const item = (str: string, x: number, y: number) => ({ str, transform: [10, 0, 0, 10, x, y], width: 400, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
+    pdf_fixture.text_content.set(42, [
+      item('References', 90, 500),
+      item('Scott Aaronson and Hendrik Kirchner.', 90, 450),
+      item('Watermarking gpt outputs, 2023.', 101, 436),
+    ]);
+    pdf_fixture.text_content.set(43, [
+      item('Tom B. Brown and Benjamin Mann.', 90, 651),
+      item('Language models are few-shot learners.', 101, 637),
+      item('In Advances in Neural Information Processing Systems, 2020. 2', 101, 623),
+    ]);
+    pdf_fixture.text_content.set(54, [item('A Additional Ablation on Mimi Codec', 90, 700), item('Appendix source https://example.org/unrelated', 90, 680)]);
+    pdf_fixture.destinations.set('cite.gpt3', [42, { name: 'XYZ' }, 62.727, 663, null]);
+    pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'moshi-margin', rect: [100, 600, 180, 612], dest: 'cite.gpt3' }]);
+    if (mode === 'reading') reading_fixture.layout!.blocks[0].text = 'Earlier language models.';
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith([
+      expect.objectContaining({ title: 'Watermarking gpt outputs', page_number: 42 }),
+      expect.objectContaining({ title: 'Language models are few-shot learners', page_number: 43 }),
+    ], 'ready'));
+    if (mode === 'reading') {
+      await waitFor(() => expect(document.querySelector('.reference-strip button')?.textContent).toContain('Language models are few-shot learners'));
+    }
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
+    await waitFor(() => expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ title: 'Language models are few-shot learners', page_number: 43 }) }));
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
   function bibliography() {
     const item = (str: string, y: number) => ({ str, transform: [10, 0, 0, 10, 50, y], width: 260, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
     pdf_fixture.text_content.set(4, [item('References', 750), item('[7] Jane Doe. A useful paper. Journal, 2021.', 700)]);

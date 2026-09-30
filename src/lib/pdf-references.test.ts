@@ -141,6 +141,33 @@ it('parses wrapped arXiv URLs and balanced DOI punctuation', () => {
   expect(item.doi).toBe('10.1000/test(part)');
 });
 
+it('joins a URL wrapped after its scheme without changing the printed citation', () => {
+  const citation = 'Scott Aaronson and Hendrik Kirchner. Watermarking gpt outputs, 2023. URL https:\n//www.scottaaronson.com/talks/watermark.ppt. 40';
+  const item = referenceFromText(citation, 42, 0)!;
+  expect(item.url).toBe('https://www.scottaaronson.com/talks/watermark.ppt');
+  expect(item.venue).toBeNull();
+  expect(item.citation_text).toContain('https: //');
+});
+
+it.each(['wav2vec 2.0: A useful speech model', 'w2v-bert: A useful speech model', 'pyannote.audio 2.1 speaker diarization'])('parses a lowercase title after an author list: %s', (title) => {
+  expect(referenceFromText(`Alexei Baevski and Michael Auli. ${title}. Example Journal, 2020. 4, 9`, 42, 0))
+    .toMatchObject({ authors: ['Alexei Baevski', 'Michael Auli'], title, publication_year: '2020', venue: 'Example Journal' });
+});
+
+it.each(['2', '2, 3, 4, 5, 9, 16, 23, 27, 28, 29', '2–4, 9'])('omits bibliography back-reference pages from the venue: %s', (pages) => {
+  const citation = `Tom B. Brown and Benjamin Mann. Language models are few-shot learners. In Advances in Neural Information Processing Systems (NeurIPS), 2020. ${pages}`;
+  expect(referenceFromText(citation, 43, 0)).toMatchObject({
+    title: 'Language models are few-shot learners', authors: ['Tom B. Brown', 'Benjamin Mann'],
+    publication_year: '2020', venue: 'In Advances in Neural Information Processing Systems (NeurIPS)', citation_text: citation,
+  });
+});
+
+it('preserves venue numbers and identifiers that are not a separate back-reference list', () => {
+  expect(referenceFromText('Jane Smith. 2024. A useful paper. In Conference 42.', 1, 0)?.venue).toBe('In Conference 42');
+  expect(referenceFromText('Jane Smith. A useful paper. Example Journal. 42', 1, 0)?.venue).toBe('Example Journal. 42');
+  expect(referenceFromText('Jane Smith. A useful paper. DOI:10.1000/example.123, 2024. 42', 1, 0)?.doi).toBe('10.1000/example.123');
+});
+
 it.each([
   ['Journal of Examples, 6(Nov):1817–1853, 2020.', 'Journal of Examples'],
   ['In Proceedings of the 27th Example Conference, pages 1929–1958. ACL, 2020.', 'In Proceedings of the 27th Example Conference'],

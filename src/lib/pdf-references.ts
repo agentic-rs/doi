@@ -16,6 +16,11 @@ const label_pattern = /^(?:\[([\p{L}\d][\p{L}\d+_.:–-]{0,30})\]|(\d{1,3})[.)](
 const year_pattern = /\b((?:18|19|20)\d{2}[a-z]?)\b/;
 const id_pattern = /^(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Za-z]{2})?\/\d{2}(?:0[1-9]|1[0-2])\d{3})(?:v[1-9]\d{0,3})?$/;
 
+export function hasReferenceHeading(page: PageText): boolean {
+  const lines = page.lines?.map((line) => line.text) ?? page.text.split(/\r?\n/);
+  return lines.some((line) => heading_pattern.test(line.trim()));
+}
+
 function trimPunctuation(value: string): string {
   let text = value.replace(/[.,;:]+$/, '');
   while (/[)\]}>"']$/.test(text) && (!text.endsWith(')') || (text.match(/\(/g)?.length ?? 0) < (text.match(/\)/g)?.length ?? 0))) text = text.slice(0, -1).replace(/[.,;:]+$/, '');
@@ -94,7 +99,7 @@ function authorTitlePrefix(text: string): { authors: string[]; remainder: string
   // The final initial in an inverted name is also the author/title boundary:
   // "Smith, J. and Jones, M. A useful paper." Generic sentence splitting
   // protects initials, so examine candidates using the author-list grammar.
-  for (const boundary of text.matchAll(/\.\s+(?=[\p{Lu}\d]|arXiv\b|https?:)/gu)) {
+  for (const boundary of text.matchAll(/\.\s+(?=[\p{L}\d])/gu)) {
     const end = boundary.index! + boundary[0].length;
     const remainder = text.slice(end);
     if (/^(?:\p{Lu}\.(?:[\s,-]|$)|and\b|et\s+al\b)/u.test(remainder)) continue;
@@ -127,6 +132,11 @@ function publicationYears(text: string): RegExpMatchArray[] {
 }
 
 function metadata(body: string) {
+  // Bibliographies may end an entry with links back to citing pages. Keep
+  // those in the original citation, but not in publication metadata. Require
+  // a preceding publication year and a separate, terminal small-number list.
+  const backrefs = /\.\s+\d{1,3}(?:\s*[,–—-]\s*\d{1,3})*\.?$/.exec(body);
+  if (backrefs && publicationYears(body.slice(0, backrefs.index)).length) body = body.slice(0, backrefs.index + 1);
   const years = publicationYears(body);
   let year: RegExpMatchArray | undefined = years[0];
   let authors: string[] = [];
@@ -150,14 +160,16 @@ function metadata(body: string) {
   const title = authors.length && parts[0] && parts[0].length > 5 && !/^(?:https?:|arxiv\b|doi\b|CoRR\b)/i.test(parts[0])
     ? parts[0].replace(/,\s*(?:18|19|20)\d{2}[a-z]?\.?$/, '').replace(/[.\s]+$/, '') : null;
   const venue = title ? publicationVenue(parts.slice(1).join('. ')
-    .replace(/https?:\/\/\S+|\barxiv\s*:\s*\S+|\bdoi\s*:\s*\S+/gi, '')
+    .replace(/(?:\bURL\s+)?https?:\/\/\S+|\barxiv\s*:\s*\S+|\bdoi\s*:\s*\S+/gi, '')
     .replace(/[,;.]?\s*\b(?:18|19|20)\d{2}[a-z]?\.?\s*$/, '')) || null : null;
   return { title, authors: title ? authors : [], publication_year: year?.[1] ?? null, venue, parse_confidence: title ? 'parsed' as const : 'raw' as const };
 }
 
 export function referenceFromText(citation_text: string, page_number: number, index: number): ReferenceItem | null {
   const text = normalizePdfText(citation_text);
-  const parsing_text = normalizePdfText(citation_text.replace(/([\p{L}])-\s*\n\s*(?=[\p{Ll}])/gu, '$1'));
+  const parsing_text = normalizePdfText(citation_text
+    .replace(/([\p{L}])-\s*\n\s*(?=[\p{Ll}])/gu, '$1')
+    .replace(/\b(https?:)\s*\n\s*(\/\/)/gi, '$1$2'));
   const ids = identifiers(parsing_text
     .replace(/(arxiv\.org\/(?:abs|pdf|html)\/)\s+/gi, '$1')
     .replace(/\b([a-z][a-z-]*(?:\.[a-z]{2})?\/)\s+(?=\d{7})/gi, '$1')

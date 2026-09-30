@@ -82,11 +82,13 @@ export function referencesForText(text: string, references: ReferenceItem[]): Re
 export function referenceAtDestination(references: ReferenceItem[], page_number: number, point: [number, number]): ReferenceItem | null {
   const on_page = references.filter((item) => item.page_number === page_number && item.source_rect);
   // Bibliography anchors can sit in the margin before a hanging-indent entry.
+  // Allow up to 32 PDF points for wider bibliography indents, but only at the
+  // first line; extending the whole entry would capture unrelated destinations.
   // Prefer its first line: a right-column anchor may also intersect the body
   // of a long reference in the left column, which is not the intended target.
   const starts = on_page.filter((item) => {
     const [left, , , top] = item.source_rect!;
-    return point[0] >= left - 24 && point[0] <= left + 3 && point[1] >= top - 2 && point[1] <= top + 8;
+    return point[0] >= left - 32 && point[0] <= left + 3 && point[1] >= top - 2 && point[1] <= top + 8;
   });
   if (starts.length) return starts.length === 1 ? starts[0] : null;
   const matches = on_page.filter((item) => {

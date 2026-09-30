@@ -72,7 +72,7 @@ describe('citation associations', () => {
     expect(referenceAtDestination([left], 10, [35.515, 781.354])).toBe(left);
     // Ordinary explicit destinations inside a reference still use its body.
     expect(referenceAtDestination([left, right], 10, [330, 680])).toBe(right);
-    expect(referenceAtDestination([right], 10, [280, 726.932])).toBeNull();
+    expect(referenceAtDestination([right], 10, [274, 726.932])).toBeNull();
     expect(referenceAtDestination([right], 10, [287.515, 740])).toBeNull();
   });
   it('rejects ambiguous entry starts instead of falling back to a body match', () => {
@@ -80,6 +80,30 @@ describe('citation associations', () => {
     const right = { ...numbered[1], source_rect: [307, 620, 540, 725] as [number, number, number, number] };
     const overlap = { ...right, reference_id: 'overlapping-start', source_rect: [309, 660, 540, 727] as [number, number, number, number] };
     expect(referenceAtDestination([left, right, overlap], 10, [287, 728])).toBeNull();
+  });
+  it('matches wide hanging-indent anchors at the first line of wrapped references', () => {
+    // Moshi (2410.00037v2) puts its citation destinations 27.273 PDF points
+    // before entries, including this eight-line Brown et al. reference.
+    const reference = {
+      ...numbered[0], page_number: 43,
+      source_rect: [90, 556.133, 522.006, 661.8861] as [number, number, number, number],
+    };
+    expect(referenceAtDestination([reference], 43, [62.727, 664.526])).toBe(reference);
+    expect(referenceAtDestination([reference], 43, [62.727, 661.768])).toBe(reference);
+    // An unrelated link in the margin or above the entry remains navigation.
+    expect(referenceAtDestination([reference], 43, [62.727, 635])).toBeNull();
+    expect(referenceAtDestination([reference], 43, [62.727, 675])).toBeNull();
+    expect(referenceAtDestination([reference], 43, [57, 664.526])).toBeNull();
+    expect(referenceAtDestination([reference], 42, [62.727, 664.526])).toBeNull();
+  });
+  it('keeps wide start anchors unambiguous across adjacent columns and entries', () => {
+    const left = { ...numbered[0], source_rect: [55, 600, 291, 760] as [number, number, number, number] };
+    const right = { ...numbered[1], source_rect: [307, 640, 540, 725] as [number, number, number, number] };
+    const next = { ...numbered[2], source_rect: [307, 580, 540, 625] as [number, number, number, number] };
+    expect(referenceAtDestination([left, right, next], 10, [279.727, 727.64])).toBe(right);
+    expect(referenceAtDestination([left, right, next], 10, [279.727, 627.64])).toBe(next);
+    const overlap = { ...right, reference_id: 'overlapping-start', source_rect: [310, 660, 540, 727] as [number, number, number, number] };
+    expect(referenceAtDestination([left, right, next, overlap], 10, [279.727, 727.64])).toBeNull();
   });
 });
 
