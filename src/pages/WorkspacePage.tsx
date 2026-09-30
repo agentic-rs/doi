@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, FormEvent } from 'react';
+import type { FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import {
-  ArrowDownToLine, ArrowLeft, ArrowUpRight, Check,
-  ChevronRight, CircleHelp, FileText, Link2, LoaderCircle,
+  ArrowLeft, ArrowUpRight, Check,
+  ChevronRight, CircleHelp, Link2, LoaderCircle,
   MessageSquare, Plus, Settings2,
-  Sparkles, StickyNote, Trash2, Upload, X,
+  Sparkles, StickyNote, X,
 } from 'lucide-react';
 import { PdfReader } from '../components/PdfReader';
 import { PaperInfoSheet } from '../components/PaperInfoSheet';
@@ -13,6 +13,7 @@ import { ReaderOverlay } from '../components/ReaderOverlay';
 import { FloatingSelectionAction } from '../components/FloatingSelectionAction';
 import { SettingsDialog } from '../components/SettingsDialog';
 import { AiConversationCard } from '../components/AiConversationCard';
+import { SavedNotes } from '../components/SavedNotes';
 import { useAiConversations } from '../lib/useAiConversations';
 import { usePhoneAiReader } from '../lib/usePhoneAiReader';
 import { LibraryHome } from '../components/LibraryHome';
@@ -89,10 +90,6 @@ function selectionKey(selection: SelectionContext): string {
   return `${JSON.stringify(selection.page_anchors)}:${selection.selected_text}`;
 }
 
-function annotationQuote(annotation: Annotation): string {
-  return annotation.target.page_anchors.map((anchor) => anchor.text_quote.exact_text).join(' ');
-}
-
 function sortAnnotations(annotations: Annotation[]): Annotation[] {
   return [...annotations].sort((left, right) => right.created_at.localeCompare(left.created_at));
 }
@@ -146,6 +143,7 @@ export function WorkspacePage() {
   const [followUpDrafts, setFollowUpDrafts] = useState<Record<string, string>>({});
   const [aiEntryPending, setAiEntryPending] = useState(false);
   const [annotationBusy, setAnnotationBusy] = useState<string | null>(null);
+  const annotationMutationRef = useRef<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [settings, setSettings] = useState<AiSettings>(DEFAULT_AI_SETTINGS);
@@ -166,7 +164,6 @@ export function WorkspacePage() {
   const referenceLookupsRef = useRef(new Map<string, Promise<ReferenceCandidate[]>>());
   const currentPositionRef = useRef<ReadingLocation | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
   const arxivInputRef = useRef<HTMLInputElement>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
   const notesPanelRef = useRef<HTMLDivElement>(null);
@@ -182,10 +179,12 @@ export function WorkspacePage() {
   const tabIdsRef = useRef(tabIds);
   tabIdsRef.current = tabIds;
   const supportsTabs = !isNative || readerCapabilities.device_kind === 'tablet' || readerCapabilities.device_kind === 'desktop';
+  const isDesktop = !isNative || readerCapabilities.device_kind === 'desktop';
+  const inspectorBlocksReader = inspectorOpen && !isDesktop;
   const externalLink = useExternalLink((message) => setNotice({ tone: 'error', message }));
   const modalOpen = Boolean(externalLink.request || selectedReference || preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
-  const readerActionsRef = useRef({ handleNavigate, toggleReadingControls });
-  readerActionsRef.current = { handleNavigate, toggleReadingControls };
+  const readerActionsRef = useRef({ handleNavigate, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation });
+  readerActionsRef.current = { handleNavigate, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation };
   const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
   const isPhone = readerCapabilities.device_kind === 'phone';
   const requiresPhoneAi = isNative && (isPhone || readerCapabilities.device_kind === 'unknown');
@@ -200,12 +199,12 @@ export function WorkspacePage() {
   const aiTransition = phoneAi.pending || aiEntryPending;
   const composingAi = composerKind === 'ai' && (!requiresPhoneAi || phoneAi.open);
 
-  const hideReadingControls = useCallback(() => {
+  const hideReadingControls = useCallback((keep_sidebar = false) => {
     aiEntrySequenceRef.current += 1;
     setAiEntryPending(false);
     phoneAi.close();
     setControlsVisible(false);
-    setInspectorOpen(false);
+    if (!keep_sidebar) setInspectorOpen(false);
   }, [phoneAi.close]);
 
   useLayoutEffect(() => {
@@ -366,8 +365,13 @@ export function WorkspacePage() {
 
   function toggleReadingControls() {
     if (modalOpen || phoneAi.open || aiTransition) return;
-    if (controlsVisible) hideReadingControls();
+    if (controlsVisible) hideReadingControls(isDesktop);
     else setControlsVisible(true);
+  }
+
+  function toggleInspector() {
+    if (!inspectorOpen && annotations.length) setInspectorTab('notes');
+    setInspectorOpen((value) => !value);
   }
 
   function closePaperInfo() {
@@ -638,7 +642,7 @@ export function WorkspacePage() {
     stopOpening();
     flushPosition();
     if (activeRef.current?.paper.paper_id === location.paper_id) {
-      hideReadingControls();
+      hideReadingControls(isDesktop);
       setPaperInfoOpen(false);
       commitHistory(moved);
       currentPositionRef.current = location;
@@ -678,7 +682,7 @@ export function WorkspacePage() {
   function jumpTo(location: ReadingLocation, anchor: PageAnchor | null = null) {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
     stopOpening();
-    hideReadingControls();
+    hideReadingControls(isDesktop);
     flushPosition();
     commitHistory(pushLocation(historyRef.current, location));
     currentPositionRef.current = location;
@@ -787,7 +791,7 @@ export function WorkspacePage() {
     event.preventDefault();
     const paper = activeRef.current?.paper;
     const capturedSelection = selectionRef.current;
-    if (!paper || !capturedSelection || annotationBusy) return;
+    if (!paper || !capturedSelection || annotationMutationRef.current) return;
     if (composingAi) {
       if (!question.trim()) return;
       const conversationId = aiConversations.ask(paper, capturedSelection, question);
@@ -813,6 +817,7 @@ export function WorkspacePage() {
       updated_at: now,
     };
     setNotice(null);
+    annotationMutationRef.current = annotation.annotation_id;
     setAnnotationBusy(annotation.annotation_id);
     try {
       const saved = await saveAnnotation(annotation);
@@ -825,48 +830,79 @@ export function WorkspacePage() {
     } catch (cause) {
       if (mountedRef.current) setNotice({ tone: 'error', message: `Could not save your note: ${String(cause)}` });
     } finally {
+      annotationMutationRef.current = null;
       if (mountedRef.current) setAnnotationBusy(null);
     }
   }
 
-  async function removeAnnotation(annotation: Annotation) {
+  function annotationBelongsToReader(annotation: Annotation): boolean {
+    const paper = activeRef.current?.paper;
+    return paper?.paper_id === annotation.target.paper_id && paper.pdf_hash === annotation.target.pdf_hash;
+  }
+
+  function editAnnotation(annotation: Annotation, content: string | null) {
+    if (!mountedRef.current || !annotationBelongsToReader(annotation)) return;
+    if (content === null) setEditId((id) => id === annotation.annotation_id ? null : id);
+    else {
+      setEditId(annotation.annotation_id);
+      setEditDraft(content);
+    }
+  }
+
+  function clearAnnotationDraft(annotation: Annotation) {
+    const session = sessionsRef.current.get(annotation.target.paper_id);
+    if (session?.edit_id === annotation.annotation_id) {
+      session.edit_id = null;
+      session.edit_draft = '';
+    }
+    editAnnotation(annotation, null);
+  }
+
+  async function removeAnnotation(annotation: Annotation): Promise<boolean> {
+    if (annotationMutationRef.current || !annotationBelongsToReader(annotation)) return false;
+    annotationMutationRef.current = annotation.annotation_id;
     setAnnotationBusy(annotation.annotation_id);
     try {
       await deleteAnnotation(annotation.annotation_id);
       annotationChangesRef.current.set(annotation.annotation_id, { paper_id: annotation.target.paper_id, pdf_hash: annotation.target.pdf_hash, annotation: null });
-      if (activeRef.current?.paper.paper_id === annotation.target.paper_id) setAnnotations((existing) => existing.filter((item) => item.annotation_id !== annotation.annotation_id));
-      if (editId === annotation.annotation_id) setEditId(null);
+      if (mountedRef.current && annotationBelongsToReader(annotation)) setAnnotations((existing) => existing.filter((item) => item.annotation_id !== annotation.annotation_id));
+      clearAnnotationDraft(annotation);
+      return true;
     } catch (cause) {
-      setNotice({ tone: 'error', message: `Could not delete this annotation: ${String(cause)}` });
+      if (mountedRef.current) setNotice({ tone: 'error', message: `Could not delete this annotation: ${String(cause)}` });
+      return false;
     } finally {
-      setAnnotationBusy(null);
+      annotationMutationRef.current = null;
+      if (mountedRef.current) setAnnotationBusy(null);
     }
   }
 
-  async function updateAnnotation(annotation: Annotation) {
-    if (!editDraft.trim()) return;
+  async function updateAnnotation(annotation: Annotation, content: string): Promise<boolean> {
+    if (!content.trim() || annotationMutationRef.current || !annotationBelongsToReader(annotation)) return false;
+    annotationMutationRef.current = annotation.annotation_id;
     setAnnotationBusy(annotation.annotation_id);
     try {
       const updated = await saveAnnotation({
         ...annotation,
-        body: annotation.body.kind === 'note' ? { ...annotation.body, content: editDraft.trim() } : { ...annotation.body, note_content: editDraft.trim() },
+        body: annotation.body.kind === 'note' ? { ...annotation.body, content: content.trim() } : { ...annotation.body, note_content: content.trim() },
         updated_at: new Date().toISOString(),
       });
       storeAnnotation(updated);
-      if (activeRef.current?.paper.paper_id === annotation.target.paper_id) {
-        setEditId(null);
-      }
+      clearAnnotationDraft(annotation);
+      return true;
     } catch (cause) {
-      setNotice({ tone: 'error', message: `Could not update this annotation: ${String(cause)}` });
+      if (mountedRef.current) setNotice({ tone: 'error', message: `Could not update this annotation: ${String(cause)}` });
+      return false;
     } finally {
-      setAnnotationBusy(null);
+      annotationMutationRef.current = null;
+      if (mountedRef.current) setAnnotationBusy(null);
     }
   }
 
-  function jumpToAnnotation(annotation: Annotation) {
+  function jumpToAnnotation(annotation: Annotation, source_anchor?: PageAnchor) {
     const location = currentLocation(historyRef.current);
-    const anchor = annotation.target.page_anchors[0];
-    if (!location || !anchor) return;
+    const anchor = source_anchor ?? annotation.target.page_anchors[0];
+    if (!location || !anchor || !annotationBelongsToReader(annotation)) return;
     jumpTo({ ...location, page_number: anchor.page_number, page_position: [0, 0], reading_block_id: null }, anchor);
   }
 
@@ -884,9 +920,7 @@ export function WorkspacePage() {
     }
   }
 
-  async function importAnnotations(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  async function importAnnotations(file: File) {
     const paper = activeRef.current?.paper;
     if (!file || !paper) return;
     setImporting(true);
@@ -964,11 +998,24 @@ export function WorkspacePage() {
   const operationMessage = cooldownMessage(progress, Boolean(opening))
     ?? progress?.message ?? (opening?.kind === 'lookup' ? 'Looking up the paper on arXiv…' : opening?.kind === 'download' ? 'Downloading the original PDF…' : `Opening ${opening?.label ?? 'paper'}…`);
 
-  const reader = useMemo(() => active ? <PdfReader paper={active.paper} pdf_data={active.pdf_data} annotations={annotations} target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey} controls_visible={controlsVisible && !inspectorOpen} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()} viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!modalOpen && !inspectorOpen} on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection} on_references={(items, status = 'ready') => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) { setReferences(items); setReferenceStatus(status); } }} on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
-    [active, annotations, targetLocation, targetAnchor, navigationKey, controlsVisible, inspectorOpen, viewportKey, modalOpen, handleLocationChange, handleSelection]);
+  const annotationEdit = useMemo(() => editId ? { annotation_id: editId, content: editDraft } : null, [editId, editDraft]);
+  const reader = useMemo(() => active ? <PdfReader paper={active.paper} pdf_data={active.pdf_data}
+    annotations={annotations} inline_notes={!isDesktop} annotation_busy={annotationBusy} annotation_edit={annotationEdit}
+    on_edit_annotation={(annotation, content) => readerActionsRef.current.editAnnotation(annotation, content)}
+    on_update_annotation={(annotation, content) => readerActionsRef.current.updateAnnotation(annotation, content)}
+    on_delete_annotation={(annotation) => readerActionsRef.current.removeAnnotation(annotation)}
+    on_navigate_annotation={(annotation, anchor) => readerActionsRef.current.jumpToAnnotation(annotation, anchor)}
+    target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey}
+    controls_visible={controlsVisible && !inspectorBlocksReader} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()}
+    viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!modalOpen && !inspectorBlocksReader && !aiTransition}
+    on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection}
+    on_references={(items, status = 'ready') => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) { setReferences(items); setReferenceStatus(status); } }}
+    on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
+  [active, annotations, annotationBusy, annotationEdit, isDesktop, targetLocation, targetAnchor, navigationKey, controlsVisible,
+    inspectorBlocksReader, viewportKey, modalOpen, aiTransition, handleLocationChange, handleSelection]);
 
   return (
-    <div className={`app-shell library-workspace ${active ? 'reading-mode' : 'library-home-mode'} ${supportsTabs && tabIds.length ? 'has-paper-tabs' : ''} ${phoneAi.open ? 'phone-ai-open' : ''}`}>
+    <div className={`app-shell library-workspace ${active ? 'reading-mode' : 'library-home-mode'} ${supportsTabs && tabIds.length ? 'has-paper-tabs' : ''} ${phoneAi.open ? 'phone-ai-open' : ''} ${isDesktop ? 'desktop-reader' : ''} ${isDesktop && inspectorOpen ? 'desktop-inspector-open' : ''}`}>
       {supportsTabs && tabIds.length > 0 && <div className="workspace-tabs" inert={modalOpen || phoneAi.open || aiTransition}><PaperTabs
         tabs={tabIds.flatMap((id) => { const paper = papers.find((item) => item.paper_id === id); return paper ? [{ paper_id: id, title: paper.title }] : []; })}
         active_paper_id={active?.paper.paper_id ?? null} disabled={Boolean(opening)} on_home={showHome}
@@ -979,7 +1026,7 @@ export function WorkspacePage() {
           on_input_change={setArxivInput} on_search_change={setSearchInput} on_lookup={() => { void lookupPaper(arxivInput); }} on_cancel_lookup={stopOpening}
           on_open={(paper) => { void openPaper(paper.arxiv_id, paper); }} on_remove={(paper) => { setRemoving(paper); setRemoveError(null); }}
           on_retry_library={() => { void retryLibrary(); }} on_settings={showSettings} />}
-        {active && controlsVisible && !phoneAi.open && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening) || aiTransition} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending || aiTransition} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={showHome} on_info={showPaperInfo} on_inspector={() => setInspectorOpen((value) => !value)} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_close={() => closePaper(active.paper.paper_id)} source_title={supportsTabs ? sourcePaper?.title : undefined} on_source={supportsTabs && sourcePaper ? () => { void openPaper(sourcePaper.arxiv_id, sourcePaper); } : undefined} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
+        {active && controlsVisible && !phoneAi.open && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening) || aiTransition} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending || aiTransition} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={showHome} on_info={showPaperInfo} on_inspector={toggleInspector} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_close={() => closePaper(active.paper.paper_id)} source_title={supportsTabs ? sourcePaper?.title : undefined} on_source={supportsTabs && sourcePaper ? () => { void openPaper(sourcePaper.arxiv_id, sourcePaper); } : undefined} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
           const source = currentPositionRef.current ?? current;
           if (source) jumpTo({ ...source, reader_mode: source.reader_mode === 'reading' ? 'pdf' : 'reading', reading_block_id: null, zoom: 1, zoom_mode: 'fit_width' });
         }} />}
@@ -987,19 +1034,22 @@ export function WorkspacePage() {
         {active && opening?.kind === 'open' && <div className="operation-banner" role="status"><LoaderCircle size={15} className="spin" /><span>{operationMessage}</span></div>}
         {notice && <div className={`notice notice-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.tone === 'success' ? <Check size={15} /> : notice.tone === 'error' ? <CircleHelp size={15} /> : <CircleHelp size={15} />}<span>{notice.message}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
-        {aiTransition && !phoneAi.open && <div className="phone-ai-transition" role="status"><LoaderCircle size={20} className="spin" /><span>Changing viewing direction…</span><button type="button" className="text-button" onClick={hideReadingControls}>Back to paper</button></div>}
-        <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !inspectorOpen && !modalOpen && !aiTransition && !orientationPending)} on_activate={() => { void openAi(); }} />
+        {aiTransition && !phoneAi.open && <div className="phone-ai-transition" role="status"><LoaderCircle size={20} className="spin" /><span>Changing viewing direction…</span><button type="button" className="text-button" onClick={() => hideReadingControls()}>Back to paper</button></div>}
+        <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !inspectorBlocksReader && !modalOpen && !aiTransition && !orientationPending)} on_activate={() => { void openAi(); }} />
 
         {active && <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">
-            <div className="pdf-reader-mount" inert={inspectorOpen || aiTransition}>{reader}</div>
+            <div className="pdf-reader-mount" inert={inspectorBlocksReader || aiTransition}>{reader}</div>
           </section>
 
           {inspectorOpen && <aside ref={aiDialogRef} id="paper-inspector" className={`inspector ${phoneAi.open ? 'phone-ai-screen' : ''}`} role={phoneAi.open ? 'dialog' : undefined} aria-modal={phoneAi.open ? true : undefined} aria-label={phoneAi.open ? 'Ask AI' : 'References and annotations'}>
-            {phoneAi.open ? <header className="phone-ai-header"><button type="button" className="text-button" onClick={hideReadingControls}><ArrowLeft size={18} /> Back to paper</button><div><strong>Ask AI</strong><span>{active?.paper.title}</span></div><button type="button" className="icon-button" aria-label="AI provider settings" onClick={showSettings}><Settings2 size={18} /></button></header> : <div className="inspector-tabs" role="tablist" aria-label="Paper details">
+            {phoneAi.open ? <header className="phone-ai-header"><button type="button" className="text-button" onClick={() => hideReadingControls()}><ArrowLeft size={18} /> Back to paper</button><div><strong>Ask AI</strong><span>{active?.paper.title}</span></div><button type="button" className="icon-button" aria-label="AI provider settings" onClick={showSettings}><Settings2 size={18} /></button></header> : <div className="inspector-heading"><div className="inspector-tabs" role="tablist" aria-label="Paper details">
               <button type="button" role="tab" id="references-tab" aria-controls="references-panel" aria-selected={inspectorTab === 'references'} className={inspectorTab === 'references' ? 'is-active' : ''} onClick={() => setInspectorTab('references')}><Link2 size={15} /> References {references.length > 0 && <span>{references.length}</span>}</button>
               <button type="button" role="tab" id="notes-tab" aria-controls="notes-panel" aria-selected={inspectorTab === 'notes'} className={inspectorTab === 'notes' ? 'is-active' : ''} onClick={() => setInspectorTab('notes')}><StickyNote size={15} /> Notes {annotations.length > 0 && <span>{annotations.length}</span>}</button>
-            </div>}
+            </div>{isDesktop && <button type="button" className="icon-button inspector-close" aria-label="Close notes sidebar" onClick={() => {
+              setInspectorOpen(false);
+              requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"], [aria-label="Scrollable reading view"]')?.focus({ preventScroll: true }));
+            }}><X size={18} /></button>}</div>}
             {inspectorTab === 'references' ? <div id="references-panel" role="tabpanel" aria-labelledby="references-tab" className="inspector-content">
               <div className="inspector-intro"><h2>Follow the thread.</h2><p>Every paper is part of a bigger conversation.</p></div>
               {references.length ? <><div className="list-eyebrow">CITATIONS & LINKS <span>{references.length}</span></div>
@@ -1016,7 +1066,11 @@ export function WorkspacePage() {
                 <blockquote>{selection.selected_text}</blockquote><span className="selection-page">Page {selectedPages}</span>
                 <div className="composer-tabs"><button type="button" className={composingAi ? 'is-active' : ''} onClick={() => { if (requiresPhoneAi && !phoneAi.open) void openAi(); else { setComposerKind('ai'); askInputRef.current?.focus(); } }}><Sparkles size={14} /> Ask AI</button>{!phoneAi.open && <button type="button" className={!composingAi ? 'is-active' : ''} onClick={() => setComposerKind('note')}><StickyNote size={14} /> Add a note</button>}</div>
                 {composingAi ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}><Sparkles size={15} />Ask</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
-              </form> : <div className="notes-intro"><span className="empty-symbol"><MessageSquare size={23} strokeWidth={1.5} /></span><h2>Make room for a thought.</h2><p>Select a passage to ask a question or leave a note beside it.</p></div>}
+              </form> : annotations.length === 0 && aiConversations.conversations.length === 0 ? <div className="notes-intro"><span className="empty-symbol"><MessageSquare size={23} strokeWidth={1.5} /></span><h2>Make room for a thought.</h2><p>Select a passage to ask a question or leave a note beside it.</p></div> : null}
+              {!phoneAi.open && <SavedNotes key={active.paper.paper_id} annotations={annotations}
+                busy_annotation_id={annotationBusy} edit={annotationEdit} importing={importing} exporting={exporting}
+                on_edit={editAnnotation} on_update={updateAnnotation} on_delete={removeAnnotation} on_navigate={jumpToAnnotation}
+                on_import={(file) => { void importAnnotations(file); }} on_export={() => { void exportAnnotations(); }} />}
               {aiConversations.loading && <p className="field-hint" role="status">Loading conversations…</p>}
               {aiConversations.load_error && <div className="inline-error" role="alert"><p>{aiConversations.load_error}</p><button type="button" className="text-button" onClick={() => { void aiConversations.reload(); }}>Retry conversations</button></div>}
               {aiConversations.conversations.length > 0 && <div className="ai-conversation-list">{aiConversations.conversations.map((view) => {
@@ -1035,17 +1089,7 @@ export function WorkspacePage() {
                   on_save_note={() => { void aiConversations.saveNote(id); }}
                   on_toggle_collapsed={() => aiConversations.toggleCollapsed(id)} />;
               })}</div>}
-              {!phoneAi.open && <><div className="notes-list-heading"><span className="list-eyebrow">SAVED NOTES <span>{annotations.length}</span></span>{active && <div className="sidecar-controls"><button type="button" className="icon-button" onClick={() => { void exportAnnotations(); }} aria-label="Export annotations as JSON" title="Export annotation sidecar JSON" disabled={exporting}>{exporting ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}</button><button type="button" className="icon-button" onClick={() => importInputRef.current?.click()} aria-label="Import annotation JSON" title="Import annotation sidecar JSON" disabled={importing}>{importing ? <LoaderCircle size={15} className="spin" /> : <Upload size={15} />}</button><input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={(event) => { void importAnnotations(event); }} /></div>}</div>
-              {annotations.length ? <div className="annotation-list">{annotations.map((annotation) => <article className="annotation-card" key={annotation.annotation_id}>
-                <div className="annotation-meta"><span>{annotation.body.kind === 'ai_answer' ? <Sparkles size={13} /> : <StickyNote size={13} />}{annotation.body.kind === 'ai_answer' ? 'AI answer' : 'Your note'}</span><button type="button" className="annotation-page" onClick={() => jumpToAnnotation(annotation)}>p. {annotation.target.page_anchors[0]?.page_number} <ArrowUpRight size={11} /></button></div>
-                <button type="button" className="annotation-quote" onClick={() => jumpToAnnotation(annotation)} title="Go to annotated passage">“{annotationQuote(annotation)}”</button>
-                {annotation.body.kind === 'ai_answer' && <h3 className="annotation-question">{annotation.body.question}</h3>}
-                {editId === annotation.annotation_id ? <div className="annotation-editor"><label className="sr-only" htmlFor={`edit-${annotation.annotation_id}`}>Edit note</label><textarea id={`edit-${annotation.annotation_id}`} value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={6} /><div><button type="button" className="text-button" onClick={() => setEditId(null)}>Cancel</button><button type="button" className="button button-primary button-small" onClick={() => { void updateAnnotation(annotation); }} disabled={Boolean(annotationBusy) || !editDraft.trim()}>Save</button></div></div> : <div className="annotation-body">{annotation.body.kind === 'note' ? annotation.body.content : annotation.body.note_content ?? annotation.body.answer}</div>}
-                {annotation.body.kind === 'ai_answer' && annotation.body.note_content !== undefined && annotation.body.note_content !== annotation.body.answer && <details className="annotation-full-answer"><summary>Full answer <ChevronRight size={12} /></summary><div className="annotation-body">{annotation.body.answer}</div></details>}
-                {annotation.body.kind === 'ai_answer' && <div className="annotation-model">{annotation.body.model_id}</div>}
-                <div className="annotation-footer"><span>{new Date(annotation.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{annotation.updated_at !== annotation.created_at ? ' · edited' : ''}</span><div><button type="button" className="text-button annotation-edit" onClick={() => { setEditId(annotation.annotation_id); setEditDraft(annotation.body.kind === 'note' ? annotation.body.content : annotation.body.note_content ?? annotation.body.answer); }} disabled={Boolean(annotationBusy)}>Edit</button><button type="button" className="icon-button delete-button" onClick={() => { void removeAnnotation(annotation); }} aria-label="Delete annotation" title="Delete annotation" disabled={Boolean(annotationBusy)}>{annotationBusy === annotation.annotation_id ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}</button></div></div>
-              </article>)}</div> : <p className="no-notes">Your questions and observations will collect here, anchored to the original passage.</p>}
-              {active && <p className="annotation-format-hint"><FileText size={12} /> Your notes use a portable JSON sidecar.</p>}</>}
+
             </div>}
             {!phoneAi.open && <div className="inspector-footer"><span className="inspector-footer-mark">✳</span> A trail worth following.</div>}
           </aside>}

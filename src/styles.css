@@ -198,7 +198,7 @@ svg { flex-shrink: 0; }
 .composer-tabs { display: flex; gap: 14px; margin: 16px 0 11px; border-top: 1px solid #e8edde; padding-top: 13px; }
 .composer-tabs > button { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #a0b190; padding: 0; }
 .composer-tabs > button.is-active { color: #688c56; }
-.selection-composer textarea, .annotation-editor textarea { width: 100%; min-height: 85px; background: #f4f7ed; border: 1px solid #e1e9d6; padding: 10px; border-radius: 4px; color: #5f7b58; font-size: 11px; line-height: 1.7; }
+.selection-composer textarea { width: 100%; min-height: 85px; background: #f4f7ed; border: 1px solid #e1e9d6; padding: 10px; border-radius: 4px; color: #5f7b58; font-size: 11px; line-height: 1.7; }
 .selection-composer textarea::placeholder { color: #a4b499; }
 .composer-submit { margin-top: 10px; width: 100%; font-size: 10px; min-height: 33px; padding: 8px; background: #638959; border-color: #638959; }
 .composer-submit:hover:not(:disabled) { background: #507746; border-color: #507746; }
@@ -211,30 +211,14 @@ svg { flex-shrink: 0; }
 .setup-assistant { font-size: 10px; line-height: 1.7; color: #9aaa88; margin-top: 9px; }
 .setup-assistant .text-button { margin-top: 5px; font-size: 9px; }
 .annotation-list { display: flex; flex-direction: column; gap: 14px; }
-.annotation-card { border: 1px solid #e0e7d6; background: #fcfdf7; border-radius: 5px; padding: 12px; }
-.annotation-meta { display: flex; align-items: center; justify-content: space-between; font-size: 9px; color: #91a67e; }
-.annotation-meta > span { display: flex; align-items: center; gap: 5px; }
-.annotation-page { display: flex; align-items: center; gap: 3px; font-size: 8px; color: #a1b492; padding: 0; }
-.annotation-page:hover { color: #51774c; }
-.annotation-quote { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font: 11px/1.65 Georgia, 'Times New Roman', serif; text-align: left; color: #8ba07b; border-left: 2px solid #d8e3c8; padding: 0 0 0 8px; margin: 11px 0; width: 100%; }
-.annotation-quote:hover { color: #5c7e4a; }
-.annotation-question { margin: 12px 0 8px; font-size: 11px; line-height: 1.7; color: #5e7952; font-weight: 550; }
 .annotation-body { font-size: 11px; line-height: 1.85; color: #879d77; white-space: pre-wrap; overflow-wrap: anywhere; }
 .annotation-model { color: #a5b498; font-size: 8px; margin-top: 11px; }
-.annotation-footer { border-top: 1px solid #edf1e5; padding-top: 9px; margin-top: 11px; display: flex; justify-content: space-between; align-items: center; font-size: 8px; color: #b0bca4; }
-.annotation-footer > div { display: flex; gap: 9px; align-items: center; }
-.annotation-edit { color: #9eb38b; font-size: 9px; }
-.delete-button { width: 21px; height: 21px; color: #adbca1; }
-.delete-button:hover:not(:disabled) { color: #a36755; background: #f6eee4; }
-.annotation-editor textarea { margin-top: 4px; font-size: 10px; }
-.annotation-editor > div { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 8px; }
 .ai-conversation-list { display: flex; flex-direction: column; gap: 16px; margin-top: 18px; }
-.ai-thinking, .annotation-full-answer { font-size: 12px; line-height: 1.6; color: #64765c; }
-.ai-thinking summary, .annotation-full-answer summary { display: flex; align-items: center; justify-content: space-between; min-height: 36px; cursor: pointer; }
-.ai-thinking[open] summary svg, .annotation-full-answer[open] summary svg { transform: rotate(90deg); }
+.ai-thinking { font-size: 12px; line-height: 1.6; color: #64765c; }
+.ai-thinking summary { display: flex; align-items: center; justify-content: space-between; min-height: 36px; cursor: pointer; }
+.ai-thinking[open] summary svg { transform: rotate(90deg); }
 .ai-thinking { margin: 8px 0 12px; border: 1px solid #e3e9da; border-radius: 4px; background: #f5f7ef; padding: 0 10px; }
 .ai-thinking > div { max-height: 230px; overflow-y: auto; padding: 8px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.annotation-full-answer { margin-top: 10px; border-top: 1px solid #e3e9da; }
 
 .modal-backdrop { position: fixed; inset: 0; background: #273d3357; backdrop-filter: blur(3px); z-index: 100; display: grid; place-items: center; padding: calc(25px + env(safe-area-inset-top, 0px)) calc(25px + env(safe-area-inset-right, 0px)) calc(25px + env(safe-area-inset-bottom, 0px)) calc(25px + env(safe-area-inset-left, 0px)); }
 .settings-dialog { width: min(100%, 440px); max-height: calc(100dvh - 50px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; background: #fcfdf7; border: 1px solid #d9e4cf; border-radius: 10px; padding: 25px 30px 28px; box-shadow: 0 18px 60px #1d3a3430; }
@@ -304,13 +288,8 @@ svg { flex-shrink: 0; }
 .selection-composer textarea::placeholder,
 .context-preview,
 .setup-assistant,
-.annotation-meta,
-.annotation-page,
-.annotation-quote,
 .annotation-body,
 .annotation-model,
-.annotation-footer,
-.annotation-edit,
 .dialog-description,
 .field-label,
 .text-field::placeholder,
@@ -439,13 +418,13 @@ svg { flex-shrink: 0; }
   .inspector-tabs > button { font-size: 14px; }
   .inspector-tabs > button > span { font-size: 12px; }
   .inspector-content { padding: 22px 20px; }
-  .inspector-intro p, .inspector-empty p, .notes-intro p, .no-notes, .annotation-body, .annotation-question { font-size: 14px; }
+  .inspector-intro p, .inspector-empty p, .notes-intro p, .no-notes, .annotation-body { font-size: 14px; }
   .inspector-empty h3, .inspector-empty p, .notes-intro h2 { max-width: none; }
-  .list-eyebrow, .selection-heading > span, .selection-page, .annotation-meta, .annotation-page, .annotation-footer, .context-preview, .annotation-format-hint { font-size: 11px; }
-  .text-button, .composer-tabs > button, .annotation-edit { font-size: 13px; min-height: 44px; }
-  .annotation-page, .sidecar-controls .icon-button, .selection-heading .icon-button, .delete-button { min-width: 44px; min-height: 44px; }
-  .selection-composer blockquote, .annotation-quote { font-size: 14px; }
-  .selection-composer textarea, .annotation-editor textarea, .text-field { font-size: 16px; }
+  .list-eyebrow, .selection-heading > span, .selection-page, .context-preview, .annotation-format-hint { font-size: 11px; }
+  .text-button, .composer-tabs > button { font-size: 13px; min-height: 44px; }
+  .sidecar-controls .icon-button, .selection-heading .icon-button { min-width: 44px; min-height: 44px; }
+  .selection-composer blockquote { font-size: 14px; }
+  .selection-composer textarea, .text-field { font-size: 16px; }
   .composer-submit, .button { min-height: 44px; font-size: 14px; }
   .paper-heading { padding: 10px 16px; }
   .paper-heading h1 { font-size: 17px; margin-bottom: 0; }

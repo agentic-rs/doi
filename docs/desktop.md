@@ -19,6 +19,8 @@ Download a paper, click a PDF page to reveal the reading overlay, select text, a
 
 Pinch the Mac trackpad or hold Ctrl while scrolling to zoom the PDF. Reading overlays keep their size while a page preview follows the gesture and sharpens after release or a short pause in Ctrl+scroll.
 
+Open **Refs & notes** to dock a sidebar beside the paper. Papers with saved notes open its Notes tab first. Expand a note's first-line preview to read, edit, delete, or go to its passage. The sidebar stays open while the paper scrolls or changes location, and its text keeps the same size when the paper zooms. Close it with its top-right button or Escape. Unfinished note edits survive closing the sidebar or switching paper tabs during the current session.
+
 **Fit page width** stays selected when you jump to another page or citation, reopen the paper, resize the window, or rotate PDF pages. A PDF link with an explicit zoom level can override this. Pinching or using the + and − controls switches to manual zoom. Older saved reading positions keep their numeric zoom until you select **Fit page width**.
 
 `pnpm dev` starts only the frontend for layout development. Native downloads, storage, and AI commands require `pnpm desktop:dev` or a bundled desktop app.

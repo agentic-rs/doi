@@ -82,3 +82,28 @@
 
 .has-paper-tabs .workbench { --reader-safe-top: 0px; }
 .has-paper-tabs .library-home { padding-top: 24px; }
+
+/* Desktop notes occupy their own column. The paper remains interactive, and
+   its ResizeObserver preserves the source passage when this column toggles. */
+.app-shell.desktop-reader { --inspector-width: clamp(300px, 30vw, 360px); }
+.app-shell.reading-mode.desktop-reader .reading-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+.app-shell.reading-mode.desktop-reader .reading-grid.with-inspector { grid-template-columns: minmax(0, 1fr) var(--inspector-width); }
+.app-shell.reading-mode.desktop-reader .reading-grid .reading-surface { position: relative; inset: auto; }
+.app-shell.reading-mode.desktop-reader .inspector {
+  position: relative;
+  inset: auto;
+  width: auto;
+  min-width: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+.desktop-inspector-open .reader-overlay { right: calc(var(--inspector-width) + 12px); }
+.desktop-inspector-open .floating-selection-action { right: var(--inspector-width); }
+.inspector-heading { display: flex; flex: none; align-items: center; min-width: 0; border-bottom: 1px solid var(--line); }
+.inspector-heading .inspector-tabs { flex: 1; min-width: 0; border-bottom: 0; }
+.inspector-heading .inspector-close { flex: none; width: 44px; height: 44px; margin-right: 4px; }
+.desktop-reader .inspector-content { padding: 20px 16px; }
+.desktop-reader .inspector-tabs { padding-inline: 16px; gap: 16px; }
+.saved-notes { min-width: 0; }

@@ -248,11 +248,22 @@ describe('assembled paper workspace', () => {
     expect(lastReader.controls_visible).toBe(false);
   });
 
-  it('opens paper details as an overlay over the mounted reader on desktop', async () => {
+  it('opens a docked sidebar and keeps the desktop reader interactive', async () => {
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
     expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Close references and notes panel' }).getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelector('.desktop-inspector-open')).toBeTruthy();
+    expect(screen.getByTestId('reader').closest('[inert]')).toBeNull();
+    expect(lastReader.reading_active).toBe(true);
+    expect(lastReader.inline_notes).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    expect(screen.queryByRole('banner', { name: 'Reading controls' })).toBeNull();
+    expect(screen.getByRole('complementary', { name: 'References and annotations' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll source' }));
+    expect(lastReader.reading_active).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Close notes sidebar' }));
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
   });
 
   it('keeps the device direction when a keyboard makes a portrait viewport wider than it is tall', async () => {
@@ -448,8 +459,9 @@ describe('assembled paper workspace', () => {
     expect(backend.askAiConversation).not.toHaveBeenCalled();
   });
 
-  it('keeps mobile reading space available and retains a touch selection across panel changes', async () => {
+  it('keeps compact tablet reading space available and retains a touch selection across panel changes', async () => {
     mockLayout(true);
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind: 'tablet' });
     render(<WorkspacePage />);
     await screen.findByRole('button', { name: 'Open First paper' });
     expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
@@ -472,7 +484,8 @@ describe('assembled paper workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     await screen.findByText('A mobile note');
     expect(vi.mocked(backend.saveAnnotation).mock.calls[0][0].target.page_anchors).toEqual(selection.page_anchors);
-    fireEvent.click(screen.getByRole('button', { name: /Selected passage/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Expand note:/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to passage' }));
     expect(lastReader.target_anchor).toEqual(selection.page_anchors[0]);
     expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
   });
@@ -582,7 +595,8 @@ describe('assembled paper workspace', () => {
     fireEvent.change(screen.getByLabelText('Note for this selection'), { target: { value: 'A reading-view note' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     await screen.findByText('A reading-view note');
-    fireEvent.click(screen.getByRole('button', { name: /Selected passage/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Expand note:/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to passage' }));
     expect(lastReader.target_location).toMatchObject({
       reader_mode: 'reading', reading_block_id: null, page_number: 4, page_position: [0, 0],
     });
@@ -675,6 +689,7 @@ describe('assembled paper workspace', () => {
     expect(await screen.findByRole('button', { name: 'Saved' })).toBeTruthy();
     expect(backend.askAiConversation).toHaveBeenCalledTimes(1);
     expect(lastReader.annotations).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /^Expand note:/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete annotation' }));
     await waitFor(() => expect(lastReader.annotations).toHaveLength(0));
     expect(screen.getByRole('article', { name: 'AI conversation: Explain this passage' })).toBeTruthy();
@@ -813,13 +828,15 @@ describe('assembled paper workspace', () => {
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
     fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Expand note:/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('Edit note'), { target: { value: 'My concise note' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     await waitFor(() => expect(backend.saveAnnotation).toHaveBeenCalled());
     expect(vi.mocked(backend.saveAnnotation).mock.calls[0][0].body).toEqual({ ...legacy.body, note_content: 'My concise note' });
-    expect(await screen.findByText('My concise note')).toBeTruthy();
-    expect(screen.getByText('Full answer').closest('details')?.textContent).toContain('Original detailed answer');
+    expect(await screen.findByRole('button', { name: 'Collapse note: My concise note' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Full answer' }));
+    expect(screen.getByText('Original detailed answer')).toBeTruthy();
   });
 
   it('preserves a saved draft when a pending PDF load returns an older annotation snapshot', async () => {
@@ -857,7 +874,8 @@ describe('assembled paper workspace', () => {
       target: { paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors },
       body: { kind: 'note', content: 'A useful connection' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Selected passage/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Expand note:/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to passage' }));
     expect(lastReader.target_anchor).toEqual(selection.page_anchors[0]);
   });
 });
@@ -1440,5 +1458,123 @@ describe('shared reference previews', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Find a match' }));
     await screen.findByText('Matched title');
     expect(backend.resolveReference).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('saved note presentation', () => {
+  const saved_note: Annotation = {
+    schema_version: 1, annotation_id: 'saved-passage-note',
+    target: { paper_id: first.paper_id, pdf_hash: first.pdf_hash, page_anchors: selection.page_anchors },
+    body: { kind: 'note', content: 'A saved takeaway\nDetails about the passage.' },
+    created_at: '2026-09-27T00:00:00Z', updated_at: '2026-09-27T00:00:00Z',
+  };
+
+  function openNote() {
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand note: A saved takeaway' }));
+    return screen.getByRole('article', { name: 'Saved note: A saved takeaway' });
+  }
+
+  it('shows one collapsed sidebar item per note and keeps it open while jumping to its Reading passage', async () => {
+    vi.mocked(backend.listAnnotations).mockResolvedValue([saved_note]);
+    await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect(screen.getByRole('tab', { name: /Notes/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getAllByRole('article', { name: 'Saved note: A saved takeaway' })).toHaveLength(1);
+    expect(screen.queryByText('Details about the passage.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand note: A saved takeaway' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to passage' }));
+    expect(lastReader.target_location).toMatchObject({ reader_mode: 'reading', reading_block_id: null, page_number: 4 });
+    expect(lastReader.target_anchor).toEqual(selection.page_anchors[0]);
+    expect(lastReader.inline_notes).toBe(false);
+    expect(lastReader.reading_active).toBe(true);
+    expect(screen.getByRole('button', { name: 'Collapse note: A saved takeaway' })).toBeTruthy();
+    expect(screen.getByTestId('reader').closest('[inert]')).toBeNull();
+  });
+
+  it.each(['phone', 'tablet'] as const)('enables inline notes on %s and navigates using the clicked block anchor', async (device_kind) => {
+    vi.mocked(backend.getReaderCapabilities).mockResolvedValue({ supports_orientation: true, device_kind });
+    vi.mocked(backend.listAnnotations).mockResolvedValue([saved_note]);
+    await openFirst();
+    expect(lastReader.inline_notes).toBe(true);
+    expect(document.querySelector('.desktop-reader')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect(lastReader.reading_active).toBe(false);
+    expect(screen.getByTestId('reader').closest('[inert]')).toBeTruthy();
+    const anchor = { ...selection.page_anchors[0], page_number: 7 };
+    act(() => lastReader.on_navigate_annotation?.(saved_note, anchor));
+    expect(lastReader.target_anchor).toEqual(anchor);
+    expect(lastReader.target_location?.page_number).toBe(7);
+    expect(lastReader.reading_active).toBe(true);
+    expect(screen.queryByRole('complementary', { name: 'References and annotations' })).toBeNull();
+  });
+
+  it('retains an unfinished edit across sidebar close and paper tabs, and retries a failed save', async () => {
+    vi.mocked(backend.listAnnotations).mockImplementation(async (id) => id === first.paper_id ? [saved_note] : []);
+    await openFirst();
+    openNote();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit note' }), { target: { value: 'An unfinished revision' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Close notes sidebar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect((screen.getByRole('textbox', { name: 'Edit note' }) as HTMLTextAreaElement).value).toBe('An unfinished revision');
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Open papers' })).getByRole('button', { name: 'First paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect((screen.getByRole('textbox', { name: 'Edit note' }) as HTMLTextAreaElement).value).toBe('An unfinished revision');
+    vi.mocked(backend.saveAnnotation).mockRejectedValueOnce(new Error('Storage unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Storage unavailable');
+    expect((screen.getByRole('textbox', { name: 'Edit note' }) as HTMLTextAreaElement).value).toBe('An unfinished revision');
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Edit note' })).toBeNull());
+    expect(lastReader.annotations[0].body).toEqual({ kind: 'note', content: 'An unfinished revision' });
+    expect(backend.saveAnnotation).toHaveBeenCalledTimes(2);
+  });
+
+  it('merges a save completed on another tab without restoring its old edit draft or stale note snapshot', async () => {
+    vi.mocked(backend.listAnnotations).mockImplementation(async (id) => id === first.paper_id ? [saved_note] : []);
+    const save = deferred<Annotation>();
+    vi.mocked(backend.saveAnnotation).mockReturnValueOnce(save.promise);
+    await openFirst();
+    openNote();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit note' }), { target: { value: 'Saved while away' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    const previous_reader = lastReader;
+    fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(second.paper_id));
+    let stale_result: boolean | undefined;
+    await act(async () => { stale_result = await previous_reader.on_update_annotation?.(saved_note, 'Stale callback'); });
+    expect(stale_result).toBe(false);
+    expect(backend.saveAnnotation).toHaveBeenCalledTimes(1);
+    await act(async () => save.resolve({ ...saved_note, body: { kind: 'note', content: 'Saved while away' } }));
+    expect(lastReader.annotations).toHaveLength(0);
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Open papers' })).getByRole('button', { name: 'First paper' }));
+    await waitFor(() => expect(lastReader.paper.paper_id).toBe(first.paper_id));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle reading controls' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    expect(screen.getByRole('button', { name: 'Expand note: Saved while away' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Edit note' })).toBeNull();
+    expect(lastReader.annotations[0].body).toEqual({ kind: 'note', content: 'Saved while away' });
+  });
+
+  it('keeps a note on deletion failure and removes it only after a successful retry', async () => {
+    vi.mocked(backend.listAnnotations).mockResolvedValue([saved_note]);
+    await openFirst();
+    openNote();
+    vi.mocked(backend.deleteAnnotation).mockRejectedValueOnce(new Error('Storage unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete annotation' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Storage unavailable');
+    expect(lastReader.annotations).toEqual([saved_note]);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete annotation' }));
+    await waitFor(() => expect(lastReader.annotations).toHaveLength(0));
+    expect(screen.queryByRole('article', { name: 'Saved note: A saved takeaway' })).toBeNull();
+    expect(screen.getByText('Select a passage to save your first note. Saved notes will appear here.')).toBeTruthy();
   });
 });

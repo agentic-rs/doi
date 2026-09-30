@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import type { PdfReaderProps, ReadingLayout, ReadingLocation } from '../lib/types';
+import type { Annotation, PdfReaderProps, ReadingLayout, ReadingLocation } from '../lib/types';
 import { PdfReader } from './PdfReader';
 
 interface MockRenderRequest {
@@ -138,7 +139,7 @@ const resize_callbacks = new Set<() => void>();
 const original_scroll_to = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo');
 const original_computed_style = window.getComputedStyle;
 // Match the late shared PDF import from global styles in the production bundle.
-const reader_styles = ['reading-view.css', 'reference-components.css', 'pdf-reader.css']
+const reader_styles = ['reading-view.css', 'reference-components.css', 'note-card.css', 'pdf-reader.css']
   .map((name) => readFileSync(new URL(name, import.meta.url), 'utf8')).join('\n');
 
 function pageLayout(scroll: HTMLElement) {
@@ -146,8 +147,21 @@ function pageLayout(scroll: HTMLElement) {
   return [...scroll.querySelectorAll<HTMLElement>('[data-page-number]')].map((page) => {
     const width = parseFloat(page.style.width);
     const height = parseFloat(page.style.height);
-    const layout = { page, width, height, top, left: page_padding + Math.max(0, (viewport_width - page_padding * 2 - width) / 2) };
-    top += height + page_spacing;
+    const left = page_padding + Math.max(0, (viewport_width - page_padding * 2 - width) / 2);
+    const zoom = Number(page.closest<HTMLElement>('.reading-pages')?.style.getPropertyValue('--reading-zoom') || 1);
+    const note_top = top + height;
+    let note_height = 0;
+    const notes = [...(page.closest('.reading-block')?.querySelectorAll<HTMLElement>('.note-card') ?? [])].map((element) => {
+      // Simulate card reflow so restoration tests observe actual height changes.
+      const content = element.querySelector('.note-card-content');
+      const height = (content ? 170 + (content.textContent?.length ?? 0) : 44) * zoom;
+      const note = { element, height, top: note_top + 8 * zoom + note_height, left, width };
+      note_height += height + 6 * zoom;
+      return note;
+    });
+    if (notes.length) note_height += 16 * zoom;
+    const layout = { page, width, height, top, left, notes, note_height };
+    top += height + page_spacing + note_height;
     return layout;
   });
 }
@@ -156,7 +170,7 @@ function contentDimensions(scroll: HTMLElement) {
   const pages = pageLayout(scroll);
   return {
     width: Math.max(viewport_width, ...pages.map((page) => page.left + page.width + page_padding)),
-    height: pages.length ? pages.at(-1)!.top + pages.at(-1)!.height + page_bottom : viewport_height,
+    height: pages.length ? pages.at(-1)!.top + pages.at(-1)!.height + pages.at(-1)!.note_height + page_bottom : viewport_height,
   };
 }
 
@@ -261,14 +275,15 @@ beforeEach(() => {
     const page = scroll ? pageLayout(scroll).find((candidate) => candidate.page === this) : null;
     const wrapper_page = scroll ? pageLayout(scroll).find((candidate) => candidate.page.parentElement === this) : null;
     const article_page = scroll ? pageLayout(scroll).find((candidate) => candidate.page.closest('.reading-block') === this) : null;
+    const note = scroll ? pageLayout(scroll).flatMap((candidate) => candidate.notes).find((candidate) => candidate.element === this) : null;
     const layout = page ?? wrapper_page ?? article_page;
     const pages_container = Boolean(scroll && this.classList.contains('pdf-pages'));
     const preview = previewTransform(layout?.page.closest<HTMLElement>('.reading-block') ?? layout?.page.parentElement ?? null);
-    const width = layout ? layout.width * preview.scale : viewport_width;
-    const height = layout ? (layout.height + (wrapper_page ? 24 : 0)) * preview.scale : pages_container
-      ? contentDimensions(scroll!).height : this.classList.contains('pdf-toolbar') ? 56 : viewport_height;
-    const top = layout ? layout.top + preview.y - scroll!.scrollTop : pages_container ? -scroll!.scrollTop : 0;
-    const left = layout ? layout.left + preview.x - scroll!.scrollLeft : pages_container ? -scroll!.scrollLeft : 0;
+    const width = layout ? layout.width * preview.scale : note?.width ?? viewport_width;
+    const height = layout ? (layout.height + (wrapper_page ? 24 : 0) + (article_page ? layout.note_height : 0)) * preview.scale : note?.height ?? (pages_container
+      ? contentDimensions(scroll!).height : this.classList.contains('pdf-toolbar') ? 56 : viewport_height);
+    const top = layout ? layout.top + preview.y - scroll!.scrollTop : note ? note.top - scroll!.scrollTop : pages_container ? -scroll!.scrollTop : 0;
+    const left = layout ? layout.left + preview.x - scroll!.scrollLeft : note ? note.left - scroll!.scrollLeft : pages_container ? -scroll!.scrollLeft : 0;
     return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) };
   });
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options?: ScrollToOptions | number, y?: number) {
@@ -401,6 +416,259 @@ function croppedPdfPointAt(block_id: string, client_x: number, client_y: number)
   const [left, bottom, right, top] = reading_fixture.layout!.blocks.find((block) => block.block_id === block_id)!.source_rect;
   return [left + (client_x - bounds.left) / bounds.width * (right - left), top - (client_y - bounds.top) / bounds.height * (top - bottom)];
 }
+
+function readingNote(block_id: string, content = 'Saved passage note', annotation_id = 'saved-note'): Annotation {
+  const block = reading_fixture.layout!.blocks.find((item) => item.block_id === block_id)!;
+  const [left, , , top] = block.source_rect;
+  return {
+    annotation_id, schema_version: 1,
+    target: { paper_id: '1706.03762v7', pdf_hash: 'a'.repeat(64), page_anchors: [{
+      page_number: block.page_number, quad_points: [[left + 1, top - 1, left + 20, top - 1, left + 20, top - 10, left + 1, top - 10]],
+      text_quote: { exact_text: 'Selected text', prefix: '', suffix: '', normalization_version: 1 },
+    }] },
+    body: { kind: 'note', content }, created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z',
+  };
+}
+
+describe('inline Reading notes', () => {
+  it('preserves the caret when inserting into the middle of a controlled note draft', async () => {
+    const props = readingProps('p1-intro');
+    const annotation = readingNote('p1-intro', 'abcd');
+    props.annotations = [annotation];
+    function ControlledReader() {
+      const [edit, setEdit] = useState<PdfReaderProps['annotation_edit']>({ annotation_id: annotation.annotation_id, content: 'abcd' });
+      return <PdfReader {...props} inline_notes annotation_edit={edit}
+        on_edit_annotation={(annotation, content) => setEdit(content === null ? null : { annotation_id: annotation.annotation_id, content })} />;
+    }
+    render(<ControlledReader />);
+    const editor = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Edit note' });
+    editor.focus();
+    editor.setSelectionRange(2, 2);
+    fireEvent.change(editor, { target: { value: 'abXcd', selectionStart: 3, selectionEnd: 3 } });
+    expect(editor.value).toBe('abXcd');
+    expect(editor.selectionStart).toBe(3);
+    expect(editor.selectionEnd).toBe(3);
+  });
+
+  it('preserves the passage when controlled editing opens or closes and freezes draft changes during pinch', async () => {
+    // The reader reports its restored position on a frame after mount. Control
+    // that frame too, rather than racing a wall-clock wait in a parallel suite.
+    vi.useFakeTimers();
+    const props = readingProps();
+    const annotation = readingNote('p1-intro', 'abcd');
+    props.annotations = [annotation];
+    props.on_edit_annotation = vi.fn();
+    const view = render(<PdfReader {...props} inline_notes annotation_edit={null} />);
+    for (let frame = 0; frame < 3 && !vi.mocked(props.on_location_change).mock.calls.length; frame++) await advancePreviewFrame();
+    expect(props.on_location_change).toHaveBeenCalledWith(expect.objectContaining({ reading_block_id: 'p1-body' }));
+    const point = croppedPdfPointAt('p1-body', 100, 100);
+    const edit = { annotation_id: annotation.annotation_id, content: 'abcd' };
+    view.rerender(<PdfReader {...props} inline_notes annotation_edit={edit} />);
+    const editor = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Edit note' });
+    expect(croppedPdfPointAt('p1-body', 100, 100)[1]).toBeCloseTo(point[1]);
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    dispatchSafariGesture(scroll, 'gesturestart', 1);
+    dispatchSafariGesture(scroll, 'gesturechange', 1.4);
+    await advancePreviewFrame();
+    view.rerender(<PdfReader {...props} inline_notes annotation_edit={{ ...edit, content: 'Changed elsewhere' }} />);
+    await advancePreviewFrame();
+    expect(editor.value).toBe('abcd');
+    dispatchSafariGesture(scroll, 'gestureend', 1.4);
+    await advancePreviewFrame();
+    expect(editor.value).toBe('Changed elsewhere');
+    const after_pinch = croppedPdfPointAt('p1-body', 100, 100);
+    view.rerender(<PdfReader {...props} inline_notes annotation_edit={null} />);
+    await advancePreviewFrame();
+    expect(screen.queryByRole('textbox', { name: 'Edit note' })).toBeNull();
+    expect(croppedPdfPointAt('p1-body', 100, 100)[1]).toBeCloseTo(after_pinch[1]);
+  });
+
+  it('shows expandable notes only when enabled and sends the clicked passage anchor', async () => {
+    const props = readingProps();
+    const annotation = readingNote('p1-body');
+    const intro = readingNote('p1-intro');
+    annotation.target.page_anchors.unshift(intro.target.page_anchors[0]);
+    props.annotations = [annotation];
+    props.on_navigate_annotation = vi.fn();
+    const view = render(<PdfReader {...props} />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+    expect(document.querySelector('.note-strip')).toBeNull();
+    view.rerender(<PdfReader {...props} inline_notes />);
+    await waitFor(() => expect(document.querySelectorAll('.note-strip')).toHaveLength(2));
+    const article = readingBlock('p1-body').closest('.reading-block')!;
+    const toggle = article.querySelector<HTMLButtonElement>('.note-card-heading')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.pointerDown(toggle, { pointerId: 1, clientX: 100, clientY: 200 });
+    fireEvent.pointerUp(toggle, { pointerId: 1, clientX: 100, clientY: 200 });
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(props.on_toggle_controls).not.toHaveBeenCalled();
+    fireEvent.click(article.querySelector('.note-card-actions button')!);
+    expect(props.on_navigate_annotation).toHaveBeenCalledWith(annotation, annotation.target.page_anchors[1]);
+    view.rerender(<PdfReader {...props} inline_notes={false} />);
+    await waitFor(() => expect(document.querySelector('.note-strip')).toBeNull());
+  });
+
+  it('preserves the visible passage when notes above it are added, expanded, edited, collapsed, or deleted', async () => {
+    const props = readingProps();
+    const annotation = readingNote('p1-intro');
+    const view = render(<PdfReader {...props} inline_notes />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+    const point = croppedPdfPointAt('p1-body', 100, 100);
+    const expectStable = () => {
+      const actual = croppedPdfPointAt('p1-body', 100, 100);
+      expect(actual[0]).toBeCloseTo(point[0]);
+      expect(actual[1]).toBeCloseTo(point[1]);
+    };
+    view.rerender(<PdfReader {...props} inline_notes annotations={[annotation]} />);
+    await waitFor(() => expect(document.querySelector('.note-strip')).toBeTruthy());
+    expectStable();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand note: Saved passage note' }));
+    expectStable();
+    const edited = { ...annotation, body: { kind: 'note' as const, content: 'A much longer edited note. '.repeat(50) } };
+    view.rerender(<PdfReader {...props} inline_notes annotations={[edited]} />);
+    await waitFor(() => expect(document.querySelector('.note-card-body')?.textContent).toBe(edited.body.content));
+    expectStable();
+    fireEvent.click(document.querySelector('.note-card-heading')!);
+    expectStable();
+    view.rerender(<PdfReader {...props} inline_notes />);
+    await waitFor(() => expect(document.querySelector('.note-strip')).toBeNull());
+    expectStable();
+  });
+
+  it('preserves a visible note instead of jumping into the next PDF crop when a long note changes height', async () => {
+    const props = readingProps('p1-intro');
+    props.annotations = [readingNote('p1-intro', 'Long note. '.repeat(100))];
+    render(<PdfReader {...props} inline_notes />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-intro'));
+    const card = document.querySelector<HTMLElement>('.note-card')!;
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    act(() => scroll.scrollTo({ top: card.getBoundingClientRect().top - 30 }));
+    const initial_top = card.getBoundingClientRect().top;
+    fireEvent.click(card.querySelector('.note-card-heading')!);
+    expect(card.getBoundingClientRect().top).toBeCloseTo(initial_top);
+    expect(readingBlock('p1-intro').getBoundingClientRect().bottom).toBeLessThan(30);
+    fireEvent.click(card.querySelector('.note-card-heading')!);
+    expect(card.getBoundingClientRect().top).toBeCloseTo(initial_top);
+  });
+
+  it.each(['finish', 'cancel'] as const)('defers changed note geometry until a pinch %s', async (ending) => {
+    const props = readingProps();
+    const annotation = readingNote('p1-intro');
+    const view = render(<PdfReader {...props} inline_notes annotations={[annotation]} />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    const baseline = heavyWork(props);
+    vi.useFakeTimers();
+    dispatchSafariGesture(scroll, 'gesturestart', 1);
+    dispatchSafariGesture(scroll, 'gesturechange', 1.4);
+    await advancePreviewFrame();
+    const anchor = croppedPdfPointAt('p1-body', 180, 180);
+    const changed = { ...annotation, body: { kind: 'note' as const, content: 'Changed during pinch' } };
+    view.rerender(<PdfReader {...props} inline_notes annotations={[changed, readingNote('p1-body', 'A second note', 'second')]} />);
+    await advancePreviewFrame();
+    expect(document.querySelectorAll('.note-card')).toHaveLength(1);
+    expect(document.querySelector('.note-card-preview')?.textContent).toBe('Saved passage note');
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(true);
+    expect(heavyWork(props)).toEqual(baseline);
+    const reads = vi.mocked(HTMLElement.prototype.getBoundingClientRect).mock.calls.length;
+    dispatchSafariGesture(scroll, 'gesturechange', 1.4);
+    await advancePreviewFrame();
+    expect(vi.mocked(HTMLElement.prototype.getBoundingClientRect).mock.calls.length).toBe(reads);
+    if (ending === 'finish') dispatchSafariGesture(scroll, 'gestureend', 1.4);
+    else view.rerender(<PdfReader {...props} inline_notes annotations={[changed, readingNote('p1-body', 'A second note', 'second')]} reading_active={false} />);
+    await advancePreviewFrame();
+    expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
+    expect(document.querySelectorAll('.note-card')).toHaveLength(2);
+    expect(document.querySelector('.note-card-preview')?.textContent).toBe('Changed during pinch');
+    if (ending === 'finish') {
+      const actual = croppedPdfPointAt('p1-body', 180, 180);
+      expect(actual[0]).toBeCloseTo(anchor[0]);
+      expect(actual[1]).toBeCloseTo(anchor[1]);
+    }
+  });
+
+  it('reveals the nearest passage when deleting the only note visible in the viewport', async () => {
+    const props = readingProps('p1-intro');
+    const annotation = readingNote('p1-intro', 'Long note. '.repeat(200));
+    const view = render(<PdfReader {...props} inline_notes annotations={[annotation]} />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-intro'));
+    const card = document.querySelector<HTMLElement>('.note-card')!;
+    fireEvent.click(card.querySelector('.note-card-heading')!);
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    act(() => scroll.scrollTo({ top: card.getBoundingClientRect().top + scroll.scrollTop + 50 }));
+    expect(readingBlock('p1-intro').getBoundingClientRect().bottom).toBeLessThan(0);
+    expect(readingBlock('p2-figure').getBoundingClientRect().top).toBeGreaterThan(viewport_height);
+    view.rerender(<PdfReader {...props} inline_notes />);
+    await waitFor(() => expect(document.querySelector('.note-card')).toBeNull());
+    expect(readingBlock('p2-figure').getBoundingClientRect().top).toBeCloseTo(20);
+  });
+
+  it('keeps notes visible during pinch when their source crop bitmap is unmounted', async () => {
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: HTMLElement) {
+        const isIntersecting = target.dataset.blockId !== 'p3-original';
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          target, isIntersecting, intersectionRatio: isIntersecting ? 1 : 0,
+          boundingClientRect: bounds, intersectionRect: bounds, rootBounds: null, time: 0,
+        }], this as unknown as IntersectionObserver);
+      }
+      disconnect() {}
+    });
+    const style = document.createElement('style');
+    style.textContent = reader_styles;
+    document.head.append(style);
+    try {
+      const props = readingProps();
+      props.annotations = [readingNote('p3-original')];
+      const view = render(<PdfReader {...props} inline_notes />);
+      await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+      const page = readingBlock('p3-original');
+      const article = page.closest<HTMLElement>('.reading-block')!;
+      const notes = article.querySelector<HTMLElement>('.note-strip')!;
+      expect(page.querySelector('canvas')).toBeNull();
+      vi.spyOn(article, 'getBoundingClientRect').mockReturnValue({
+        x: 10, y: -900, left: 10, top: -900, right: 350, bottom: 200,
+        width: 340, height: 1100, toJSON: () => ({}),
+      });
+      const scroll = screen.getByLabelText('Scrollable reading view');
+      const baseline = heavyWork(props);
+      vi.useFakeTimers();
+      dispatchSafariGesture(scroll, 'gesturestart', 1);
+      dispatchSafariGesture(scroll, 'gesturechange', 0.7);
+      await advancePreviewFrame();
+      expect(article.hasAttribute('data-zoom-preview-page')).toBe(true);
+      expect(previewTransform(article).scale).toBeCloseTo(0.7);
+      expect(getComputedStyle(notes).visibility).toBe('visible');
+      expect(page.querySelector('canvas')).toBeNull();
+      expect(heavyWork(props)).toEqual(baseline);
+      view.rerender(<PdfReader {...props} inline_notes reading_active={false} />);
+      await advancePreviewFrame();
+      expect(article.hasAttribute('data-zoom-preview-page')).toBe(false);
+      expect(getComputedStyle(notes).visibility).toBe('visible');
+    } finally {
+      style.remove();
+    }
+  });
+
+  it('does not interpret selected note text as a PDF selection', async () => {
+    const props = readingProps('p1-intro');
+    props.annotations = [readingNote('p1-intro')];
+    render(<PdfReader {...props} inline_notes />);
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-intro'));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand note: Saved passage note' }));
+    const text = document.querySelector('.note-card-body')!.firstChild!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.pointerUp(document.querySelector('.note-card-body')!);
+    expect(props.on_selection).toHaveBeenLastCalledWith(null);
+    window.getSelection()!.removeAllRanges();
+  });
+});
 
 describe('optional Reading view', () => {
   it.each([0, 90, 180, 270].flatMap((rotation) => (['fit_width', 'custom'] as const).map((zoom_mode) => ({ rotation, zoom_mode }))))(

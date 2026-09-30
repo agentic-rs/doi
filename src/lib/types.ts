@@ -264,6 +264,13 @@ export interface PdfReaderProps {
   viewport_key?: number;
   initial_fit_width?: boolean;
   reading_active?: boolean;
+  inline_notes?: boolean;
+  annotation_busy?: string | null;
+  annotation_edit?: { annotation_id: string; content: string } | null;
+  on_edit_annotation?: (annotation: Annotation, content: string | null) => void;
+  on_update_annotation?: (annotation: Annotation, content: string) => Promise<boolean>;
+  on_delete_annotation?: (annotation: Annotation) => Promise<boolean>;
+  on_navigate_annotation?: (annotation: Annotation, anchor?: PageAnchor) => void;
   on_location_change: (location: ReadingLocation) => void;
   on_navigate: (target: ReaderTarget) => void;
   on_selection: (selection: SelectionContext | null) => void;

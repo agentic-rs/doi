@@ -122,6 +122,8 @@ Back and Forward return directly to the saved PDF location, including across pap
 
 Long-press PDF text, adjust the native selection handles, and tap the floating sparkle icon to ask AI or add a note. Drag the icon to move it out of the way. References and notes open over the reader. Close that panel or hide the reading controls to continue reading. The PDF stays loaded while information and controls are shown.
 
+In Reading view, saved notes also appear beneath their source blocks alongside references. Tap a note's first line to expand its content, quoted passage, Edit/Delete actions, and **Go to passage**. Inline notes scale with the paper and retain the reading position when expanded or collapsed. A selection spanning several blocks can show the same note beside each relevant block; the all-notes panel keeps a single entry per note. Original PDF view continues to use highlights and the Notes panel.
+
 ## Development and storage
 
 `pnpm tauri ios dev` uses Vite for live updates. The Vite configuration follows `TAURI_DEV_HOST` for physical-device development; both devices must reach that address. `pnpm tauri ios run` and the build scripts bundle the production interface instead.

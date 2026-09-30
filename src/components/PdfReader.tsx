@@ -23,8 +23,10 @@ import type { PdfLink } from './PdfPage';
 import { regionGeometry } from '../lib/pdf-region';
 import { useReadingLayout } from '../lib/use-reading-layout';
 import { findReadingBlock, locationInRegion, positionInRegion } from '../lib/reading-navigation';
+import { mapReadingNotes } from '../lib/reading-notes';
 import { FigureDialog } from './FigureDialog';
 import { ReferenceStrip } from './ReferenceStrip';
+import { NoteCard } from './NoteCard';
 import './pdf-reader.css';
 import './reading-view.css';
 
@@ -137,6 +139,16 @@ export function PdfReader(props: PdfReaderProps) {
   const [view_revision, setViewRevision] = useState(0);
   const [show_tap_hint, setShowTapHint] = useState(false);
   const [render_paused, setRenderPaused] = useState(false);
+  const [displayed_notes, setDisplayedNotes] = useState({ annotations, enabled: props.inline_notes ?? false, edit: props.annotation_edit });
+  // Stage editor entry/exit because it changes article height, but feed typing
+  // directly back to the existing textarea. Replaying the previous value for
+  // one commit would reset the caret to the end after every middle insertion.
+  const displayed_edit = !render_paused && props.annotation_edit?.annotation_id === displayed_notes.edit?.annotation_id
+    ? props.annotation_edit : displayed_notes.edit;
+  const [note_revision, setNoteRevision] = useState(0);
+  const note_layout_anchor = useRef<{ paper_id: string; candidates: Array<{ element: HTMLElement; top: number }> } | null>(null);
+  const block_notes = useMemo(() => mapReadingNotes(layout, displayed_notes.enabled ? displayed_notes.annotations : [], paper.paper_id, paper.pdf_hash),
+    [layout, displayed_notes.annotations, displayed_notes.enabled, paper.paper_id, paper.pdf_hash]);
   const selection_pages = useRef(new Map<string, SelectionPage>());
   const pending_location = useRef<ReadingLocation | null>(null);
   const pending_anchor = useRef<PageAnchor | null>(null);
@@ -179,6 +191,33 @@ export function PdfReader(props: PdfReaderProps) {
   preserve_reference_location.current = () => {
     if (reading && !pending_location.current) pending_location.current = readLocation();
   };
+
+  function captureNoteLayout() {
+    if (!reading || !scroll_root || zoom_preview.current || pending_location.current || note_layout_anchor.current) return;
+    const root_bounds = scroll_root.getBoundingClientRect();
+    // A long note can fill the viewport with its source crop already offscreen.
+    // Retain a visible DOM region instead of clamping back into the next PDF crop.
+    const regions = [...scroll_root.querySelectorAll<HTMLElement>('[data-page-number], .reference-strip, .note-card')]
+      .map((element) => ({ element, bounds: element.getBoundingClientRect() }));
+    const candidates = regions.filter(({ bounds }) => bounds.bottom > root_bounds.top + 20 && bounds.top < root_bounds.bottom)
+      .map(({ element, bounds }) => ({ element, top: bounds.top - root_bounds.top }));
+    if (candidates.length) {
+      // If a deleted note occupied the entire viewport, reveal the nearest
+      // following passage (or its source crop at the end of the document).
+      const crops = regions.filter(({ element }) => element.hasAttribute('data-page-number'));
+      const following = crops.find(({ bounds }) => bounds.top >= root_bounds.bottom);
+      const preceding = crops.filter(({ bounds }) => bounds.bottom <= root_bounds.top + 20).at(-1);
+      for (const fallback of [following, preceding]) {
+        if (fallback) candidates.push({ element: fallback.element, top: 20 });
+      }
+      note_layout_anchor.current = { paper_id: paper.paper_id, candidates };
+    }
+  }
+
+  function preserveNoteLayout() {
+    captureNoteLayout();
+    setNoteRevision((value) => value + 1);
+  }
 
   const immersive = Boolean(props.on_toggle_controls);
   const controls_visible = props.controls_visible ?? true;
@@ -313,6 +352,27 @@ export function PdfReader(props: PdfReaderProps) {
     callbacks.current.on_references(parsed_references.items, 'ready');
     setParsedReferences(null);
   }, [parsed_references, paper.paper_id, render_paused]);
+
+  useEffect(() => {
+    // New/saved/deleted notes must not change frozen article geometry mid-pinch.
+    // Apply after the committed zoom's layout restoration, like parsed references.
+    if (render_paused || zoom_preview.current) return;
+    const enabled = props.inline_notes ?? false;
+    if (displayed_notes.annotations === annotations && displayed_notes.enabled === enabled && displayed_notes.edit === props.annotation_edit) return;
+    captureNoteLayout();
+    setDisplayedNotes({ annotations, enabled, edit: props.annotation_edit });
+  }, [annotations, props.inline_notes, props.annotation_edit, displayed_notes, render_paused]);
+
+  useLayoutEffect(() => {
+    const snapshot = note_layout_anchor.current;
+    note_layout_anchor.current = null;
+    if (!snapshot || snapshot.paper_id !== paper.paper_id || !scroll_root || !reading || zoom_preview.current || pending_location.current) return;
+    const candidate = snapshot.candidates.find(({ element }) => scroll_root.contains(element));
+    if (!candidate) return;
+    const offset = candidate.element.getBoundingClientRect().top - scroll_root.getBoundingClientRect().top;
+    scroll_root.scrollTo({ top: scroll_root.scrollTop + offset - candidate.top, behavior: 'instant' });
+    reportLocation();
+  }, [displayed_notes, note_revision, scroll_root, paper.paper_id, reading]);
 
   // History is owned by the app. A new key restores the destination, while
   // scrolling and view controls merely update the existing history entry.
@@ -453,16 +513,16 @@ export function PdfReader(props: PdfReaderProps) {
         if (bounds.width <= 0 || bounds.height <= 0) return false;
         const root_bounds = scroll_root.getBoundingClientRect();
         const content_width = scroll_root.querySelector<HTMLElement>('.pdf-pages')!.getBoundingClientRect().width;
-        // Reading references belong to their passage: preview the whole block
-        // so its crop, background and reference rows move together. Keep this
-        // limited to mounted bitmaps and reference-bearing blocks (a long list
+        // References and notes belong to their passage: preview the whole block
+        // so its crop, background and appended rows move together. Keep this
+        // limited to mounted bitmaps and blocks with inline items (a long list
         // can enter the viewport after its crop's bitmap has been unmounted).
         const preview_pages = pages.flatMap((page) => {
           const has_bitmap = Boolean(page.querySelector('canvas'));
           if (!reading && !has_bitmap) return [];
           const element = page.closest<HTMLElement>(reading ? '.reading-block' : '.pdf-page-wrap')!;
           const bounds = element.getBoundingClientRect();
-          if (!has_bitmap && !element.querySelector('.reference-strip')) return [];
+          if (!has_bitmap && !element.querySelector('.reference-strip, .note-strip')) return [];
           return [{ element, origin: { client_x: bounds.left, client_y: bounds.top }, width: bounds.width, height: bounds.height, promoted: false }];
         });
         zoom_preview.current = {
@@ -564,6 +624,11 @@ export function PdfReader(props: PdfReaderProps) {
         return;
       }
       const range = selection.getRangeAt(0);
+      const inside_note = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest('.note-strip');
+      if (inside_note(range.startContainer) || inside_note(range.endContainer)) {
+        callbacks.current.on_selection(null);
+        return;
+      }
       // Moved figures can precede their source page. Selection follows the
       // displayed DOM order, including multiple independent crops per page.
       const pages = [...selection_pages.current.values()].sort((first, second) =>
@@ -908,6 +973,16 @@ export function PdfReader(props: PdfReaderProps) {
               reportLocation();
               navigate({ kind: 'reference', reference });
             }} />
+            {block_notes.has(block.block_id) && <aside className="note-strip" aria-label={`Notes for passage on page ${block.page_number}`}>
+              {block_notes.get(block.block_id)!.map(({ annotation, anchor }) => <NoteCard key={annotation.annotation_id} annotation={annotation}
+                busy={Boolean(props.annotation_busy)} pending={props.annotation_busy === annotation.annotation_id} frozen={render_paused}
+                on_before_resize={preserveNoteLayout}
+                edit_draft={props.on_edit_annotation ? (displayed_edit?.annotation_id === annotation.annotation_id ? displayed_edit.content : null) : undefined}
+                on_edit_draft_change={props.on_edit_annotation ? (content) => props.on_edit_annotation?.(annotation, content) : undefined}
+                on_update={props.on_update_annotation}
+                on_delete={props.on_delete_annotation}
+                on_navigate={() => { reportLocation(); props.on_navigate_annotation?.(annotation, anchor); }} />)}
+            </aside>}
           </article>) :
           loaded.pages.map((page) => <PdfPage
             key={`${paper.paper_id}-${page.pageNumber}`}

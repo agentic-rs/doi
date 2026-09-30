@@ -1,0 +1,66 @@
+/* Keep saved text from widening the fitted crop; sidebar notes inherit scale 1. */
+.note-card {
+  box-sizing: border-box;
+  width: 0;
+  min-width: 100%;
+  max-width: 100%;
+  border: calc(1px * var(--note-scale, 1)) solid #dce5d3;
+  border-radius: calc(7px * var(--note-scale, 1));
+  background: #fcfdf7;
+  color: #405a3e;
+  font: calc(13px * var(--note-scale, 1))/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow-wrap: anywhere;
+}
+.note-card button { font: inherit; cursor: pointer; }
+.note-card button:disabled { opacity: .5; cursor: default; }
+.note-card button:focus-visible, .note-card textarea:focus-visible { outline: calc(2px * var(--note-scale, 1)) solid #2c8179; outline-offset: calc(2px * var(--note-scale, 1)); }
+.note-card svg { flex: none; width: calc(16px * var(--note-scale, 1)); height: calc(16px * var(--note-scale, 1)); }
+.note-card-heading {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--note-scale, 1));
+  width: 100%;
+  min-width: 0;
+  min-height: calc(44px * var(--note-scale, 1));
+  padding: calc(9px * var(--note-scale, 1)) calc(10px * var(--note-scale, 1));
+  border: 0;
+  border-radius: inherit;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+.note-card-heading:hover { background: #eef3e7; }
+.note-card-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-card-content { min-width: 0; padding: 0 calc(12px * var(--note-scale, 1)) calc(12px * var(--note-scale, 1)); }
+.note-card-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: calc(6px * var(--note-scale, 1)); font-size: calc(11px * var(--note-scale, 1)); color: #738468; }
+.note-card-quote { margin: calc(10px * var(--note-scale, 1)) 0; padding-left: calc(9px * var(--note-scale, 1)); border-left: calc(2px * var(--note-scale, 1)) solid #c7d9aa; color: #63785a; white-space: pre-wrap; }
+.note-card-question { margin: calc(10px * var(--note-scale, 1)) 0; font: 600 calc(13px * var(--note-scale, 1))/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; white-space: pre-wrap; }
+.note-card-body { margin-top: calc(8px * var(--note-scale, 1)); white-space: pre-wrap; }
+.note-card-model, .note-card-date { margin-top: calc(8px * var(--note-scale, 1)); color: #738468; font-size: calc(11px * var(--note-scale, 1)); }
+.note-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(6px * var(--note-scale, 1)); margin-top: calc(10px * var(--note-scale, 1)); }
+.note-card-actions button, .note-card-answer > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(5px * var(--note-scale, 1));
+  min-height: calc(44px * var(--note-scale, 1));
+  padding: calc(6px * var(--note-scale, 1)) calc(8px * var(--note-scale, 1));
+  border: calc(1px * var(--note-scale, 1)) solid #dce5d3;
+  border-radius: calc(6px * var(--note-scale, 1));
+  color: inherit;
+  background: #f3f6ec;
+  font-size: calc(12px * var(--note-scale, 1));
+}
+.note-card-actions button:hover:not(:disabled), .note-card-answer > button:hover { background: #e7eedd; }
+.note-card-actions .note-card-delete { color: #986044; }
+.note-card-actions .note-card-save { color: white; border-color: #2f7068; background: #2f7068; }
+.note-card-actions .note-card-save:hover:not(:disabled) { background: #245b54; }
+.note-card-answer { margin-top: calc(8px * var(--note-scale, 1)); }
+.note-card-answer > button { border: 0; background: transparent; padding-inline: 0; }
+.note-card-editor { margin-top: calc(8px * var(--note-scale, 1)); }
+.note-card-editor label { display: block; margin-bottom: calc(4px * var(--note-scale, 1)); font-size: calc(12px * var(--note-scale, 1)); }
+.note-card-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: calc(9px * var(--note-scale, 1)); border: calc(1px * var(--note-scale, 1)) solid #dce5d3; border-radius: calc(5px * var(--note-scale, 1)); background: #f5f8ef; color: inherit; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: calc(16px * var(--note-scale, 1)); line-height: 1.6; resize: none; }
+@media (pointer: coarse) {
+  /* Small editable text makes iOS magnify the entire WebView when focused. */
+  .note-strip .note-card-editor textarea { font-size: max(16px, calc(16px * var(--note-scale, 1))); }
+}
