@@ -58,18 +58,20 @@ describe('block reference summaries', () => {
     expect(view.container.childElementCount).toBe(0);
   });
 
-  it.each([0.75, 1, 2])('keeps passage cards and source controls proportional at %sx without enlarging dialog controls', (zoom) => {
+  it.each([0.1, 0.75, 1, 2, 3])('keeps passage cards and source controls proportional at %sx without enlarging dialog controls', (zoom) => {
     const styles = document.createElement('style');
     // JSDOM applies the real CSS cascade but does not resolve CSS variables.
     // Substitute the reader's inherited scale to verify the length rules and
     // their scope; native layout still covers actual variable inheritance.
-    styles.textContent = ['reading-view.css', 'reference-components.css']
+    // Global styles import the shared PDF rules after component styles in the
+    // production bundle. Include both container classes and that cascade order.
+    styles.textContent = ['reading-view.css', 'reference-components.css', 'pdf-reader.css']
       .map((name) => readFileSync(new URL(name, import.meta.url), 'utf8'))
       .join('\n').replace(/var\(--reading-zoom(?:,\s*1)?\)/g, String(zoom));
     document.head.append(styles);
     try {
       const view = render(<>
-        <div className="reading-pages"><article className="reading-block reading-block-figure">
+        <div className="pdf-pages reading-pages"><article className="reading-block reading-block-figure">
           <div className="reading-block-actions">
             <span>Figure 1 · p. 1</span>
             <button type="button"><svg width="15" height="15" />Enlarge</button>
@@ -80,7 +82,7 @@ describe('block reference summaries', () => {
         <div className="figure-dialog-toolbar"><button type="button">Fit figure</button></div>
       </>);
       const styleOf = (selector: string) => getComputedStyle(view.container.querySelector(selector)!);
-      const scaled = (pixels: number) => `calc(${pixels * zoom}px)`;
+      const scaled = (pixels: number) => `calc(${Number((pixels * zoom).toFixed(4))}px)`;
       expect(styleOf('.reference-strip').paddingTop).toBe(scaled(8));
       expect(styleOf('.reference-strip').borderTopWidth).toBe(scaled(1));
       expect(styleOf('.reference-strip button').minHeight).toBe(`calc(44px * ${zoom})`);

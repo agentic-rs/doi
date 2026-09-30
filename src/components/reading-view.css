@@ -1,6 +1,6 @@
 /* Paint the entire scroll viewport, including overflow beyond the page strip. */
 .reading-scroll { background: #f4f3ed; }
-.reading-pages { --reading-zoom: 1; gap: calc(12px * var(--reading-zoom)); }
+.reading-pages { --reading-zoom: 1; }
 .reading-block { position: relative; flex: none; margin-inline: auto; max-width: none; background: white; }
 .reading-block .pdf-page { box-shadow: none; }
 .reading-block .pdf-page-label { display: none; }

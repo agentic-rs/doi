@@ -137,7 +137,8 @@ const page_bottom = 168;
 const resize_callbacks = new Set<() => void>();
 const original_scroll_to = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo');
 const original_computed_style = window.getComputedStyle;
-const reader_styles = ['pdf-reader.css', 'reading-view.css', 'reference-components.css']
+// Match the late shared PDF import from global styles in the production bundle.
+const reader_styles = ['reading-view.css', 'reference-components.css', 'pdf-reader.css']
   .map((name) => readFileSync(new URL(name, import.meta.url), 'utf8')).join('\n');
 
 function pageLayout(scroll: HTMLElement) {

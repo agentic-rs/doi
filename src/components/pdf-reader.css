@@ -124,7 +124,9 @@
   touch-action: pan-x pan-y;
 }
 .pdf-scroll:focus-visible { outline: 2px solid #6aa59d; outline-offset: -2px; }
-.pdf-pages { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; width: 100%; padding: 26px 30px 48px; }
+/* Reading gaps share the paper's scale after a pinch, just as in its preview.
+   Keep one gap rule so later shared styles cannot restore a fixed spacing. */
+.pdf-pages { display: flex; flex-direction: column; align-items: flex-start; gap: calc(12px * var(--reading-zoom, 1)); width: 100%; padding: 26px 30px 48px; }
 .pdf-page-wrap { display: flex; flex: none; flex-direction: column; align-items: center; margin-inline: auto; }
 .pdf-scroll[data-zoom-preview] { overflow: hidden; }
 .pdf-scroll[data-zoom-preview] .pdf-pages { width: var(--zoom-preview-width); pointer-events: none; }
