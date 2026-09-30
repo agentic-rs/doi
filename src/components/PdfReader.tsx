@@ -417,12 +417,19 @@ export function PdfReader(props: PdfReaderProps) {
         const bounds = nearest.getBoundingClientRect();
         if (bounds.width <= 0 || bounds.height <= 0) return false;
         const root_bounds = scroll_root.getBoundingClientRect();
-        // Promote only pages with a mounted bitmap, not the entire potentially
-        // hundred-page strip. Capture geometry once, before any transforms.
-        const preview_pages = pages.filter((page) => page.querySelector('canvas')).map((page) => {
-          const element = page.closest<HTMLElement>('.pdf-page-wrap')!;
+        // Reading references belong to their passage: preview the whole block
+        // so its crop, background and reference rows move together. Keep this
+        // limited to mounted bitmaps and visible blocks (a long reference list
+        // can remain onscreen after its crop's bitmap has been unmounted).
+        const preview_pages = pages.flatMap((page) => {
+          const has_bitmap = Boolean(page.querySelector('canvas'));
+          if (!reading && !has_bitmap) return [];
+          const element = page.closest<HTMLElement>(reading ? '.reading-block' : '.pdf-page-wrap')!;
           const bounds = element.getBoundingClientRect();
-          return { element, origin: { client_x: bounds.left, client_y: bounds.top } };
+          const visible = reading && bounds.bottom > root_bounds.top && bounds.top < root_bounds.bottom
+            && bounds.right > root_bounds.left && bounds.left < root_bounds.right;
+          if (!has_bitmap && !visible) return [];
+          return [{ element, origin: { client_x: bounds.left, client_y: bounds.top } }];
         });
         zoom_preview.current = {
           pages: preview_pages,

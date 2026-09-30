@@ -259,9 +259,10 @@ beforeEach(() => {
     const scroll = this.closest<HTMLElement>('.pdf-scroll');
     const page = scroll ? pageLayout(scroll).find((candidate) => candidate.page === this) : null;
     const wrapper_page = scroll ? pageLayout(scroll).find((candidate) => candidate.page.parentElement === this) : null;
-    const layout = page ?? wrapper_page;
+    const article_page = scroll ? pageLayout(scroll).find((candidate) => candidate.page.closest('.reading-block') === this) : null;
+    const layout = page ?? wrapper_page ?? article_page;
     const pages_container = Boolean(scroll && this.classList.contains('pdf-pages'));
-    const preview = previewTransform(page?.page.parentElement ?? wrapper_page?.page.parentElement ?? null);
+    const preview = previewTransform(layout?.page.closest<HTMLElement>('.reading-block') ?? layout?.page.parentElement ?? null);
     const width = layout ? layout.width * preview.scale : viewport_width;
     const height = layout ? (layout.height + (wrapper_page ? 24 : 0)) * preview.scale : pages_container
       ? contentDimensions(scroll!).height : this.classList.contains('pdf-toolbar') ? 56 : viewport_height;
@@ -1446,7 +1447,7 @@ describe('reference details in both reading modes', () => {
     expect(props.on_error).not.toHaveBeenCalled();
   });
 
-  it('shows a reference beside a citing block outside the PDF text and zoom layers', async () => {
+  it('shows a reference beside a citing block outside the PDF crop and text layer', async () => {
     bibliography();
     const props = readingProps('p1-intro');
     reading_fixture.layout!.blocks[0].text = 'This follows earlier work [7].';
@@ -1483,7 +1484,7 @@ describe('reference details in both reading modes', () => {
 
     afterEach(() => styles.remove());
 
-    it.each(['finish', 'cancel'] as const)('keeps only cropped paper painted during Safari pinch and restores passage controls on %s', async (ending) => {
+    it.each(['finish', 'cancel'] as const)('keeps references with their passage throughout Safari pinch and restores interaction on %s', async (ending) => {
       bibliography();
       const props = readingProps();
       reading_fixture.layout!.blocks[2].text = 'This follows earlier work [7].';
@@ -1497,6 +1498,8 @@ describe('reference details in both reading modes', () => {
       const toolbar = screen.getByLabelText('PDF view controls');
       const articles = [...scroll.querySelectorAll<HTMLElement>('article')];
       const actions = [...scroll.querySelectorAll<HTMLElement>('.reading-block-actions, .reference-strip')];
+      const article = page.closest<HTMLElement>('article')!;
+      const reference = article.querySelector<HTMLElement>('.reference-strip')!;
       const canvas = page.querySelector<HTMLCanvasElement>('canvas')!;
       const original_pixels = { width: canvas.width, height: canvas.height };
       const original_page_size = { width: page.style.width, height: page.style.height };
@@ -1514,25 +1517,31 @@ describe('reference details in both reading modes', () => {
 
       vi.useFakeTimers();
       dispatchSafariGesture(scroll, 'gesturestart', 1);
-      for (const scale of [1.5, 0.7, 1.4]) {
-        dispatchSafariGesture(scroll, 'gesturechange', scale);
+      for (const [scale, client_x, client_y] of [[1.5, 200, 190], [0.7, 160, 170], [1.4, 180, 180]]) {
+        dispatchSafariGesture(scroll, 'gesturechange', scale, client_x, client_y);
         await advancePreviewFrame();
         expect(heavyWork(props)).toEqual(baseline);
         expect({ width: canvas.width, height: canvas.height }).toEqual(original_pixels);
         expect({ width: page.style.width, height: page.style.height }).toEqual(original_page_size);
-        expect(previewTransform(page.parentElement).scale).toBeCloseTo(scale);
-        expect(croppedPdfPointAt('p1-body', 180, 180)[0]).toBeCloseTo(anchor[0]);
-        expect(croppedPdfPointAt('p1-body', 180, 180)[1]).toBeCloseTo(anchor[1]);
+        expect(previewTransform(article).scale).toBeCloseTo(scale);
+        expect(page.parentElement!.style.transform).toBe('');
+        expect(croppedPdfPointAt('p1-body', client_x, client_y)[0]).toBeCloseTo(anchor[0]);
+        expect(croppedPdfPointAt('p1-body', client_x, client_y)[1]).toBeCloseTo(anchor[1]);
         expect(getComputedStyle(page).backgroundColor).toBe('rgb(255, 255, 255)');
-        for (const article of articles) {
-          expect(getComputedStyle(article).backgroundColor).toBe('rgba(0, 0, 0, 0)');
-          expect(article.style.transform).toBe('');
+        for (const block of articles) {
+          expect(getComputedStyle(block).backgroundColor).toBe('rgb(255, 255, 255)');
+          expect(getComputedStyle(block).visibility).toBe(block.hasAttribute('data-zoom-preview-page') ? 'visible' : 'hidden');
         }
         for (const action of actions) {
-          expect(getComputedStyle(action).visibility).toBe('hidden');
+          expect(getComputedStyle(action).visibility).toBe(action.closest('[data-zoom-preview-page]') ? 'visible' : 'hidden');
           expect(getComputedStyle(action).display).not.toBe('none');
           expect(action.style.transform).toBe('');
         }
+        expect(getComputedStyle(reference).visibility).toBe('visible');
+        expect(getComputedStyle(reference.querySelector('.reference-strip-title')!).visibility).toBe('visible');
+        expect(getComputedStyle(reference.querySelector('.reference-strip-publication')!).visibility).toBe('visible');
+        expect(reference.closest('[data-zoom-preview-page]')).toBe(article);
+        expect(getComputedStyle(article.querySelector('.reading-block-actions')!).pointerEvents).toBe('none');
         expect(getComputedStyle(readingBlock('p3-original').parentElement!).visibility).toBe('hidden');
         expect(toolbar.getBoundingClientRect()).toMatchObject({
           left: toolbar_bounds.left, top: toolbar_bounds.top, width: toolbar_bounds.width, height: toolbar_bounds.height,
@@ -1549,14 +1558,57 @@ describe('reference details in both reading modes', () => {
       await advancePreviewFrame();
       expect(scroll.hasAttribute('data-zoom-preview')).toBe(false);
       expect(page.parentElement!.style.transform).toBe('');
-      for (const article of articles) expect(getComputedStyle(article).backgroundColor).toBe('rgb(255, 255, 255)');
+      for (const block of articles) {
+        expect(getComputedStyle(block).backgroundColor).toBe('rgb(255, 255, 255)');
+        expect(block.style.transform).toBe('');
+        expect(block.hasAttribute('data-zoom-preview-page')).toBe(false);
+      }
       for (const action of actions) expect(getComputedStyle(action).visibility).toBe('visible');
       expect(getComputedStyle(scroll).backgroundColor).toBe('rgb(244, 243, 237)');
       expect(getComputedStyle(strip).backgroundColor).toBe('rgba(0, 0, 0, 0)');
       expect(latestLocation(props).zoom).toBeCloseTo(original_zoom * (ending === 'finish' ? 1.4 : 1));
       if (ending === 'cancel') expect(heavyWork(props)).toEqual(baseline);
       else expect(canvas.width).toBe(Math.floor(Number.parseFloat(page.style.width)));
+      fireEvent.scroll(scroll);
+      await advancePreviewFrame();
+      expect(getComputedStyle(reference).visibility).toBe('visible');
+      fireEvent.click(reference.querySelector('button')!);
+      expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7' }) });
       expect(props.on_error).not.toHaveBeenCalled();
+    });
+
+    it('keeps visible reference rows in the preview after their offscreen crop bitmap is unmounted', async () => {
+      bibliography();
+      const props = readingProps();
+      reading_fixture.layout!.blocks[4].text = 'This follows earlier work [7].';
+      const view = render(<PdfReader {...props} />);
+      await waitFor(() => expect(document.querySelector('.reference-strip button')).toBeTruthy());
+      const page = readingBlock('p3-original');
+      const article = page.closest<HTMLElement>('article')!;
+      const reference = article.querySelector<HTMLElement>('.reference-strip')!;
+      expect(page.querySelector('canvas')).toBeNull();
+      // The crop has scrolled above the viewport, but its long reference list
+      // still intersects it. Selection must use the whole passage bounds.
+      vi.spyOn(article, 'getBoundingClientRect').mockReturnValue({
+        x: 10, y: -900, left: 10, top: -900, right: 350, bottom: 200,
+        width: 340, height: 1100, toJSON: () => ({}),
+      });
+      const scroll = screen.getByLabelText('Scrollable reading view');
+      const baseline = heavyWork(props);
+      vi.useFakeTimers();
+      dispatchSafariGesture(scroll, 'gesturestart', 1);
+      dispatchSafariGesture(scroll, 'gesturechange', 0.7);
+      await advancePreviewFrame();
+      expect(article.hasAttribute('data-zoom-preview-page')).toBe(true);
+      expect(previewTransform(article).scale).toBeCloseTo(0.7);
+      expect(getComputedStyle(reference).visibility).toBe('visible');
+      expect(page.querySelector('canvas')).toBeNull();
+      expect(heavyWork(props)).toEqual(baseline);
+      view.rerender(<PdfReader {...props} reading_active={false} />);
+      await advancePreviewFrame();
+      expect(article.style.transform).toBe('');
+      expect(article.hasAttribute('data-zoom-preview-page')).toBe(false);
+      expect(getComputedStyle(reference).visibility).toBe('visible');
     });
   });
 

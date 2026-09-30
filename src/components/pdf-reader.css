@@ -129,8 +129,8 @@
 .pdf-scroll[data-zoom-preview] { overflow: hidden; }
 .pdf-scroll[data-zoom-preview] .pdf-pages { pointer-events: none; }
 .pdf-scroll[data-zoom-preview] .pdf-embedded-link { pointer-events: none; }
-.pdf-scroll[data-zoom-preview] .pdf-page-wrap:not([data-zoom-preview-page]) { visibility: hidden; }
-.pdf-page-wrap[data-zoom-preview-page] { transform-origin: 0 0; will-change: transform; }
+.pdf-scroll[data-zoom-preview] .pdf-pages > :not([data-zoom-preview-page]) { visibility: hidden; }
+.pdf-page-wrap[data-zoom-preview-page], .reading-block[data-zoom-preview-page] { transform-origin: 0 0; will-change: transform; }
 .pdf-page {
   --scale-round-x: 0.01px;
   --scale-round-y: 0.01px;

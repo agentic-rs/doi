@@ -4,11 +4,6 @@
 .reading-block { position: relative; flex: none; margin-inline: auto; max-width: none; background: white; }
 .reading-block .pdf-page { box-shadow: none; }
 .reading-block .pdf-page-label { display: none; }
-/* Pinch previews transform only PDF crops. Stationary block shells and controls
-   must not paint over them. Keep their layout space so the anchor stays put. */
-.pdf-scroll[data-zoom-preview] .reading-block { background: transparent; }
-.pdf-scroll[data-zoom-preview] .reading-block > .reading-block-actions,
-.pdf-scroll[data-zoom-preview] .reading-block > .reference-strip { visibility: hidden; }
 .reading-block-actions {
   display: flex;
   align-items: center;
@@ -89,3 +84,6 @@
 @media (hover: hover) {
   .reading-block:hover .reading-block-actions { opacity: 1; pointer-events: auto; }
 }
+/* Passage controls travel with their block during preview, but cannot activate
+   until the gesture settles. References remain readable throughout the pinch. */
+.pdf-scroll[data-zoom-preview] .reading-block-actions { pointer-events: none; }
