@@ -438,7 +438,7 @@ async function advancePreviewFrame(duration = 16) {
 
 function readingProps(block_id = 'p1-body'): PdfReaderProps {
   reading_fixture.layout = {
-    layout_version: 3, pdf_hash: 'a'.repeat(64), page_count: 4,
+    layout_version: 4, pdf_hash: 'a'.repeat(64), page_count: 4,
     blocks: [
       { block_id: 'p1-intro', page_number: 1, source_rect: [60, 540, 300, 740], kind: 'text', block_type: 'title', text: 'Introduction', figure_label: null },
       { block_id: 'p2-figure', page_number: 2, source_rect: [60, 380, 540, 700], kind: 'figure', block_type: 'graph', text: 'Figure 1', figure_label: 'Figure 1' },
@@ -1194,7 +1194,13 @@ describe('optional Reading view', () => {
     'keeps Reading mode and $zoom_mode zoom for a rotated $rotation° PDF destination', async ({ rotation, zoom_mode }) => {
       pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'body', rect: [100, 600, 125, 612], dest: [0, { name: 'XYZ' }, 400, 500, 2.8] }]);
       const props = readingProps('p1-intro');
-      props.target_location = { ...props.target_location!, rotation, zoom_mode, zoom: zoom_mode === 'custom' ? 1.25 : 1 };
+      // Keep the same interior source point (180, 640) when rotating the saved
+      // viewport; a crop's last edge can scroll onto the following article.
+      const initial_positions: Record<number, [number, number]> = {
+        0: [180 / 600, 160 / 800], 90: [640 / 800, 180 / 600],
+        180: [420 / 600, 640 / 800], 270: [160 / 800, 420 / 600],
+      };
+      props.target_location = { ...props.target_location!, rotation, page_position: initial_positions[rotation], zoom_mode, zoom: zoom_mode === 'custom' ? 1.25 : 1 };
       const view = render(<PdfReader {...props} />);
       await waitFor(() => expect(latestLocation(props).reader_mode).toBe('reading'));
       const source = latestLocation(props);

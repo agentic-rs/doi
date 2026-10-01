@@ -1,7 +1,7 @@
 use crate::{error::Result, models::ReadingLayout, validation};
 use std::collections::HashSet;
 
-pub const LAYOUT_VERSION: u32 = 3;
+pub const LAYOUT_VERSION: u32 = 4;
 pub const MAX_LAYOUT_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn validate(layout: &ReadingLayout) -> Result<()> {
@@ -155,7 +155,7 @@ pub(crate) mod tests {
     assert_eq!(decode(&data, &layout.pdf_hash), Some(layout.clone()));
     assert!(decode(&data, &"b".repeat(64)).is_none());
     assert!(decode("{corrupt", &layout.pdf_hash).is_none());
-    for version in [1, 2, LAYOUT_VERSION + 1] {
+    for version in [1, 2, 3, LAYOUT_VERSION + 1] {
       let mut unsupported = layout.clone();
       unsupported.layout_version = version;
       let data = serde_json::to_string(&unsupported).unwrap();

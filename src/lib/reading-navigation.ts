@@ -23,14 +23,16 @@ export function positionInRegion(location: ReadingLocation, region: Region): [nu
 export function findReadingBlock(layout: ReadingLayout, location: ReadingLocation, pages: PDFPageProxy[]) {
   const candidates = layout.blocks.filter((block) => block.page_number === location.page_number);
   const exact = candidates.find((block) => block.block_id === location.reading_block_id);
-  if (exact) return exact;
   const page = pages[location.page_number - 1];
-  if (!page) return candidates[0] ?? null;
+  if (!page) return exact ?? candidates[0] ?? null;
   const viewport = page.getViewport({ scale: 1, rotation: (page.rotate + location.rotation) % 360 });
   const point = viewport.convertToPdfPoint(location.page_position[0] * viewport.width, location.page_position[1] * viewport.height);
-  // If whitespace was removed, choose the closest retained region on this page.
-  return candidates.reduce<typeof candidates[number] | null>((best, block) => {
-    const distance = (rect: number[]) => Math.hypot(point[0] - clamp(point[0], rect[0], rect[2]), point[1] - clamp(point[1], rect[1], rect[3]));
+  const distance = (rect: number[]) => Math.hypot(point[0] - clamp(point[0], rect[0], rect[2]), point[1] - clamp(point[1], rect[1], rect[3]));
+  // A rebuilt layout can reuse a block ID for a different crop. The original
+  // PDF point owns the destination; an ID only breaks ties at shared edges or
+  // in removed whitespace, where two crops can be equally close.
+  const closest = candidates.reduce<typeof candidates[number] | null>((best, block) => {
     return !best || distance(block.source_rect) < distance(best.source_rect) ? block : best;
   }, null);
+  return exact && closest && distance(exact.source_rect) <= distance(closest.source_rect) + 0.01 ? exact : closest;
 }

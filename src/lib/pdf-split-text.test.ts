@@ -121,7 +121,7 @@ describe('split-line source text anchors', () => {
   });
 });
 
-function measuredFixture(options: { first_line?: string; extra_line?: string } = {}) {
+function measuredFixture(options: { first_line?: string; extra_line?: string; zero_bounds?: boolean } = {}) {
   const item = (str: string, x: number, y: number, width = str.length * 4) => ({
     str, width, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true, transform: [10, 0, 0, 10, x, y],
   });
@@ -129,7 +129,7 @@ function measuredFixture(options: { first_line?: string; extra_line?: string } =
     ...(options.first_line ? [item(options.first_line, 1, 40, 120)] : [item('alpha', 1, 40), item(' ', 21, 40, 0.5), item('beta gamma delta', 21.5, 40)]),
     item('short', 1, 29.1),
     ...(options.extra_line ? [item(options.extra_line, 1, 13, 120)] : []),
-  ], styles: {}, lang: null };
+  ], styles: options.zero_bounds ? { body: { fontFamily: 'serif', ascent: 0, descent: 0, vertical: false } } : {}, lang: null };
   const page = { rotate: 0, userUnit: 1, getViewport: ({ scale, offsetX = 0, offsetY = 0 }: { scale: number; offsetX?: number; offsetY?: number }) => ({
     scale, rotation: 0, width: 128 * scale, height: 50 * scale,
     convertToViewportPoint: (x: number, y: number) => [x * scale + offsetX, (50 - y) * scale + offsetY],
@@ -167,8 +167,8 @@ function blockColumns(raster: SplitLineRaster, left: number, right: number, top 
 }
 
 describe('source line measurement', () => {
-  it('separates overlapping browser font boxes and preserves an explicit narrow PDF space', async () => {
-    const { page, host } = measuredFixture();
+  it.each([false, true])('separates overlapping browser font boxes and preserves an explicit narrow PDF space (zero font bounds: %s)', async (zero_bounds) => {
+    const { page, host } = measuredFixture({ zero_bounds });
     const prepared = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
     expect(prepared.layout.width).toBeLessThan(128);
     expect(prepared.layout.height).toBeGreaterThan(50);

@@ -1,6 +1,7 @@
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PdfSourceRect } from './types';
 import { clamp } from './pdf-geometry';
+import { pdfFontMetrics } from './pdf-font-metrics';
 
 type PdfTextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;
 
@@ -42,8 +43,7 @@ export function regionTextContent(content: PdfTextContent, source_rect: PdfSourc
     const [a, b, c, d, x, y] = item.transform as number[];
     if (![a, b, c, d, x, y, item.width, item.height].every(Number.isFinite)) return false;
     const style = content.styles[item.fontName];
-    const ascent = Number.isFinite(style?.ascent) ? style.ascent : 0.8;
-    const descent = Number.isFinite(style?.descent) ? style.descent : -0.2;
+    const { ascent, descent } = pdfFontMetrics(style);
     const vertical = style?.vertical || item.dir === 'ttb';
     const direction_x = vertical ? c : a;
     const direction_y = vertical ? d : b;

@@ -75,10 +75,10 @@ describe('cropped PDF text', () => {
     expect(content.items).toHaveLength(5);
   });
 
-  it('assigns text at a shared cut to one region only', () => {
+  it.each([false, true])('assigns text at a shared cut to one region only (zero font bounds: %s)', (zero_bounds) => {
     const content = {
       items: [{ str: 'boundary', transform: [10, 0, 0, 10, 20, 197], width: 80, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true }],
-      styles: { body: { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'serif' } },
+      styles: { body: { ascent: zero_bounds ? 0 : 0.8, descent: zero_bounds ? 0 : -0.2, vertical: false, fontFamily: 'serif' } },
       lang: null,
     };
     expect(regionTextContent(content, [0, 0, 200, 200]).items).toHaveLength(0);

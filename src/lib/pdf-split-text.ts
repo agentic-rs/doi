@@ -2,6 +2,7 @@ import { TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PdfSourceRect, QuadPoints } from './types';
 import { readPdfTextContent } from './pdf-compatibility';
+import { pdfFontMetrics } from './pdf-font-metrics';
 import { regionGeometry, regionTextContent } from './pdf-region';
 import { createAdaptiveSplitLineLayout } from './pdf-line-layout';
 import type { SplitLineLayout, SplitLineRaster, SplitLineRect, SplitLineRow } from './pdf-line-layout';
@@ -156,8 +157,7 @@ async function measureSplitText(page: PDFPageProxy, source_rect: PdfSourceRect, 
       const item = items[index];
       const baseline = item ? geometry.render_viewport.convertToViewportPoint(item.transform[4], item.transform[5])[1] : rect[3];
       const font = content.styles[item.fontName];
-      const ascent = Number.isFinite(font?.ascent) ? font.ascent : 0.8;
-      const descent = Number.isFinite(font?.descent) ? font.descent : -0.2;
+      const { ascent, descent } = pdfFontMetrics(font);
       const top = geometry.render_viewport.convertToViewportPoint(item.transform[4], item.transform[5] + item.transform[3] * ascent)[1];
       const bottom = geometry.render_viewport.convertToViewportPoint(item.transform[4], item.transform[5] + item.transform[3] * descent)[1];
       const ink_rect: SplitLineRect = [rect[0], Math.min(top, bottom), rect[2], Math.max(top, bottom)];

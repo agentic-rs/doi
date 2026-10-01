@@ -1,10 +1,11 @@
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readPdfTextContent } from './pdf-compatibility';
+import { pdfFontMetrics } from './pdf-font-metrics';
 import { classifyReadingDocument, classifyReadingRegion, readingPageEvidence } from './reading-block-classification';
 import type { ReadingTextLine } from './reading-block-classification';
 import type { PdfSourceRect, ReadingBlock, ReadingLayout } from './types';
 
-export const READING_LAYOUT_VERSION = 3;
+export const READING_LAYOUT_VERSION = 4;
 
 type Rect = [number, number, number, number];
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;
@@ -58,8 +59,7 @@ function textGeometry(input: ReadingPageInput): { boxes: TextBox[]; horizontal: 
     const is_horizontal = !style?.vertical && Math.abs(baseline_y) <= Math.abs(baseline_x) * 0.05 && baseline_x > 0;
     if (!is_horizontal) horizontal = false;
     const scale = Math.hypot(a, b);
-    const ascent = style?.ascent ?? 0.9;
-    const descent = style?.descent ?? -0.25;
+    const { ascent, descent } = pdfFontMetrics(style);
     const baseline_length = Math.hypot(baseline_x, baseline_y);
     const advance_x = baseline_x / baseline_length * item.width * scale;
     const advance_y = baseline_y / baseline_length * item.width * scale;
@@ -278,18 +278,26 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
         }
       }
     }
-    return { rect, graphic_pixels, graphic_rect, lines: lines.filter((line) => intersect(line.rect, rect)) };
+    // A narrow gutter can resemble a space between font runs before columns
+    // are known. Recombine only this crop's items so neighboring column text
+    // cannot leak into its caption, classification, or reference list.
+    return { rect, graphic_pixels, graphic_rect, lines: combineLines(boxes.filter((box) => intersect(box.rect, rect))) };
   }
 
   function columnGap(rect: Rect): [number, number] | undefined {
     const rect_width = rect[2] - rect[0];
-    return gaps(rect, 0, 9 * scale).filter(([start, end]) => {
+    const minimum = Math.max(4 * scale, page_evidence.body_font_size * 0.5);
+    return gaps(rect, 0, minimum).filter(([start, end]) => {
       const center = (start + end) / 2;
       if (center < rect[0] + rect_width * 0.3 || center > rect[0] + rect_width * 0.7) return false;
       // Charts, equations, tables and two side-by-side figure panels often
       // contain vertical gaps too; require substantial prose on both sides.
-      const left = lines.filter((line) => intersect(line.rect, rect) && line.rect[2] <= start && isProse(line, start - rect[0]));
-      const right = lines.filter((line) => intersect(line.rect, rect) && line.rect[0] >= end && isProse(line, rect[2] - end));
+      // Evaluate each side independently: combineLines may already have joined
+      // runs across this gutter when its width is close to an ordinary space.
+      const left = combineLines(boxes.filter((box) => intersect(box.rect, rect) && box.rect[2] <= start))
+        .filter((line) => isProse(line, start - rect[0]));
+      const right = combineLines(boxes.filter((box) => intersect(box.rect, rect) && box.rect[0] >= end))
+        .filter((line) => isProse(line, rect[2] - end));
       return left.length >= 3 && right.length >= 3;
     }).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
   }

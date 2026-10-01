@@ -43,6 +43,28 @@ function pageFixture(page_number = 1, width = 600, height = 800) {
 }
 
 describe('conservative source-region analysis', () => {
+  it('recognizes paragraphs and inline font switches when the body font reports zero bounds', () => {
+    const page = pageFixture(3);
+    page.input.text_content.styles.body.ascent = 0;
+    page.input.text_content.styles.body.descent = 0;
+    page.input.text_content.styles.emphasis = { fontFamily: 'serif', ascent: 0.8, descent: -0.2, vertical: false };
+    page.text(50, 100, 240, 'Our evaluation compares several different models');
+    page.text(294, 100, 206, 'and their translation quality.');
+    const emphasis = page.input.text_content.items[1];
+    if ('str' in emphasis) emphasis.fontName = 'emphasis';
+    page.text(50, 114, 450, 'The resulting scores preserve the complete discussion of the experiment.');
+    page.text(50, 145, 450, 'A second paragraph explains how the models respond in real time.');
+    page.text(50, 159, 450, 'Every printed line remains selectable and available for line splitting.');
+    const blocks = extractReadingPage(page.input);
+    expect(blocks).toHaveLength(2);
+    expect(blocks.every((block) => block.kind === 'text' && block.block_type === 'content')).toBe(true);
+    expect(blocks[0].text.split('\n')).toEqual([
+      'Our evaluation compares several different models and their translation quality.',
+      'The resulting scores preserve the complete discussion of the experiment.',
+    ]);
+    page.expectCompleteCoverage(blocks);
+  });
+
   it('crops real margins while retaining vector ink outside text bounds', () => {
     const page = pageFixture();
     page.text(100, 100, 350, 'Body text has several words to preserve its complete paragraph.');
@@ -53,8 +75,12 @@ describe('conservative source-region analysis', () => {
     page.expectCompleteCoverage(blocks);
   });
 
-  it('reads two columns beneath a full-width heading in column order', () => {
+  it.each([false, true])('reads two columns beneath a full-width heading in column order (zero font bounds: %s)', (zero_bounds) => {
     const page = pageFixture();
+    if (zero_bounds) {
+      page.input.text_content.styles.body.ascent = 0;
+      page.input.text_content.styles.body.descent = 0;
+    }
     page.text(50, 40, 500, 'A full width paper heading crosses the central gutter', 14);
     for (const [x, name] of [[50, 'Left'], [320, 'Right']] as const) {
       for (let index = 0; index < 6; index++) {
@@ -104,6 +130,48 @@ describe('conservative source-region analysis', () => {
     expect(reordered.findIndex((block) => block.block_id === figure?.block_id))
       .toBe(reordered.findIndex((block) => block.text.startsWith('The results')) + 1);
     page.expectCompleteCoverage(reordered);
+  });
+
+  it('separates narrow prose columns without joining their lines or splitting full-width tables', () => {
+    const page = pageFixture();
+    page.text(50, 40, 500, 'Table 1: The complete comparison across all evaluation conditions.');
+    page.graphic(50, 65, 500, 60);
+    for (const [x, name] of [[50, 'Left'], [310, 'Right']] as const) {
+      for (let index = 0; index < 6; index++) {
+        page.text(x, 160 + index * 14, 250, `${name} first paragraph line ${index} contains enough prose to identify its column.`);
+      }
+      for (let index = 0; index < 4; index++) {
+        page.text(x, 270 + index * 14, 250, `${name} second paragraph line ${index} continues our discussion of the results.`);
+      }
+    }
+    const blocks = extractReadingPage(page.input);
+    const table = blocks.find((block) => block.block_type === 'table');
+    expect(table).toBeDefined();
+    expect(table!.source_rect[2] - table!.source_rect[0]).toBeGreaterThan(490);
+    const left = blocks.filter((block) => block.text.startsWith('Left'));
+    const right = blocks.filter((block) => block.text.startsWith('Right'));
+    expect(left).toHaveLength(2);
+    expect(right).toHaveLength(2);
+    expect(left.every((block) => !block.text.includes('Right') && block.block_type === 'content')).toBe(true);
+    expect(right.every((block) => !block.text.includes('Left') && block.block_type === 'content')).toBe(true);
+    expect(blocks.indexOf(left[1])).toBeLessThan(blocks.indexOf(right[0]));
+    page.expectCompleteCoverage(blocks);
+  });
+
+  it('keeps nearby figure panels together when a narrow gap has no prose column evidence', () => {
+    const page = pageFixture();
+    page.graphic(50, 50, 250, 110);
+    page.graphic(310, 50, 250, 110);
+    for (const x of [50, 310]) {
+      page.text(x, 175, 180, 'Low latency');
+      page.text(x, 189, 180, 'High quality');
+      page.text(x, 203, 180, 'Model family');
+    }
+    page.text(50, 240, 510, 'Figure 1: Our comparison of two example model families.');
+    const blocks = extractReadingPage(page.input);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'figure', block_type: 'graph', figure_label: '1' });
+    page.expectCompleteCoverage(blocks);
   });
 
   it('does not extract a caption without an identifiable graphic', () => {
