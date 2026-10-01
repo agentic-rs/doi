@@ -5,12 +5,12 @@ import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs
 import type { SelectionPage } from '../lib/pdf-selection';
 import type { Annotation } from '../lib/types';
 import { PdfPage } from './PdfPage';
-import { createSplitLineLayout } from '../lib/pdf-line-layout';
+import { createSplitLineLayout, refineSplitLineCuts, splitLineInkCovered } from '../lib/pdf-line-layout';
 import { regionGeometry } from '../lib/pdf-region';
 import type { PreparedSplitText } from '../lib/pdf-split-text';
 
-const split = vi.hoisted(() => ({ prepare: vi.fn(), create: vi.fn() }));
-vi.mock('../lib/pdf-split-text', () => ({ prepareSplitPdfText: split.prepare, createSplitTextLayer: split.create }));
+const split = vi.hoisted(() => ({ prepare: vi.fn(), create: vi.fn(), refine: vi.fn() }));
+vi.mock('../lib/pdf-split-text', () => ({ prepareSplitPdfText: split.prepare, createSplitTextLayer: split.create, refinePreparedSplitText: split.refine }));
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   RenderingCancelledException: class extends Error {},
@@ -57,6 +57,13 @@ function pageFixture() {
 beforeEach(() => {
   split.prepare.mockReset();
   split.create.mockReset();
+  split.refine.mockReset();
+  split.refine.mockImplementation((prepared: PreparedSplitText, raster, scale: number) => {
+    const layout = refineSplitLineCuts(prepared.layout, raster, scale);
+    if (!layout) throw new Error('A line break would cut through printed text. Its original lines are kept.');
+    if (!splitLineInkCovered(layout, raster, scale)) throw new Error('The printed content could not be split without clipping. Its original lines are kept.');
+    return layout === prepared.layout ? prepared : { ...prepared, layout };
+  });
   vi.stubGlobal('devicePixelRatio', 1);
   vi.stubGlobal('IntersectionObserver', class {
     constructor(private callback: IntersectionObserverCallback) {}
@@ -216,7 +223,51 @@ describe('split PDF line rendering', () => {
     await waitFor(() => expect(props.on_split_status).toHaveBeenCalledWith('content-3', 'ready'));
     expect(render_page).toHaveBeenCalledTimes(1);
     expect(props.register_page).toHaveBeenLastCalledWith('content-3', expect.objectContaining({ quads_for_range: expect.any(Function) }));
-    expect(props.on_layout_change).toHaveBeenCalledTimes(1);
+    expect(props.on_layout_change).not.toHaveBeenCalled();
+  });
+
+  it('commits mixed three-line and compact source rows at the same font scale after their mapping is ready', async () => {
+    const { page, render_page } = pageFixture();
+    const { crop, prepared } = splitFixture(page);
+    prepared.layout.fit_width = 70;
+    const final_prepared: PreparedSplitText = { ...prepared, layout: {
+      width: 70, fit_width: 70, height: 100, line_counts: [1, 3, 1], pieces: [
+        { source_rect: [0, 0, 140, 40], display_rect: [0, 0, 70, 20] },
+        { source_rect: [0, 40, 40, 60], display_rect: [0, 20, 40, 40] },
+        { source_rect: [40, 40, 80, 60], display_rect: [0, 40, 40, 60] },
+        { source_rect: [80, 40, 140, 60], display_rect: [0, 60, 60, 80] },
+        { source_rect: [0, 60, 140, 100], display_rect: [0, 80, 70, 100] },
+      ],
+    } };
+    split.refine.mockReturnValue(final_prepared);
+    const context = document.createElement('canvas').getContext('2d')!;
+    context.getImageData = vi.fn((_x: number, _y: number, width: number, height: number) =>
+      ({ width, height, data: new Uint8ClampedArray(width * height * 4).fill(255) }) as ImageData);
+    let finish!: () => void;
+    render_page.mockImplementationOnce(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+    render_page.mockImplementationOnce(() => ({ promise: new Promise<void>((resolve) => { finish = resolve; }), cancel: vi.fn() }));
+    const props = { page, source_rect: crop, block_id: 'content-3', split_lines: true, zoom: 2, rotation: 0,
+      render_paused: false, scroll_root: document.createElement('div'), annotations: [],
+      register_page: vi.fn<(id: string, selection: SelectionPage | null) => void>(), on_link: vi.fn(), on_error: vi.fn(), on_split_status: vi.fn() };
+    const view = render(<PdfPage {...props} />);
+    await waitFor(() => expect(render_page).toHaveBeenCalledTimes(2));
+    expect(view.container.querySelector('[data-split-preparing]')).not.toBeNull();
+    expect(props.on_split_status).not.toHaveBeenCalledWith('content-3', 'ready');
+    expect(props.register_page.mock.calls.some(([, value]) => value)).toBe(false);
+    await act(async () => { finish(); });
+    await waitFor(() => {
+      expect(props.on_split_status).toHaveBeenCalledWith('content-3', 'ready');
+      expect(view.container.querySelector('[data-split-preparing]')).toBeNull();
+    });
+    const scales = (render_page.mock.calls as unknown as Array<[{ viewport: PageViewport }]>).map(([options]) => options.viewport.scale);
+    expect(scales).toEqual([4, 4]);
+    expect(split.create).toHaveBeenCalledWith(final_prepared, 4);
+    expect([view.container.querySelector('canvas')?.width, view.container.querySelector('canvas')?.height]).toEqual([280, 400]);
+    expect(context.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 0, 0, 560, 160, 0, 0, 280, 80);
+    const selection = props.register_page.mock.calls.filter(([, value]) => value).at(-1)?.[1];
+    expect(selection?.position_for_source_point?.([150, 480])).toEqual([35 / 70, 10 / 100]);
+    expect(selection?.source_point_for_position?.([35 / 70, 10 / 100])).toEqual([150, 480]);
+    expect(props.on_error).not.toHaveBeenCalled();
   });
 
   it('restores normal sizing and source registration after resetting split lines', async () => {

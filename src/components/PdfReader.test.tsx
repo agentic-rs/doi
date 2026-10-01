@@ -620,6 +620,87 @@ describe('split lines in Reading view', () => {
     expect(props.on_error).not.toHaveBeenCalled();
   });
 
+  it('keeps an upward scroll made while split lines is preparing', async () => {
+    const props = splitReadingProps();
+    let finish_prepare!: () => void;
+    split_fixture.prepare.mockImplementationOnce((page: PDFPageProxy, rect: PdfSourceRect) => new Promise<PreparedSplitText>((resolve) => {
+      finish_prepare = () => resolve(preparedSplit(page, rect));
+    }));
+    render(<PdfReader {...props} />);
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    fireEvent.click(screen.getByRole('button', { name: 'Split lines in block on page 1' }));
+    await waitFor(() => expect(split_fixture.prepare).toHaveBeenCalledOnce());
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    act(() => scroll.scrollTo({ top: scroll.scrollTop - 100 }));
+    fireEvent.scroll(scroll);
+    await act(async () => finish_prepare());
+    await expectSplitReady();
+    await waitFor(() => expect(latestLocation(props).page_position[1]).toBeCloseTo((230 - 100 / 4.2) / 800));
+    expect(latestLocation(props).page_position[0]).toBeCloseTo(460 / 600);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('keeps scrolling upward while a split bitmap and its mapping are still rendering', async () => {
+    const props = splitReadingProps();
+    render(<PdfReader {...props} />);
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    pdf_fixture.defer_renders = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Split lines in block on page 1' }));
+    await waitFor(() => {
+      expect(readingBlock('p1-body').style.height).toBe('2016px');
+      expect(readingBlock('p1-body').dataset.splitPreparing).toBe('true');
+      expect(pdf_fixture.render_requests.some((request) => !request.cancelled && request.viewport.scale === 8.4)).toBe(true);
+    });
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    act(() => scroll.scrollTo({ top: scroll.scrollTop - 100 }));
+    fireEvent.scroll(scroll);
+    const scrolled_top = scroll.scrollTop;
+    await act(async () => pdf_fixture.render_requests.forEach((request) => request.complete()));
+    await expectSplitReady();
+    await waitFor(() => expect(scroll.scrollTop).toBeCloseTo(scrolled_top));
+    expect(latestLocation(props).reading_block_id).toBe('p1-body');
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('retains an explicit saved destination during scrolling while its split is preparing', async () => {
+    const props = splitReadingProps();
+    split_fixture.initial_ids.add('p1-body');
+    let finish_prepare!: () => void;
+    split_fixture.prepare.mockImplementationOnce((page: PDFPageProxy, rect: PdfSourceRect) => new Promise<PreparedSplitText>((resolve) => {
+      finish_prepare = () => resolve(preparedSplit(page, rect));
+    }));
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(split_fixture.prepare).toHaveBeenCalledOnce());
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    act(() => scroll.scrollTo({ top: scroll.scrollTop - 100 }));
+    fireEvent.scroll(scroll);
+    await act(async () => finish_prepare());
+    await expectSplitReady();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('retains a zoom control source anchor while a split bitmap rerenders', async () => {
+    const props = splitReadingProps();
+    split_fixture.initial_ids.add('p1-body');
+    render(<PdfReader {...props} />);
+    await expectSplitReady();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    pdf_fixture.defer_renders = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    await waitFor(() => expect(readingBlock('p1-body').dataset.splitPreparing).toBe('true'));
+    const scroll = screen.getByLabelText('Scrollable reading view');
+    act(() => scroll.scrollTo({ top: scroll.scrollTop - 100 }));
+    fireEvent.scroll(scroll);
+    await act(async () => pdf_fixture.render_requests.forEach((request) => request.complete()));
+    await expectSplitReady();
+    await waitFor(() => {
+      expectSplitSource(latestLocation(props));
+      expect(latestLocation(props).zoom).toBe(2.85);
+    });
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('restores the same split source passage after opening its PDF source and going Back (initially offscreen: %s)', async (initially_offscreen) => {
     const props = splitReadingProps();
     split_fixture.initial_ids.add('p1-body');

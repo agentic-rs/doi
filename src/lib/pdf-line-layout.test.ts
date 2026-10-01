@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createAdaptiveSplitLineLayout,
   createSplitLineLayout,
   mapSplitDisplayPoint,
   mapSplitDisplayRect,
@@ -144,6 +145,65 @@ describe('fixed one-to-two PDF line geometry', () => {
   });
 });
 
+describe('fixed one-to-three PDF line geometry', () => {
+  it('chooses two distinct measured thirds and retains the short row', () => {
+    const layout = createSplitLineLayout(100, 40, rows, 3)!;
+    expect(layout.width).toBe(39);
+    expect(layout.height).toBe(64);
+    expect(layout.pieces).toEqual([
+      { source_rect: [0, 0, 30, 13], display_rect: [0, 0, 30, 13] },
+      { source_rect: [30, 1, 69, 13], display_rect: [0, 13, 39, 25] },
+      { source_rect: [69, 1, 96, 13], display_rect: [0, 25, 27, 37] },
+      { source_rect: [0, 13, 30, 19], display_rect: [0, 37, 30, 43] },
+      { source_rect: [0, 19, 35, 40], display_rect: [0, 43, 35, 64] },
+    ]);
+    expect(layout.cuts).toMatchObject([
+      { first_piece_index: 0, continuation_piece_index: 1, trailing_piece_index: 3 },
+      { first_piece_index: 1, continuation_piece_index: 2, trailing_piece_index: null },
+    ]);
+  });
+
+  it('preserves each glyph once and roundtrips points and highlights across both cuts', () => {
+    const layout = createSplitLineLayout(100, 40, rows, 3)!;
+    for (let first = 0; first < layout.pieces.length; first++) {
+      for (let second = first + 1; second < layout.pieces.length; second++) {
+        expect(overlaps(layout.pieces[first].source_rect, layout.pieces[second].source_rect)).toBe(false);
+        expect(overlaps(layout.pieces[first].display_rect, layout.pieces[second].display_rect)).toBe(false);
+      }
+    }
+    for (let x = 0; x < 96; x += 0.5) {
+      const source: [number, number] = [x, 8];
+      expect(mapSplitDisplayPoint(layout, mapSplitSourcePoint(layout, source)!)).toEqual(source);
+    }
+    expect(mapSplitSourcePoint(layout, [30, 8])).toEqual([0, 20]);
+    expect(mapSplitSourcePoint(layout, [69, 8])).toEqual([0, 32]);
+    const displayed = mapSplitSourceRect(layout, [20, 4, 80, 10]);
+    expect(displayed).toEqual([[20, 4, 30, 10], [0, 16, 39, 22], [0, 28, 11, 34]]);
+    expect(displayed.flatMap((rect) => mapSplitDisplayRect(layout, rect))).toEqual([
+      [20, 4, 30, 10], [30, 4, 69, 10], [69, 4, 80, 10],
+    ]);
+  });
+
+  it('retains the paragraph gutter once for two inserted continuations', () => {
+    const layout = createSplitLineLayout(100, 120, [
+      { rect: [0, 10, 100, 20], breaks: [30, 70] },
+      { rect: [0, 100, 100, 110], breaks: [30, 70] },
+    ], 3)!;
+    expect(layout.height).toBe(168);
+    const last_continuation = mapSplitSourcePoint(layout, [80, 15])!;
+    const next_paragraph = mapSplitSourcePoint(layout, [20, 105])!;
+    expect(next_paragraph[1] - last_continuation[1]).toBe(90);
+  });
+
+  it('requires two different interior word breaks without splitting short rows', () => {
+    expect(createSplitLineLayout(100, 40, [{ rect: [0, 2, 96, 12], breaks: [50, 50] }], 3)).toBeNull();
+    expect(createSplitLineLayout(100, 40, [{ rect: [0, 2, 96, 12], breaks: [0, 30, 96, NaN] }], 3)).toBeNull();
+    const layout = createSplitLineLayout(100, 40, [rows[0], { rect: [20, 26, 60, 36], breaks: [40] }], 3)!;
+    expect(layout.pieces.at(-1)?.source_rect).toEqual([0, 19, 60, 40]);
+    expect(layout.cuts).toHaveLength(2);
+  });
+});
+
 function rasterFixture(width: number, height: number) {
   const raster: SplitLineRaster = { width, height, data: new Uint8ClampedArray(width * height * 4).fill(255) };
   const pixel = (x: number, y: number, darkness = 0, alpha = 255) => {
@@ -276,5 +336,220 @@ describe('printed whitespace refinement at line cuts', () => {
     expect(refined.pieces[2].source_rect[2]).toBe(45);
     expect(refined.pieces[3]).toEqual(layout.pieces[3]);
     expect(refined.cuts).toEqual(layout.cuts);
+  });
+
+  it('composes both refinements to the shared middle strip and its one trailing gutter', () => {
+    const layout = createSplitLineLayout(100, 40, rows, 3)!;
+    const { raster, pixel } = rasterFixture(400, 160);
+    for (let y = 8; y < 48; y++) for (let x = 0; x < 384; x++) {
+      if (!(x >= 26 * 4 && x < 30 * 4) && !(x >= 70 * 4 && x < 74 * 4)) pixel(x, y);
+    }
+    const refined = refineSplitLineCuts(layout, raster, 4)!;
+    expect(refined.pieces[0].source_rect[2]).toBe(28);
+    expect(refined.pieces[1].source_rect).toEqual([28, 1, 72, 13]);
+    expect(refined.pieces[1].display_rect).toEqual([0, 13, 44, 25]);
+    expect(refined.pieces[2].source_rect[0]).toBe(72);
+    expect(refined.pieces[3].source_rect[2]).toBe(28);
+    expect(refined.pieces[4]).toEqual(layout.pieces[4]);
+    expect(refined.width).toBe(44);
+    expect(refineSplitLineCuts(refined, raster, 4)).toBe(refined);
+    expect(splitLineInkCovered(refined, raster, 4)).toBe(true);
+  });
+
+  it('rejects three lines if either boundary lacks a printed word gutter', () => {
+    const layout = createSplitLineLayout(100, 10, [{ rect: [0, 0, 100, 10], breaks: [30, 70] }], 3)!;
+    const { raster, pixel } = rasterFixture(400, 40);
+    for (let y = 8; y < 32; y++) for (let x = 0; x < 400; x++) {
+      if (x < 28 * 4 || x >= 32 * 4) pixel(x, y);
+    }
+    expect(refineSplitLineCuts(layout, raster, 4)).toBeNull();
+  });
+});
+
+describe('per-row adaptive split geometry', () => {
+  const mixed_rows: SplitLineRow[] = [
+    { rect: [0, 2, 100, 12], breaks: [30, 50, 70] },
+    { rect: [0, 22, 100, 32], breaks: [30, 50, 70] },
+    { rect: [0, 42, 100, 52], breaks: [30, 50, 70] },
+    { rect: [10, 62, 50, 72], breaks: [] },
+  ];
+
+  function mixedRaster() {
+    const { raster, pixel } = rasterFixture(400, 320);
+    for (let row = 0; row < 4; row++) {
+      for (let y = mixed_rows[row].rect[1] * 4; y < mixed_rows[row].rect[3] * 4; y++) {
+        for (let x = mixed_rows[row].rect[0] * 4; x < mixed_rows[row].rect[2] * 4; x++) {
+          if (row === 0 && x >= 48 * 4 && x < 52 * 4) continue;
+          if (row === 1 && ((x >= 28 * 4 && x < 32 * 4) || (x >= 68 * 4 && x < 72 * 4))) continue;
+          pixel(x, y);
+        }
+      }
+    }
+    return raster;
+  }
+
+  it('tries two, then three, then a smaller original line independently per row', () => {
+    const provisional = createAdaptiveSplitLineLayout(100, 80, mixed_rows)!;
+    expect(provisional.line_counts).toEqual([2, 2, 2, 1]);
+    const raster = mixedRaster();
+    const layout = createAdaptiveSplitLineLayout(100, 80, mixed_rows, raster, 4)!;
+    expect(layout.line_counts).toEqual([2, 3, 1, 1]);
+    expect(layout.fit_width).toBe(provisional.fit_width);
+    expect(layout.fit_width).toBe(50);
+    expect(layout.width).toBe(50);
+    expect(layout.height).toBe(106);
+    expect(splitLineInkCovered(layout, raster, 4)).toBe(true);
+    const retained = layout.pieces.find((piece) => piece.source_rect[1] === 37 && piece.source_rect[3] === 57)!;
+    expect(retained.source_rect).toEqual([0, 37, 100, 57]);
+    expect(retained.display_rect).toEqual([0, 73, 50, 83]);
+    const short = layout.pieces.at(-1)!;
+    expect(short.source_rect).toEqual([0, 57, 50, 80]);
+    expect(short.display_rect).toEqual([0, 83, 50, 106]);
+  });
+
+  it('keeps three-line and two-line glyphs at the same size while scaling only the fallback row', () => {
+    const layout = createAdaptiveSplitLineLayout(100, 80, mixed_rows, mixedRaster(), 4)!;
+    const point_scales = [[10, 8], [40, 28], [10, 48], [20, 68]] as const;
+    for (const [x, y] of point_scales) {
+      const start = mapSplitSourcePoint(layout, [x, y])!;
+      const end = mapSplitSourcePoint(layout, [x + 1, y + 1])!;
+      const expected = y === 48 ? 0.5 : 1;
+      expect(end[0] - start[0]).toBe(expected);
+      expect(end[1] - start[1]).toBe(expected);
+      expect(mapSplitDisplayPoint(layout, start)).toEqual([x, y]);
+    }
+    const source: SplitLineRect = [10, 44, 90, 50];
+    const displayed = mapSplitSourceRect(layout, source);
+    expect(displayed).toEqual([[5, 76.5, 45, 79.5]]);
+    expect(displayed.flatMap((rect) => mapSplitDisplayRect(layout, rect))).toEqual([source]);
+  });
+
+  it('retains an unbreakable long line at a smaller size without blocking another row', () => {
+    const layout = createAdaptiveSplitLineLayout(100, 40, [
+      rows[0], { rect: [0, 26, 96, 36], breaks: [] },
+    ])!;
+    expect(layout.line_counts).toEqual([2, 1]);
+    expect(layout.fit_width).toBe(50);
+    expect(layout.width).toBe(50);
+    expect(layout.pieces.at(-1)?.source_rect).toEqual([0, 19, 100, 40]);
+    expect(layout.pieces.at(-1)?.display_rect).toEqual([0, 31, 50, 41.5]);
+  });
+
+  it('does not shrink every row when a short indented row widens the fitting width', () => {
+    const layout = createAdaptiveSplitLineLayout(100, 40, [rows[0], { rect: [20, 26, 60, 36], breaks: [] }])!;
+    expect(layout.fit_width).toBe(60);
+    expect(layout.width).toBe(60);
+    expect(mapSplitSourcePoint(layout, [22, 30])).toEqual([22, 42]);
+  });
+
+  it('keeps every original line small when no row has a safe split', () => {
+    const layout = createAdaptiveSplitLineLayout(100, 20, [{ rect: [0, 5, 100, 15], breaks: [] }])!;
+    expect(layout.line_counts).toEqual([1]);
+    expect(layout.fit_width).toBe(50);
+    expect(layout.pieces).toEqual([{ source_rect: [0, 0, 100, 20], display_rect: [0, 0, 50, 10] }]);
+    expect(mapSplitDisplayPoint(layout, [25, 5])).toEqual([50, 10]);
+  });
+
+  it('rejects cuts that would overflow the common fitting width after refinement', () => {
+    const one_row: SplitLineRow[] = [{ rect: [0, 0, 100, 10], breaks: [50] }];
+    const { raster, pixel } = rasterFixture(400, 40);
+    for (let y = 8; y < 32; y++) for (let x = 0; x < 400; x++) {
+      if (x < 45 * 4 || x >= 49 * 4) pixel(x, y);
+    }
+    const layout = createAdaptiveSplitLineLayout(100, 10, one_row, raster, 4)!;
+    expect(layout.line_counts).toEqual([1]);
+    expect(layout.width).toBe(50);
+    expect(splitLineInkCovered(layout, raster, 4)).toBe(true);
+  });
+
+  it('retains prior safe raster cuts instead of returning to measured boundaries on every render', () => {
+    const one_row: SplitLineRow[] = [{ rect: [0, 0, 96, 10], breaks: [30, 50, 65] }];
+    const print = (gap_end: number) => {
+      const { raster, pixel } = rasterFixture(400, 40);
+      for (let y = 8; y < 32; y++) for (let x = 0; x < 384; x++) {
+        if (x < 45 * 4 || x >= gap_end * 4) pixel(x, y);
+      }
+      return raster;
+    };
+    const first = createAdaptiveSplitLineLayout(100, 10, one_row, print(49), 4)!;
+    expect(first.line_counts).toEqual([2]);
+    expect(first.pieces[0].source_rect[2]).toBe(47);
+    const next_raster = print(51);
+    const stable = createAdaptiveSplitLineLayout(100, 10, one_row, next_raster, 4, first)!;
+    expect(stable).toEqual(first);
+    const fresh = createAdaptiveSplitLineLayout(100, 10, one_row, next_raster, 4)!;
+    expect(fresh.pieces[0].source_rect[2]).toBe(50);
+  });
+
+  it('keeps prior small-row fallbacks stable and retries when a prior cut becomes unsafe', () => {
+    const raster = mixedRaster();
+    const first = createAdaptiveSplitLineLayout(100, 80, mixed_rows, raster, 4)!;
+    const stable = createAdaptiveSplitLineLayout(100, 80, mixed_rows, raster, 4, first)!;
+    expect(stable).toEqual(first);
+    for (let y = 8; y < 48; y++) for (let x = 0; x < 400; x++) {
+      raster.data.set([0, 0, 0, 255], (y * 400 + x) * 4);
+    }
+    const changed = createAdaptiveSplitLineLayout(100, 80, mixed_rows, raster, 4, first)!;
+    expect(changed.line_counts).toEqual([1, 3, 1, 1]);
+    expect(changed.fit_width).toBe(first.fit_width);
+    expect(changed.width).toBeLessThanOrEqual(changed.fit_width!);
+  });
+
+  it('retains unmodelled gutter ink without dropping it from a short row', () => {
+    const { raster, pixel } = rasterFixture(100, 40);
+    pixel(80, 30);
+    const layout = createAdaptiveSplitLineLayout(100, 40, rows, raster, 1)!;
+    expect(layout.line_counts).toEqual([2, 1]);
+    expect(layout.pieces.at(-1)?.source_rect).toEqual([0, 19, 100, 40]);
+    expect(splitLineInkCovered(layout, raster, 1)).toBe(true);
+  });
+
+  it('merges vertically overlapping glyph rows before moving or scaling their pixels', () => {
+    const close_rows = mixed_rows.slice(0, 3);
+    const { raster, pixel } = rasterFixture(400, 240);
+    for (const row of close_rows) {
+      for (let y = row.rect[1] * 4; y < row.rect[3] * 4; y++) for (let x = 0; x < 400; x++) {
+        if (x < 48 * 4 || x >= 52 * 4) pixel(x, y);
+      }
+    }
+    // Font metrics placed this printed mark between rows. Cutting at the
+    // measured midpoint would move two halves of the same glyph separately.
+    pixel(10, 67);
+    pixel(10, 68);
+    const layout = createAdaptiveSplitLineLayout(100, 60, close_rows, raster, 4)!;
+    expect(layout.line_counts).toEqual([1, 1, 2]);
+    expect(layout.pieces[0]).toEqual({ source_rect: [0, 0, 100, 37], display_rect: [0, 0, 50, 18.5] });
+    expect(layout.pieces[1].source_rect[1]).toBe(37);
+    expect(layout.height).toBe(53.5);
+    expect(splitLineInkCovered(layout, raster, 4)).toBe(true);
+    expect(mapSplitSourcePoint(layout, [10, 16.5])).toEqual([5, 8.25]);
+    expect(mapSplitSourcePoint(layout, [10, 17.5])).toEqual([5, 8.75]);
+    const across: SplitLineRect = [5, 16, 15, 18];
+    const display = mapSplitSourceRect(layout, across);
+    expect(display).toEqual([[2.5, 8, 7.5, 9]]);
+    expect(display.flatMap((rect) => mapSplitDisplayRect(layout, rect))).toEqual([across]);
+  });
+
+  it('merges connected unsafe row boundaries as one smaller band and retains it across rerenders', () => {
+    const close_rows = mixed_rows.slice(0, 3);
+    const { raster, pixel } = rasterFixture(400, 240);
+    pixel(10, 68);
+    pixel(20, 148);
+    const layout = createAdaptiveSplitLineLayout(100, 60, close_rows, raster, 4)!;
+    expect(layout.line_counts).toEqual([1, 1, 1]);
+    expect(layout.pieces).toEqual([{ source_rect: [0, 0, 100, 60], display_rect: [0, 0, 50, 30] }]);
+    const blank = rasterFixture(400, 240).raster;
+    expect(createAdaptiveSplitLineLayout(100, 60, close_rows, blank, 4, layout)).toEqual(layout);
+    // A fresh block with genuinely separate rows still uses two lines each.
+    expect(createAdaptiveSplitLineLayout(100, 60, close_rows, blank, 4)?.line_counts).toEqual([2, 2, 2]);
+  });
+
+  it('fails safely for invalid rows or raster inputs', () => {
+    expect(createAdaptiveSplitLineLayout(100, 40, [])).toBeNull();
+    expect(createAdaptiveSplitLineLayout(100, 40, [rows[0], { rect: [0, 11, 90, 20], breaks: [50] }])).toBeNull();
+    const { raster } = rasterFixture(100, 40);
+    expect(createAdaptiveSplitLineLayout(100, 40, rows, raster)).toBeNull();
+    expect(createAdaptiveSplitLineLayout(100, 40, rows, raster, 0)).toBeNull();
+    expect(createAdaptiveSplitLineLayout(100, 40, rows, { ...raster, data: new Uint8ClampedArray(4) }, 1)).toBeNull();
   });
 });

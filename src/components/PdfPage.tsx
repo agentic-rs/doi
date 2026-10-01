@@ -9,9 +9,9 @@ import type { SelectionPage } from '../lib/pdf-selection';
 import { pdfContentText } from '../lib/pdf-text';
 import { readPdfTextContent } from '../lib/pdf-compatibility';
 import { classifyPaperUrl } from '../lib/paper-links';
-import { createSplitTextLayer, prepareSplitPdfText } from '../lib/pdf-split-text';
+import { createSplitTextLayer, prepareSplitPdfText, refinePreparedSplitText } from '../lib/pdf-split-text';
 import type { PreparedSplitText } from '../lib/pdf-split-text';
-import { mapSplitDisplayPoint, mapSplitSourcePoint, mapSplitSourceRect, refineSplitLineCuts, splitLineInkCovered } from '../lib/pdf-line-layout';
+import { mapSplitDisplayPoint, mapSplitSourcePoint, mapSplitSourceRect } from '../lib/pdf-line-layout';
 import type { SplitLineRect } from '../lib/pdf-line-layout';
 
 export interface PdfLink {
@@ -60,11 +60,12 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const text_ref = useRef<HTMLDivElement>(null);
   const completed_page = useRef<SelectionPage | null>(null);
+  const completed_prepared = useRef<PreparedSplitText | null>(null);
   const was_split_rendered = useRef(false);
   const split_preparing_anchor = useRef(false);
-  const refined_preparations = useRef(new WeakSet<PreparedSplitText>());
   const [visible, setVisible] = useState(!source_rect && page.pageNumber <= 2);
   const [rendered_viewport, setRenderedViewport] = useState<PageViewport | null>(null);
+  const [rendered_prepared, setRenderedPrepared] = useState<PreparedSplitText | null>(null);
   const [links, setLinks] = useState<PdfLink[]>([]);
   const split_callbacks = useRef({ on_split_status, on_layout_change });
   split_callbacks.current = { on_split_status, on_layout_change };
@@ -75,7 +76,7 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
   const prepared = split_eligible ? current_result?.prepared ?? null : null;
   const split_pending = split_eligible && !current_result;
   const original_geometry = useMemo(() => regionGeometry(page, zoom, rotation, source_rect), [page, zoom, rotation, source_rect]);
-  const source_zoom = prepared ? original_geometry.width / prepared.layout.width : zoom;
+  const source_zoom = prepared ? original_geometry.width / (prepared.layout.fit_width ?? prepared.layout.width) : zoom;
   const has_prepared = !!prepared;
   const geometry = useMemo(() => has_prepared ? regionGeometry(page, source_zoom, rotation, source_rect) : original_geometry,
     [page, source_zoom, rotation, source_rect, original_geometry, has_prepared]);
@@ -151,13 +152,16 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
     }
     if (!visible || !canvas || !text_element || !page_element) {
       completed_page.current = null;
+      completed_prepared.current = null;
       setRenderedViewport(null);
+      setRenderedPrepared(null);
       return;
     }
     // A dismissed or unmoved pinch can reuse its already finished page.
-    if (completed_page.current?.viewport === render_viewport && text_element.contains(completed_page.current.text_layer)) {
+    if (completed_page.current?.viewport === render_viewport && completed_prepared.current === prepared
+      && text_element.contains(completed_page.current.text_layer)) {
       register_page(region_id, completed_page.current);
-      notifyLayoutReady();
+      if (prepared && block_id) split_callbacks.current.on_split_status?.(block_id, 'ready');
       return () => register_page(region_id, null);
     }
     setLinks([]);
@@ -190,18 +194,11 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
         const source_context = buffer.getContext('2d');
         if (source_context?.getImageData) {
           const raster = source_context.getImageData(0, 0, buffer.width, buffer.height);
-          const refined = refineSplitLineCuts(prepared.layout, raster, source_zoom * pixel_ratio);
-          if (!refined || (refined !== prepared.layout && refined_preparations.current.has(prepared))) {
-            throw new Error('A line break would cut through printed text. Its original lines are kept.');
-          }
-          if (!splitLineInkCovered(refined, raster, source_zoom * pixel_ratio)) {
-            throw new Error('The printed content could not be split without clipping. Its original lines are kept.');
-          }
-          final_prepared = refined === prepared.layout ? prepared : { ...prepared, layout: refined };
-          refined_preparations.current.add(final_prepared);
-          if (refined.width !== prepared.layout.width) {
-            // A corrected gutter can make one half slightly wider. Refine at
-            // most once, then render the crop at its final fitting scale.
+          final_prepared = refinePreparedSplitText(prepared, raster, source_zoom * pixel_ratio);
+          if (final_prepared.layout.width !== prepared.layout.width || final_prepared.layout.height !== prepared.layout.height
+            || final_prepared.layout.fit_width !== prepared.layout.fit_width) {
+            // Resolve line-by-line fallbacks before committing bitmap, text,
+            // and source mappings at the final block dimensions.
             split_callbacks.current.on_layout_change?.();
             setSplitResult({ page, source_key, prepared: final_prepared });
             return;
@@ -219,9 +216,9 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
         const raster_scale = source_zoom * pixel_ratio;
         for (const piece of final_prepared.layout.pieces) {
           const [left, top, right, bottom] = piece.source_rect;
-          const [display_left, display_top] = piece.display_rect;
+          const [display_left, display_top, display_right, display_bottom] = piece.display_rect;
           context.drawImage(buffer, left * raster_scale, top * raster_scale, (right - left) * raster_scale, (bottom - top) * raster_scale,
-            display_left * raster_scale, display_top * raster_scale, (right - left) * raster_scale, (bottom - top) * raster_scale);
+            display_left * raster_scale, display_top * raster_scale, (display_right - display_left) * raster_scale, (display_bottom - display_top) * raster_scale);
         }
       } else context.drawImage(buffer, 0, 0);
       let selection_element = text_element!;
@@ -258,6 +255,7 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
         } : {}),
       };
       completed_page.current = selection_page;
+      completed_prepared.current = final_prepared;
       register_page(region_id, selection_page);
       setLinks(embedded_annotations.filter((annotation) => annotation.subtype === 'Link' && Array.isArray(annotation.rect))
         .map((annotation) => ({
@@ -269,6 +267,7 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
         }))
         .filter((link) => link.url || link.destination || link.action));
       setRenderedViewport(render_viewport);
+      setRenderedPrepared(final_prepared);
       if (final_prepared !== prepared) setSplitResult({ page, source_key, prepared: final_prepared });
       notifyLayoutReady();
     }
@@ -318,7 +317,7 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
         className="pdf-page"
         data-page-number={page.pageNumber}
         data-block-id={block_id}
-        data-split-preparing={split_pending || (prepared && rendered_viewport !== render_viewport) ? 'true' : undefined}
+        data-split-preparing={split_pending || (prepared && (rendered_viewport !== render_viewport || rendered_prepared !== prepared)) ? 'true' : undefined}
         ref={page_ref}
         style={{ width, height, overflow: source_rect ? 'hidden' : undefined, '--total-scale-factor': viewport.scale * page.userUnit } as CSSProperties}
         aria-label={`Page ${page.pageNumber}`}
@@ -327,9 +326,9 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
           <canvas ref={canvas_ref} className="pdf-page-canvas" aria-hidden="true" />
           {source_rect && !prepared ? (
             <div style={{ position: 'absolute', left: -crop_left, top: -crop_top, width: viewport.width, height: viewport.height }}>
-              <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport} />
+              <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport || rendered_prepared !== prepared} />
             </div>
-          ) : <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport} />}
+          ) : <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport || rendered_prepared !== prepared} />}
           {page_annotations.length > 0 && <svg className="pdf-highlight-layer" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
             {page_annotations.flatMap(({ annotation, anchor, anchor_index }) => anchor.quad_points.flatMap((quad, index) => {
               const points = prepared ? displayRects([

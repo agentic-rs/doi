@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { createSplitTextLayer, prepareSplitPdfText } from './pdf-split-text';
+import { createSplitTextLayer, prepareSplitPdfText, refinePreparedSplitText } from './pdf-split-text';
 import type { PreparedSplitText } from './pdf-split-text';
 import { selectionContext } from './pdf-selection';
-import type { SplitLineRect } from './pdf-line-layout';
+import type { SplitLineRaster, SplitLineRect } from './pdf-line-layout';
 
 const text_fixture = vi.hoisted(() => ({ defer_next: false, completions: [] as Array<() => void> }));
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
@@ -121,11 +121,15 @@ describe('split-line source text anchors', () => {
   });
 });
 
-function measuredFixture() {
+function measuredFixture(options: { first_line?: string; extra_line?: string } = {}) {
   const item = (str: string, x: number, y: number, width = str.length * 4) => ({
     str, width, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true, transform: [10, 0, 0, 10, x, y],
   });
-  const content = { items: [item('alpha', 1, 40), item(' ', 21, 40, 0.5), item('beta gamma delta', 21.5, 40), item('short', 1, 29.1)], styles: {}, lang: null };
+  const content = { items: [
+    ...(options.first_line ? [item(options.first_line, 1, 40, 120)] : [item('alpha', 1, 40), item(' ', 21, 40, 0.5), item('beta gamma delta', 21.5, 40)]),
+    item('short', 1, 29.1),
+    ...(options.extra_line ? [item(options.extra_line, 1, 13, 120)] : []),
+  ], styles: {}, lang: null };
   const page = { rotate: 0, userUnit: 1, getViewport: ({ scale, offsetX = 0, offsetY = 0 }: { scale: number; offsetX?: number; offsetY?: number }) => ({
     scale, rotation: 0, width: 128 * scale, height: 50 * scale,
     convertToViewportPoint: (x: number, y: number) => [x * scale + offsetX, (50 - y) * scale + offsetY],
@@ -146,6 +150,20 @@ function measuredFixture() {
   });
   const host = document.createElement('div'); document.body.append(host);
   return { page, host };
+}
+
+function blankRaster(): SplitLineRaster {
+  const width = 128;
+  const height = 50;
+  const data = new Uint8ClampedArray(width * height * 4).fill(255);
+  return { width, height, data };
+}
+
+function blockColumns(raster: SplitLineRaster, left: number, right: number, top = 0, bottom = 10) {
+  for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+    const offset = (y * raster.width + x) * 4;
+    raster.data[offset] = raster.data[offset + 1] = raster.data[offset + 2] = 0;
+  }
 }
 
 describe('source line measurement', () => {
@@ -180,5 +198,137 @@ describe('source line measurement', () => {
     expect(second.layout.width).toBeLessThan(128);
     expect(await prepareSplitPdfText(page, [0, 0, 128, 50], second_host)).toBe(second);
     expect(document.querySelector('.pdf-line-probe')).toBeNull();
+  });
+
+  it('keeps an unbreakable long source line while splitting the other lines', async () => {
+    const { page, host } = measuredFixture({ extra_line: 'averylongunbreakablewordwithoutspaces' });
+    const prepared = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
+    expect(prepared.layout.line_counts).toEqual([2, 1, 1]);
+    const original = prepared.fragments.find(({ text }) => text === 'averylongunbreakablewordwithoutspaces')!;
+    expect(original).toBeDefined();
+    const piece = prepared.layout.pieces[original.piece_index];
+    const row_scale = (piece.display_rect[2] - piece.display_rect[0]) / (piece.source_rect[2] - piece.source_rect[0]);
+    expect(row_scale).toBeLessThan(1);
+    const { element, quads_for_range } = createSplitTextLayer(prepared, 2);
+    const span = [...element.querySelectorAll('span')].find((candidate) => candidate.textContent === original.text)!;
+    expect(Number(span.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(2 * row_scale);
+    expect(span.style.getPropertyValue('--text-scale-factor')).toContain('var(--total-scale-factor)');
+    const range = document.createRange(); range.setStart(span.firstChild!, 0); range.setEnd(span.firstChild!, 3);
+    const selected = original.character_rects.slice(0, 3).reduce((first, next) => [
+      Math.min(first[0], next[0]), Math.min(first[1], next[1]), Math.max(first[2], next[2]), Math.max(first[3], next[3]),
+    ] as SplitLineRect);
+    expect(quads_for_range(range)).toEqual([[selected[0], 50 - selected[1], selected[2], 50 - selected[1],
+      selected[2], 50 - selected[3], selected[0], 50 - selected[3]]]);
+    expect(element.textContent?.match(/averylongunbreakablewordwithoutspaces/g)).toHaveLength(1);
+  });
+
+  it('rebuilds three-line fragments from original characters without changing source quads or split font size', async () => {
+    const first_line = 'one two three four five six seven eight nine';
+    const { page, host } = measuredFixture({ first_line });
+    const initial = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
+    const boundary = initial.layout.cuts![0];
+    const cut = initial.layout.pieces[boundary.continuation_piece_index].source_rect[0];
+    const raster = blankRaster();
+    blockColumns(raster, Math.floor(cut - boundary.search_radius - 2), Math.ceil(cut + boundary.search_radius + 2));
+    const refined = refinePreparedSplitText(initial, raster, 1);
+    expect(refined.layout.line_counts).toEqual([3, 1]);
+    expect(refined.layout.fit_width).toBe(initial.layout.fit_width);
+    expect(refined.viewport).toBe(initial.viewport);
+    expect(refined.text).toBe(initial.text);
+    expect(refined.fragments.map(({ text }) => text).join('')).toBe(first_line + 'short');
+    const { element, quads_for_range } = createSplitTextLayer(refined, 2);
+    const spans = [...element.querySelectorAll('span')];
+    for (const span of spans) expect(Number(span.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(2);
+    const fragment = refined.fragments.find(({ text }) => text.includes('eight'))!;
+    const span = spans.find((candidate) => candidate.textContent === fragment.text)!;
+    const start = fragment.text.indexOf('eight');
+    const range = document.createRange(); range.setStart(span.firstChild!, start); range.setEnd(span.firstChild!, start + 5);
+    const chars = fragment.character_rects.slice(start, start + 5);
+    expect(quads_for_range(range)).toEqual([[chars[0][0], 50 - chars[0][1], chars[4][2], 50 - chars[0][1],
+      chars[4][2], 50 - chars[4][3], chars[0][0], 50 - chars[4][3]]]);
+    expect(initial.layout.line_counts).toEqual([2, 1]);
+    // Repeated safe bitmap checks retain the chosen layout, rather than moving
+    // the words back into two display lines during a zoom.
+    expect(refinePreparedSplitText(refined, blankRaster(), 1)).toBe(refined);
+    const obstructed = blankRaster(); blockColumns(obstructed, 0, 128);
+    const retained = refinePreparedSplitText(refined, obstructed, 1);
+    expect(retained.layout.line_counts).toEqual([1, 1]);
+    expect(retained.fragments[0].text).toBe(first_line);
+    expect(retained.fragments.map(({ text }) => text).join('')).toBe(first_line + 'short');
+  });
+
+  it('retains only the unsafe row when neither two-line nor three-line cuts are safe', async () => {
+    const { page, host } = measuredFixture({ first_line: 'one two three four five six seven eight nine', extra_line: 'alpha beta gamma delta' });
+    const initial = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
+    const raster = blankRaster(); blockColumns(raster, 0, 128);
+    const refined = refinePreparedSplitText(initial, raster, 1);
+    expect(refined.layout.line_counts).toEqual([1, 1, 2]);
+    expect(refined.fragments[0].text).toBe('one two three four five six seven eight nine');
+    expect(refined.fragments.map(({ text }) => text).join('')).toBe('one two three four five six seven eight nineshortalpha beta gamma delta');
+  });
+
+  it('keeps source reading order and line breaks when overlapping ink retains multiple rows in one band', async () => {
+    const { page, host } = measuredFixture();
+    const initial = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
+    const raster = blankRaster();
+    blockColumns(raster, 70, 72, 11, 14);
+    const retained = refinePreparedSplitText(initial, raster, 1);
+    expect(retained.layout.line_counts).toEqual([1, 1]);
+    expect(retained.layout.pieces).toHaveLength(1);
+    expect(retained.fragments.map(({ text }) => text)).toEqual(['alpha', ' ', 'beta gamma delta', 'short']);
+    expect(retained.fragments.map(({ row_index }) => row_index)).toEqual([0, 0, 0, 1]);
+    const { element, quads_for_range } = createSplitTextLayer(retained, 2);
+    expect([...element.children].map((child) => child.tagName === 'BR' ? '\n' : child.textContent)).toEqual([
+      'alpha', ' ', 'beta gamma delta', '\n', 'short',
+    ]);
+    const spans = element.querySelectorAll('span');
+    const fragment = retained.fragments[2];
+    const range = document.createRange(); range.setStart(spans[2].firstChild!, 0); range.setEnd(spans[2].firstChild!, 4);
+    const chars = fragment.character_rects.slice(0, 4);
+    expect(quads_for_range(range)).toEqual([[chars[0][0], 50 - chars[0][1], chars[3][2], 50 - chars[0][1],
+      chars[3][2], 50 - chars[3][3], chars[0][0], 50 - chars[3][3]]]);
+    expect(element.textContent).toBe('alpha beta gamma deltashort');
+    // The grouped raster remains one band on later checks, but text still
+    // exposes each original row once in its own reading order.
+    expect(refinePreparedSplitText(retained, blankRaster(), 1)).toBe(retained);
+  });
+
+  it('keeps fractional mixed layouts stable across repeated identical raster checks', async () => {
+    const { page, host } = measuredFixture({ first_line: 'one two three four five six seven eight nine',
+      extra_line: 'averylongunbreakablewordwithoutspaces' });
+    const initial = await prepareSplitPdfText(page, [0.17, 0.11, 127.63, 49.91], host);
+    const boundary = initial.layout.cuts![0];
+    const cut = initial.layout.pieces[boundary.continuation_piece_index].source_rect[0];
+    const raster = blankRaster();
+    blockColumns(raster, Math.floor(cut - boundary.search_radius - 2), Math.ceil(cut + boundary.search_radius + 2));
+    const refined = refinePreparedSplitText(initial, raster, 1);
+    expect(refined.layout.line_counts).toEqual([3, 1, 1]);
+    for (let iteration = 0; iteration < 20; iteration++) {
+      expect(refinePreparedSplitText(refined, raster, 1)).toBe(refined);
+    }
+  });
+
+  it('keeps mixed layouts stable at fractional crop offsets and raster scales', async () => {
+    for (let index = 1; index <= 40; index++) {
+      const { page, host } = measuredFixture({ first_line: 'one two three four five six seven eight nine',
+        extra_line: 'alpha beta gamma delta' });
+      const left = (index * 0.137) % 0.7;
+      const bottom = (index * 0.119) % 0.7;
+      const initial = await prepareSplitPdfText(page, [left, bottom, 127.9 - bottom, 49.9 - left], host);
+      const scale = 0.81 + index * 0.0397;
+      const raster: SplitLineRaster = { width: Math.ceil(128 * scale), height: Math.ceil(50 * scale),
+        data: new Uint8ClampedArray(Math.ceil(128 * scale) * Math.ceil(50 * scale) * 4).fill(255) };
+      const boundary = initial.layout.cuts![0];
+      const cut = initial.layout.pieces[boundary.continuation_piece_index].source_rect[0];
+      blockColumns(raster, Math.floor((cut - boundary.search_radius - 2) * scale),
+        Math.ceil((cut + boundary.search_radius + 2) * scale), 0, Math.floor(9 * scale));
+      let refined = refinePreparedSplitText(initial, raster, scale);
+      expect(refined.layout.line_counts).toEqual([3, 1, 2]);
+      for (let iteration = 0; iteration < 20; iteration++) {
+        const next = refinePreparedSplitText(refined, raster, scale);
+        expect(next === refined, `Case ${index}, iteration ${iteration}`).toBe(true);
+        refined = next;
+      }
+    }
   });
 });

@@ -163,6 +163,7 @@ export function PdfReader(props: PdfReaderProps) {
     [layout, displayed_notes.annotations, displayed_notes.enabled, paper.paper_id, paper.pdf_hash]);
   const selection_pages = useRef(new Map<string, SelectionPage>());
   const pending_location = useRef<ReadingLocation | null>(null);
+  const pending_layout_location = useRef<ReadingLocation | null>(null);
   const pending_anchor = useRef<PageAnchor | null>(null);
   const pending_view_point = useRef<[number, number] | null>(null);
   const zoom_anchor = useRef<{ page_number: number; page_position: [number, number]; reading_block_id?: string | null } | null>(null);
@@ -204,12 +205,12 @@ export function PdfReader(props: PdfReaderProps) {
   const split_layout_callback = useRef(() => {});
   split_layout_callback.current = () => {
     if (!reading || zoom_preview.current) return;
-    if (!pending_location.current) pending_location.current = readLocation();
+    preserveLayoutLocation();
     setViewRevision((value) => value + 1);
   };
   const split_status_callback = useRef((_block_id: string, _state: string, _message?: string) => {});
   split_status_callback.current = (block_id, state, message) => {
-    if (state === 'preparing' && !pending_location.current) pending_location.current = readLocation();
+    if (state === 'preparing') preserveLayoutLocation();
     setSplitStatus((previous) => {
       const current = previous.get(block_id);
       if (current?.state === state && current.message === message) return previous;
@@ -222,8 +223,15 @@ export function PdfReader(props: PdfReaderProps) {
     split_status_callback.current(block_id, state, message), []);
   const preserve_reference_location = useRef(() => {});
   preserve_reference_location.current = () => {
-    if (reading && !pending_location.current) pending_location.current = readLocation();
+    if (reading) preserveLayoutLocation();
   };
+
+  function preserveLayoutLocation() {
+    if (pending_location.current) return;
+    const source = readLocation();
+    pending_location.current = source;
+    pending_layout_location.current = source;
+  }
 
   function captureNoteLayout() {
     if (!reading || !scroll_root || zoom_preview.current || pending_location.current || note_layout_anchor.current) return;
@@ -313,6 +321,7 @@ export function PdfReader(props: PdfReaderProps) {
       zoom_mode: initial_mode,
     };
     pending_location.current = initial;
+    pending_layout_location.current = null;
     pending_anchor.current = callbacks.current.target_anchor ?? null;
     current_location.current = initial;
     zoom_mode.current = initial_mode;
@@ -411,6 +420,7 @@ export function PdfReader(props: PdfReaderProps) {
     zoom_mode.current = target.zoom_mode ?? 'custom';
     fit_pending.current = zoom_mode.current === 'fit_width';
     pending_location.current = { ...target, zoom_mode: zoom_mode.current };
+    pending_layout_location.current = null;
     pending_anchor.current = callbacks.current.target_anchor ?? null;
     pending_view_point.current = null;
     clearZoomPreview();
@@ -450,6 +460,9 @@ export function PdfReader(props: PdfReaderProps) {
     const page = [...scroll_root.querySelectorAll<HTMLElement>('[data-page-number]')].find((element) =>
       block ? element.dataset.blockId === block.block_id : Number(element.dataset.pageNumber) === page_number);
     if (page?.dataset.splitPreparing === 'true') {
+      // Layout preparation can finish while the user scrolls. It must not
+      // reveal an already visible crop as though this were a history jump.
+      if (pending_layout_location.current === pending_location.current) return;
       // An offscreen saved split has not prepared yet. Reveal its source crop
       // first, keeping the destination pending until the exact mapping is ready.
       const bounds = page.getBoundingClientRect();
@@ -479,6 +492,7 @@ export function PdfReader(props: PdfReaderProps) {
     current_location.current = readLocation() ?? { ...target, page_number, zoom, rotation };
     setActivePage(current_location.current.page_number);
     pending_location.current = null;
+    pending_layout_location.current = null;
     pending_anchor.current = null;
     pending_view_point.current = null;
     if (restoration_frame.current !== null) cancelAnimationFrame(restoration_frame.current);
@@ -509,6 +523,7 @@ export function PdfReader(props: PdfReaderProps) {
     const source = pending_location.current ?? current_location.current;
     const next_zoom = zoom_mode.current === 'fit_width' ? fittedWidth(source.page_number, source.rotation) ?? source.zoom : source.zoom;
     pending_location.current = { ...source, zoom: next_zoom };
+    pending_layout_location.current = null;
     setZoom(next_zoom);
     setViewRevision((value) => value + 1);
   };
@@ -626,6 +641,7 @@ export function PdfReader(props: PdfReaderProps) {
             reader_mode,
             rotation: rotation_ref.current,
           };
+          pending_layout_location.current = null;
           setZoom(preview.zoom);
           setViewRevision((value) => value + 1);
           setRenderPaused(false);
@@ -783,6 +799,13 @@ export function PdfReader(props: PdfReaderProps) {
     last_scroll_at.current = performance.now();
     cancelPendingTap();
     if (zoom_preview.current) return;
+    // A layout anchor preserves a passage only until the user moves. Keeping
+    // it during asynchronous split preparation would pull an upward scroll
+    // back to the position captured before the preparation started.
+    if (pending_layout_location.current && pending_layout_location.current === pending_location.current) {
+      pending_location.current = null;
+      pending_layout_location.current = null;
+    }
     if (scroll_frame.current !== null) cancelAnimationFrame(scroll_frame.current);
     scroll_frame.current = requestAnimationFrame(() => {
       scroll_frame.current = null;
@@ -810,6 +833,7 @@ export function PdfReader(props: PdfReaderProps) {
       page_position = [clamp(x / next_viewport.width, 0, 1), clamp(y / next_viewport.height, 0, 1)];
     }
     pending_location.current = { ...source, page_position, zoom: next_zoom, zoom_mode: next_mode, rotation: next_rotation };
+    pending_layout_location.current = null;
     pending_anchor.current = null;
     pending_view_point.current = null;
     zoom_anchor.current = null;
@@ -920,10 +944,16 @@ export function PdfReader(props: PdfReaderProps) {
     reportLocation();
     const owns_pending_location = !pending_location.current;
     const source = pending_location.current ?? readLocation();
-    if (source) pending_location.current = source;
+    if (source) {
+      pending_location.current = source;
+      if (owns_pending_location) pending_layout_location.current = source;
+    }
     window.getSelection()?.removeAllRanges();
     const success = await block_preferences.setSplit(block, !block_preferences.isSplit(block));
-    if (!success && owns_pending_location && pending_location.current === source) pending_location.current = null;
+    if (!success && owns_pending_location && pending_location.current === source) {
+      pending_location.current = null;
+      pending_layout_location.current = null;
+    }
   }
 
   function locationAtElement(element: HTMLElement, position: [number, number]) {

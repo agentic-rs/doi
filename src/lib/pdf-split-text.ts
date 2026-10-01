@@ -3,8 +3,8 @@ import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs
 import type { PdfSourceRect, QuadPoints } from './types';
 import { readPdfTextContent } from './pdf-compatibility';
 import { regionGeometry, regionTextContent } from './pdf-region';
-import { createSplitLineLayout } from './pdf-line-layout';
-import type { SplitLineLayout, SplitLineRect, SplitLineRow } from './pdf-line-layout';
+import { createAdaptiveSplitLineLayout } from './pdf-line-layout';
+import type { SplitLineLayout, SplitLineRaster, SplitLineRect, SplitLineRow } from './pdf-line-layout';
 
 interface SourceRun {
   text: string;
@@ -23,6 +23,7 @@ interface SplitTextFragment {
   left: number;
   top: number;
   piece_index: number;
+  row_index?: number;
   character_rects: SplitLineRect[];
 }
 
@@ -36,6 +37,13 @@ export interface PreparedSplitText {
 }
 
 const prepared_cache = new WeakMap<PDFPageProxy, Map<string, PreparedSplitText>>();
+interface SplitSourceMeasurements {
+  width: number;
+  height: number;
+  rows: SplitLineRow[];
+  runs: SourceRun[][];
+}
+const source_measurements = new WeakMap<PreparedSplitText, SplitSourceMeasurements>();
 
 function union(first: SplitLineRect, second: SplitLineRect): SplitLineRect {
   return [Math.min(first[0], second[0]), Math.min(first[1], second[1]), Math.max(first[2], second[2]), Math.max(first[3], second[3])];
@@ -45,10 +53,60 @@ function sourceRect(rect: DOMRect, bounds: DOMRect): SplitLineRect {
   return [rect.left - bounds.left, rect.top - bounds.top, rect.right - bounds.left, rect.bottom - bounds.top];
 }
 
-function pieceForCharacter(layout: SplitLineLayout, rect: SplitLineRect): number {
+function pieceForCharacter(layout: SplitLineLayout, rect: SplitLineRect, row_y: number): number {
   const x = (rect[0] + rect[2]) / 2;
-  const y = (rect[1] + rect[3]) / 2;
-  return layout.pieces.findIndex(({ source_rect: box }) => x >= box[0] && x < box[2] && y >= box[1] && y < box[3]);
+  // Browser em boxes can extend into a neighboring row. The measured printed
+  // row owns every character, including inline superscripts and subscripts.
+  return layout.pieces.findIndex(({ source_rect: box }) => x >= box[0] && x < box[2] && row_y >= box[1] && row_y < box[3]);
+}
+
+function splitFragments(layout: SplitLineLayout, measurements: SplitSourceMeasurements): SplitTextFragment[] {
+  const fragments: SplitTextFragment[] = [];
+  measurements.runs.forEach((runs, row_index) => {
+    const row = measurements.rows[row_index].rect;
+    const row_y = (row[1] + row[3]) / 2;
+    for (const run of runs) {
+      let start = 0;
+      while (start < run.text.length) {
+        const piece_index = pieceForCharacter(layout, run.character_rects[start], row_y);
+        let end = start + 1;
+        while (end < run.text.length && pieceForCharacter(layout, run.character_rects[end], row_y) === piece_index) end++;
+        if (piece_index < 0) {
+          if (run.text.slice(start, end).trim()) throw new Error('Some text could not be aligned with its source line.');
+          start = end;
+          continue;
+        }
+        const advance = run.character_rects[start][0] - run.character_rects[0][0];
+        fragments.push({ text: run.text.slice(start, end), style: run.style, left: run.left + advance, top: run.top,
+          piece_index, row_index, character_rects: run.character_rects.slice(start, end) });
+        start = end;
+      }
+    }
+  });
+  return fragments.sort((a, b) => a.piece_index - b.piece_index || (a.row_index ?? 0) - (b.row_index ?? 0) || a.left - b.left);
+}
+
+function sameLayout(first: SplitLineLayout, second: SplitLineLayout): boolean {
+  return first.width === second.width && first.height === second.height && first.fit_width === second.fit_width
+    && first.pieces.length === second.pieces.length && first.pieces.every((piece, index) => {
+      const next = second.pieces[index];
+      return piece.source_rect.every((value, edge) => value === next.source_rect[edge])
+        && piece.display_rect.every((value, edge) => value === next.display_rect[edge]);
+    });
+}
+
+/** Rebuild character ownership after each source row chooses a safe layout. */
+export function refinePreparedSplitText(prepared: PreparedSplitText, raster: SplitLineRaster, scale: number): PreparedSplitText {
+  const measurements = source_measurements.get(prepared);
+  if (!measurements) throw new Error('The source lines are unavailable. Its original lines are kept.');
+  const layout = createAdaptiveSplitLineLayout(measurements.width, measurements.height, measurements.rows, raster, scale, prepared.layout);
+  if (!layout) throw new Error('The printed lines could not be safely arranged. Its original lines are kept.');
+  if (sameLayout(prepared.layout, layout)) return prepared;
+  const refined = { ...prepared, layout, fragments: splitFragments(layout, measurements) };
+  // A later zoom must reconsider the original runs, never fragments already
+  // divided by an earlier two-line or three-line choice.
+  source_measurements.set(refined, measurements);
+  return refined;
 }
 
 /** Measure the real PDF.js text layer; character counts cannot locate a safe cut. */
@@ -159,35 +217,20 @@ async function measureSplitText(page: PDFPageProxy, source_rect: PdfSourceRect, 
         current[1] = boundary;
       }
     }
-    const layout = createSplitLineLayout(geometry.width, geometry.height, measured_rows);
-    if (!layout) throw new Error('This block has no safe two-line layout. Its original lines are kept.');
-    const fragments: SplitTextFragment[] = [];
-    for (const row of rows) for (const run of row.runs) {
-      let start = 0;
-      while (start < run.text.length) {
-        const piece_index = pieceForCharacter(layout, run.character_rects[start]);
-        let end = start + 1;
-        while (end < run.text.length && pieceForCharacter(layout, run.character_rects[end]) === piece_index) end++;
-        if (piece_index < 0) {
-          if (run.text.slice(start, end).trim()) throw new Error('Some text could not be aligned with its source line.');
-          start = end;
-          continue;
-        }
-        const advance = run.character_rects[start][0] - run.character_rects[0][0];
-        fragments.push({ text: run.text.slice(start, end), style: run.style, left: run.left + advance, top: run.top,
-          piece_index, character_rects: run.character_rects.slice(start, end) });
-        start = end;
-      }
-    }
-    fragments.sort((a, b) => a.piece_index - b.piece_index || a.left - b.left);
+    const layout = createAdaptiveSplitLineLayout(geometry.width, geometry.height, measured_rows);
+    if (!layout) throw new Error('This block has no safely aligned text lines. Its original lines are kept.');
+    const measurements = { width: geometry.width, height: geometry.height, rows: measured_rows, runs: rows.map((row) => row.runs) };
+    const fragments = splitFragments(layout, measurements);
     const source_text = rows.map((row) => row.runs.map((run, index) => {
       const previous = row.runs[index - 1];
       const gap = previous ? run.rect[0] - previous.rect[2] : 0;
       const space = previous && gap > (run.rect[3] - run.rect[1]) * 0.18 && !/\s$/.test(previous.text) && !/^\s/.test(run.text) ? ' ' : '';
       return space + run.text;
     }).join('')).join('\n');
-    return { layout, viewport: geometry.render_viewport, text: source_text, text_style: text.style.cssText,
+    const prepared = { layout, viewport: geometry.render_viewport, text: source_text, text_style: text.style.cssText,
       font_scale: page.userUnit, fragments };
+    source_measurements.set(prepared, measurements);
+    return prepared;
   } finally { layer.cancel(); probe.remove(); }
 }
 
@@ -218,14 +261,23 @@ export function createSplitTextLayer(prepared: PreparedSplitText, scale: number)
   let previous_piece = -1;
   let previous_fragment: SplitTextFragment | null = null;
   for (const fragment of prepared.fragments) {
-    if (previous_piece !== -1 && previous_piece !== fragment.piece_index) element.append(document.createElement('br'));
+    const same_row = previous_fragment?.row_index === fragment.row_index;
+    if (previous_piece !== -1 && (previous_piece !== fragment.piece_index || !same_row)) element.append(document.createElement('br'));
     const piece = prepared.layout.pieces[fragment.piece_index];
+    const source_width = piece.source_rect[2] - piece.source_rect[0];
+    const source_height = piece.source_rect[3] - piece.source_rect[1];
+    const piece_scale_x = (piece.display_rect[2] - piece.display_rect[0]) / source_width;
+    const piece_scale_y = (piece.display_rect[3] - piece.display_rect[1]) / source_height;
     const span = document.createElement('span');
     span.style.cssText = fragment.style;
-    span.style.left = `${(fragment.left + piece.display_rect[0] - piece.source_rect[0]) * scale}px`;
-    span.style.top = `${(fragment.top + piece.display_rect[1] - piece.source_rect[1]) * scale}px`;
+    span.style.left = `${(piece.display_rect[0] + (fragment.left - piece.source_rect[0]) * piece_scale_x) * scale}px`;
+    span.style.top = `${(piece.display_rect[1] + (fragment.top - piece.source_rect[1]) * piece_scale_y) * scale}px`;
+    span.style.setProperty('--total-scale-factor', String(scale * piece_scale_y * prepared.font_scale));
+    // Custom-property values are resolved where declared. Redefine this on
+    // the span so a smaller retained row updates PDF.js's actual font size.
+    span.style.setProperty('--text-scale-factor', 'calc(var(--total-scale-factor) * var(--min-font-size))');
     span.textContent = fragment.text;
-    if (previous_fragment && previous_piece === fragment.piece_index && !/\s$/.test(previous_fragment.text) && !/^\s/.test(fragment.text)) {
+    if (previous_fragment && same_row && previous_piece === fragment.piece_index && !/\s$/.test(previous_fragment.text) && !/^\s/.test(fragment.text)) {
       const last = previous_fragment.character_rects.at(-1)!;
       const first = fragment.character_rects[0];
       if (first[0] - last[2] > (first[3] - first[1]) * 0.18) {
