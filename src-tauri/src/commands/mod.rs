@@ -87,6 +87,41 @@ pub async fn save_reading_layout(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn list_reading_block_preferences(
+  state: State<'_, AppState>,
+  paper_id: String,
+) -> Result<Vec<ReadingBlockPreference>> {
+  state
+    .database
+    .list_reading_block_preferences(paper_id)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn save_reading_block_preference(
+  state: State<'_, AppState>,
+  paper_id: String,
+  preference: ReadingBlockPreference,
+) -> Result<()> {
+  state
+    .database
+    .save_reading_block_preference(paper_id, preference)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn reset_reading_block_preference(
+  state: State<'_, AppState>,
+  paper_id: String,
+  preference: ReadingBlockPreference,
+) -> Result<()> {
+  state
+    .database
+    .reset_reading_block_preference(paper_id, preference)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn list_annotations(
   state: State<'_, AppState>,
   paper_id: String,

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent } from 'react';
-import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan, Expand, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan, Expand, FileText, WrapText } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import worker_url from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
@@ -22,6 +22,7 @@ import { PdfPage } from './PdfPage';
 import type { PdfLink } from './PdfPage';
 import { regionGeometry } from '../lib/pdf-region';
 import { useReadingLayout } from '../lib/use-reading-layout';
+import { useReadingBlockPreferences } from '../lib/use-reading-block-preferences';
 import { findReadingBlock, locationInRegion, positionInRegion } from '../lib/reading-navigation';
 import { mapReadingNotes } from '../lib/reading-notes';
 import { FigureDialog } from './FigureDialog';
@@ -121,6 +122,8 @@ export function PdfReader(props: PdfReaderProps) {
   const [enlarged_figure, setEnlargedFigure] = useState<ReadingBlock | null>(null);
   const reading = reader_mode === 'reading';
   const { layout, progress: layout_progress, error: layout_error, retry: retryLayout } = useReadingLayout(loaded?.pages ?? null, paper.pdf_hash, paper.paper_id, reading);
+  const block_preferences = useReadingBlockPreferences(paper.paper_id, paper.pdf_hash, reading);
+  const [split_status, setSplitStatus] = useState<Map<string, { state: string; message?: string }>>(new Map());
   const [outline, setOutline] = useState<OutlineEntry[]>([]);
   const [references, setReferences] = useState<ReferenceItem[]>([]);
   const [citation_links, setCitationLinks] = useState<CitationLink[]>([]);
@@ -198,6 +201,25 @@ export function PdfReader(props: PdfReaderProps) {
     else selection_pages.current.delete(region_id);
   }, []);
   const report_error = useMemo(() => (message: string) => callbacks.current.on_error(message), []);
+  const split_layout_callback = useRef(() => {});
+  split_layout_callback.current = () => {
+    if (!reading || zoom_preview.current) return;
+    if (!pending_location.current) pending_location.current = readLocation();
+    setViewRevision((value) => value + 1);
+  };
+  const split_status_callback = useRef((_block_id: string, _state: string, _message?: string) => {});
+  split_status_callback.current = (block_id, state, message) => {
+    if (state === 'preparing' && !pending_location.current) pending_location.current = readLocation();
+    setSplitStatus((previous) => {
+      const current = previous.get(block_id);
+      if (current?.state === state && current.message === message) return previous;
+      return new Map(previous).set(block_id, { state, message });
+    });
+    if (state !== 'preparing') setViewRevision((value) => value + 1);
+  };
+  const on_split_layout_change = useMemo(() => () => split_layout_callback.current(), []);
+  const on_split_status = useMemo(() => (block_id: string, state: 'preparing' | 'ready' | 'unavailable', message?: string) =>
+    split_status_callback.current(block_id, state, message), []);
   const preserve_reference_location = useRef(() => {});
   preserve_reference_location.current = () => {
     if (reading && !pending_location.current) pending_location.current = readLocation();
@@ -274,6 +296,7 @@ export function PdfReader(props: PdfReaderProps) {
     setReferences([]);
     setCitationLinks([]);
     setParsedReferences(null);
+    setSplitStatus(new Map());
     setEnlargedFigure(null);
     selection_pages.current.clear();
     cancelPendingTap();
@@ -426,7 +449,20 @@ export function PdfReader(props: PdfReaderProps) {
     const block = reading && layout ? findReadingBlock(layout, { ...target, reading_block_id: anchor ? null : target.reading_block_id }, loaded.pages) : null;
     const page = [...scroll_root.querySelectorAll<HTMLElement>('[data-page-number]')].find((element) =>
       block ? element.dataset.blockId === block.block_id : Number(element.dataset.pageNumber) === page_number);
-    const position = block
+    if (page?.dataset.splitPreparing === 'true') {
+      // An offscreen saved split has not prepared yet. Reveal its source crop
+      // first, keeping the destination pending until the exact mapping is ready.
+      const bounds = page.getBoundingClientRect();
+      const root_bounds = scroll_root.getBoundingClientRect();
+      scroll_root.scrollTo({ top: scroll_root.scrollTop + bounds.top - root_bounds.top - 20,
+        left: Math.max(0, scroll_root.scrollLeft + bounds.left - root_bounds.left - 20), behavior: 'instant' });
+      return;
+    }
+    const mapped_page = block ? selection_pages.current.get(block.block_id) : null;
+    const source_viewport = loaded.pages[page_number - 1].getViewport({ scale: 1, rotation: (loaded.pages[page_number - 1].rotate + rotation) % 360 });
+    const source_point = source_viewport.convertToPdfPoint(target.page_position[0] * source_viewport.width, target.page_position[1] * source_viewport.height);
+    const position = mapped_page?.position_for_source_point
+      ? mapped_page.position_for_source_point(source_point as [number, number]) : block
       ? positionInRegion(target, regionGeometry(loaded.pages[page_number - 1], blockZoom(block), rotation, block.source_rect))
       : target.page_position;
     if (!page) return;
@@ -880,10 +916,27 @@ export function PdfReader(props: PdfReaderProps) {
     return zoom * Math.min(760, Math.max(40, available_width - padding - 4)) / region.width;
   }
 
+  async function toggleSplitLines(block: ReadingBlock) {
+    reportLocation();
+    const owns_pending_location = !pending_location.current;
+    const source = pending_location.current ?? readLocation();
+    if (source) pending_location.current = source;
+    window.getSelection()?.removeAllRanges();
+    const success = await block_preferences.setSplit(block, !block_preferences.isSplit(block));
+    if (!success && owns_pending_location && pending_location.current === source) pending_location.current = null;
+  }
+
   function locationAtElement(element: HTMLElement, position: [number, number]) {
     const page_number = Number(element.dataset.pageNumber);
     const block = reading ? layout?.blocks.find((item) => item.block_id === element.dataset.blockId) : null;
     const page = loaded?.pages[page_number - 1];
+    const mapping = block ? selection_pages.current.get(block.block_id) : null;
+    if (block && page && mapping?.source_point_for_position) {
+      const source_point = mapping.source_point_for_position(position);
+      const viewport = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
+      const [x, y] = viewport.convertToViewportPoint(...source_point);
+      return { page_number, page_position: [clamp(x / viewport.width, 0, 1), clamp(y / viewport.height, 0, 1)] as [number, number], reading_block_id: block.block_id };
+    }
     return block && page
       ? { page_number, page_position: locationInRegion(position, regionGeometry(page, blockZoom(block), rotation, block.source_rect)), reading_block_id: block.block_id }
       : { page_number, page_position: position };
@@ -1009,18 +1062,33 @@ export function PdfReader(props: PdfReaderProps) {
             : <><LoaderCircle className="pdf-spinner" size={24} /><p>Preparing Reading view… {layout_progress.completed} / {layout_progress.total || loaded.pages.length} pages</p><p>Finding margins, columns, and figures on this device.</p></>}
           <button type="button" onClick={() => viewOriginal()}>Return to original PDF</button>
         </div>}
+        {reading && block_preferences.error && <div className="reading-preference-error" role="status">
+          <span>{block_preferences.error}</span>{block_preferences.load_failed && <button type="button" onClick={block_preferences.retry}>Retry</button>}
+        </div>}
         {loaded && (!reading || layout) && <div className={`pdf-pages ${reading ? `reading-pages ${controls_visible ? 'reading-pages-controls' : ''}` : ''}`}
           style={reading ? { '--reading-zoom': zoom } as CSSProperties : undefined}>
           {reading && layout ? layout.blocks.map((block) => <article className={`reading-block reading-block-${block.kind}`} key={`${paper.paper_id}-${block.block_id}`} data-figure-id={block.kind === 'figure' ? block.block_id : undefined}>
             <div className="reading-block-type" aria-label={`Block type: ${block_type_labels[block.block_type]}`}>{block_type_labels[block.block_type]}</div>
             <PdfPage page={loaded.pages[block.page_number - 1]} zoom={blockZoom(block)} rotation={rotation}
               source_rect={block.source_rect} block_id={block.block_id} render_paused={render_paused} scroll_root={scroll_root}
+              split_lines={block.block_type === 'content' && block_preferences.isSplit(block)}
+              on_split_status={on_split_status} on_layout_change={on_split_layout_change}
               annotations={matching_annotations} register_page={register_page} on_link={(link, page_number) => void followLink(link, page_number)} on_error={report_error} />
             <div className="reading-block-actions">
               <span>{(block.figure_label ? `Figure ${block.figure_label}` : null) ?? (block.kind === 'original' ? 'Original layout' : 'Source')} · p. {block.page_number}</span>
               {block.kind === 'figure' && <button type="button" aria-label={`Enlarge ${block.figure_label ? `Figure ${block.figure_label}` : 'figure'}`} onClick={() => { reportLocation(); setEnlargedFigure(block); }}><Expand size={15} /> Enlarge</button>}
+              {block.block_type === 'content' && <button type="button" className="reading-source-button"
+                title={block_preferences.isSplit(block) ? 'Restore original lines' : 'Split lines'}
+                aria-label={`${block_preferences.isSplit(block) ? 'Restore original lines' : 'Split lines'} in block on page ${block.page_number}`}
+                aria-pressed={block_preferences.isSplit(block)}
+                disabled={block_preferences.loading || block_preferences.load_failed || Boolean(block_preferences.busy) || render_paused || !reading_active || split_status.get(block.block_id)?.state === 'preparing'}
+                onClick={() => { void toggleSplitLines(block); }}>
+                {block_preferences.busy === block.block_id || split_status.get(block.block_id)?.state === 'preparing'
+                  ? <LoaderCircle size={16} className="pdf-spinner" aria-hidden="true" /> : <WrapText size={16} aria-hidden="true" />}
+              </button>}
               <button type="button" className="reading-source-button" title="View in PDF" onClick={() => viewOriginal(block)} aria-label={`View ${block.figure_label ?? 'block'} in PDF on page ${block.page_number}`}><FileText size={16} aria-hidden="true" /></button>
             </div>
+            {block_preferences.isSplit(block) && split_status.get(block.block_id)?.state === 'unavailable' && <p className="reading-split-status" role="status">{split_status.get(block.block_id)?.message}</p>}
             <ReferenceStrip references={block_references.get(block.block_id) ?? []} on_select={(reference) => {
               reportLocation();
               navigate({ kind: 'reference', reference });

@@ -22,6 +22,13 @@ export interface ReadingLayout {
   blocks: ReadingBlock[];
 }
 
+export interface ReadingBlockPreference {
+  pdf_hash: string;
+  page_number: number;
+  source_rect: PdfSourceRect;
+  split_lines: boolean;
+}
+
 export interface ReadingLocation {
   paper_id: string;
   page_number: number;

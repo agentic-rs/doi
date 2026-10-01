@@ -3,7 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import type { Annotation, PdfReaderProps, ReadingLayout, ReadingLocation } from '../lib/types';
+import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import type { Annotation, PdfReaderProps, PdfSourceRect, ReadingBlock, ReadingLayout, ReadingLocation } from '../lib/types';
+import type { PreparedSplitText } from '../lib/pdf-split-text';
+import type { SplitLineRect } from '../lib/pdf-line-layout';
+import { regionGeometry } from '../lib/pdf-region';
 import { PdfReader } from './PdfReader';
 
 interface MockRenderRequest {
@@ -40,6 +44,38 @@ const pdf_fixture = vi.hoisted(() => ({
 }));
 
 const reading_fixture = vi.hoisted(() => ({ layout: null as ReadingLayout | null }));
+const split_fixture = vi.hoisted(() => ({
+  initial_ids: new Set<string>(), loading: false, load_failed: false, error: null as string | null,
+  change: vi.fn(), retry: vi.fn(), prepare: vi.fn(),
+}));
+
+vi.mock('../lib/use-reading-block-preferences', () => ({
+  useReadingBlockPreferences: () => {
+    const [split_ids, setSplitIds] = useState(() => new Set(split_fixture.initial_ids));
+    const [busy, setBusy] = useState<string | null>(null);
+    return {
+      isSplit: (block: ReadingBlock) => split_ids.has(block.block_id),
+      loading: split_fixture.loading, load_failed: split_fixture.load_failed, busy, error: split_fixture.error, retry: split_fixture.retry,
+      setSplit: async (block: ReadingBlock, split: boolean) => {
+        setBusy(block.block_id);
+        const accepted = await split_fixture.change(block, split);
+        if (accepted) setSplitIds((current) => {
+          const next = new Set(current);
+          if (split) next.add(block.block_id);
+          else next.delete(block.block_id);
+          return next;
+        });
+        setBusy(null);
+        return accepted;
+      },
+    };
+  },
+}));
+
+vi.mock('../lib/pdf-split-text', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../lib/pdf-split-text')>(),
+  prepareSplitPdfText: split_fixture.prepare,
+}));
 
 vi.mock('../lib/use-reading-layout', () => ({
   useReadingLayout: (pages: unknown, _hash: string, _paper_id: string, enabled: boolean) => ({
@@ -224,9 +260,16 @@ beforeEach(() => {
   pdf_fixture.canvas_copies = [];
   pdf_fixture.text_content.clear();
   reading_fixture.layout = null;
+  split_fixture.initial_ids.clear();
+  split_fixture.loading = false;
+  split_fixture.load_failed = false;
+  split_fixture.error = null;
+  split_fixture.change.mockReset().mockResolvedValue(true);
+  split_fixture.retry.mockReset();
+  split_fixture.prepare.mockReset().mockImplementation((page: PDFPageProxy, source_rect: PdfSourceRect) => Promise.resolve(preparedSplit(page, source_rect)));
   vi.stubGlobal('devicePixelRatio', 1);
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
-    return { drawImage: (source: HTMLCanvasElement) => {
+    return { fillRect: vi.fn(), drawImage: (source: HTMLCanvasElement) => {
       pdf_fixture.canvas_copies.push({ canvas: this, source, width: source.width, height: source.height });
     } } as unknown as CanvasRenderingContext2D;
   });
@@ -414,6 +457,223 @@ function readingProps(block_id = 'p1-body'): PdfReaderProps {
 function readingBlock(block_id: string): HTMLElement {
   return document.querySelector<HTMLElement>(`[data-block-id="${block_id}"]`)!;
 }
+
+function preparedSplit(page: PDFPageProxy, source_rect: PdfSourceRect): PreparedSplitText {
+  const geometry = regionGeometry(page, 1, 0, source_rect);
+  const half_width = geometry.width / 2;
+  const row_height = geometry.height / 6;
+  const pieces = Array.from({ length: 6 }, (_, row) => [0, 1].map((half) => ({
+    source_rect: [half * half_width, row * row_height, (half + 1) * half_width, (row + 1) * row_height] as SplitLineRect,
+    display_rect: [0, (row * 2 + half) * row_height, half_width, (row * 2 + half + 1) * row_height] as SplitLineRect,
+  }))).flat();
+  return {
+    layout: { width: half_width, height: geometry.height * 2, pieces },
+    viewport: geometry.render_viewport, text: 'First half second half', text_style: '', font_scale: 1,
+    fragments: pieces.map((piece, piece_index) => ({
+      text: 'Text', style: '', piece_index, left: piece.source_rect[0], top: piece.source_rect[1],
+      character_rects: Array.from({ length: 4 }, (_, index) => [
+        piece.source_rect[0] + index * 5, piece.source_rect[1], piece.source_rect[0] + (index + 1) * 5, piece.source_rect[1] + 10,
+      ] as SplitLineRect),
+    })),
+  };
+}
+
+function splitReadingProps(): PdfReaderProps {
+  const props = readingProps();
+  reading_fixture.layout!.blocks[2].source_rect = [320, 500, 560, 620];
+  props.target_location = {
+    ...props.target_location!, page_position: [460 / 600, 230 / 800], zoom: 3, zoom_mode: 'custom',
+  };
+  return props;
+}
+
+function expectSplitSource(location: ReadingLocation) {
+  expect(location).toMatchObject({ reader_mode: 'reading', reading_block_id: 'p1-body', page_number: 1 });
+  expect(location.page_position[0]).toBeCloseTo(460 / 600);
+  expect(location.page_position[1]).toBeCloseTo(230 / 800);
+}
+
+async function expectSplitReady() {
+  await waitFor(() => {
+    expect(readingBlock('p1-body').querySelector('.textLayer > .textLayer')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Restore original lines in block on page 1' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+}
+
+describe('split lines in Reading view', () => {
+  it('offers an icon only for Content blocks and waits for preferences to load', async () => {
+    const props = readingProps('p1-intro');
+    const types = ['content', 'equation', 'graph', 'table', 'reference', 'title', 'others'] as const;
+    reading_fixture.layout!.blocks = types.map((block_type, index) => ({
+      ...reading_fixture.layout!.blocks[0], block_id: index ? `p1-${block_type}` : 'p1-intro', block_type,
+    }));
+    split_fixture.loading = true;
+    const view = render(<PdfReader {...props} />);
+    await waitFor(() => expect(readingBlock('p1-intro')).toBeTruthy());
+    const buttons = screen.getAllByRole('button', { name: 'Split lines in block on page 1' });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toBe('');
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+    expect(buttons[0].closest('article')?.querySelector('.reading-block-type')?.textContent).toBe('Content');
+    split_fixture.loading = false;
+    split_fixture.load_failed = true;
+    split_fixture.error = 'Preferences could not be loaded';
+    view.rerender(<PdfReader {...props} />);
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(split_fixture.retry).toHaveBeenCalledOnce();
+    split_fixture.load_failed = false;
+    split_fixture.error = null;
+    view.rerender(<PdfReader {...props} />);
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(false);
+    expect(split_fixture.prepare).not.toHaveBeenCalled();
+  });
+
+  it('changes the icon and rendered layout only after the preference save/reset succeeds', async () => {
+    const props = readingProps();
+    let finish_save!: (accepted: boolean) => void;
+    split_fixture.change.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finish_save = resolve; }));
+    render(<PdfReader {...props} />);
+    const button = await screen.findByRole('button', { name: 'Split lines in block on page 1' });
+    await waitFor(() => expect(latestLocation(props).reading_block_id).toBe('p1-body'));
+    const original_height = readingBlock('p1-body').style.height;
+    fireEvent.click(button);
+    expect(split_fixture.change).toHaveBeenCalledWith(reading_fixture.layout!.blocks[2], true);
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    expect(split_fixture.prepare).not.toHaveBeenCalled();
+    expect(readingBlock('p1-body').style.height).toBe(original_height);
+    await act(async () => finish_save(false));
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button);
+    await expectSplitReady();
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(parseFloat(readingBlock('p1-body').style.height)).toBeGreaterThan(parseFloat(original_height));
+    split_fixture.change.mockResolvedValueOnce(false);
+    fireEvent.click(button);
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(button);
+    await waitFor(() => expect(button.getAttribute('aria-pressed')).toBe('false'));
+    expect(split_fixture.change).toHaveBeenLastCalledWith(reading_fixture.layout!.blocks[2], false);
+    expect(readingBlock('p1-body').style.height).toBe(original_height);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('preserves the visible source passage while preparing, splitting, and restoring original lines', async () => {
+    const props = splitReadingProps();
+    let finish_prepare!: () => void;
+    split_fixture.prepare.mockImplementationOnce((page: PDFPageProxy, rect: PdfSourceRect) => new Promise<PreparedSplitText>((resolve) => {
+      finish_prepare = () => resolve(preparedSplit(page, rect));
+    }));
+    render(<PdfReader {...props} />);
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    const button = screen.getByRole('button', { name: 'Split lines in block on page 1' });
+    const original_height = readingBlock('p1-body').style.height;
+    fireEvent.click(button);
+    await waitFor(() => expect(split_fixture.prepare).toHaveBeenCalledOnce());
+    expect(readingBlock('p1-body').style.height).toBe(original_height);
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish_prepare());
+    await expectSplitReady();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    // The source point (460, 570) is in the second half of the third source
+    // line. Its split display point is (20, 110), not a linear crop fraction.
+    const split_bounds = readingBlock('p1-body').getBoundingClientRect();
+    expect(split_bounds.left + 20 * 8.4).toBeCloseTo(20);
+    expect(split_bounds.top + 110 * 8.4).toBeCloseTo(20);
+    fireEvent.click(button);
+    await waitFor(() => expect(readingBlock('p1-body').style.height).toBe(original_height));
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    const original_bounds = readingBlock('p1-body').getBoundingClientRect();
+    expect(original_bounds.left + 140 * 4.2).toBeCloseTo(20);
+    expect(original_bounds.top + 50 * 4.2).toBeCloseTo(20);
+  });
+
+  it('retains a pending saved destination when another block split preference fails', async () => {
+    const props = splitReadingProps();
+    split_fixture.initial_ids.add('p1-body');
+    let finish_prepare!: () => void;
+    split_fixture.prepare.mockImplementationOnce((page: PDFPageProxy, rect: PdfSourceRect) => new Promise<PreparedSplitText>((resolve) => {
+      finish_prepare = () => resolve(preparedSplit(page, rect));
+    }));
+    split_fixture.change.mockResolvedValueOnce(false);
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(split_fixture.prepare).toHaveBeenCalledOnce());
+    expect(readingBlock('p1-body').dataset.splitPreparing).toBe('true');
+    expect(props.on_location_change).not.toHaveBeenCalled();
+
+    // The saved second-half source point is still waiting for its mapping.
+    // A failed operation on another block must not discard that destination.
+    const other_block_button = screen.getByRole('button', { name: 'Split lines in block on page 2' });
+    fireEvent.click(other_block_button);
+    await waitFor(() => expect(split_fixture.change).toHaveBeenCalledWith(reading_fixture.layout!.blocks[3], true));
+    await waitFor(() => expect((other_block_button as HTMLButtonElement).disabled).toBe(false));
+    expect(other_block_button.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => finish_prepare());
+    await expectSplitReady();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    const bounds = readingBlock('p1-body').getBoundingClientRect();
+    expect(bounds.left + 20 * 8.4).toBeCloseTo(20);
+    expect(bounds.top + 110 * 8.4).toBeCloseTo(20);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('restores the same split source passage after opening its PDF source and going Back (initially offscreen: %s)', async (initially_offscreen) => {
+    const props = splitReadingProps();
+    split_fixture.initial_ids.add('p1-body');
+    const observers = new Map<HTMLElement, () => void>();
+    if (initially_offscreen) vi.stubGlobal('IntersectionObserver', class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: HTMLElement) {
+        const notify = (isIntersecting: boolean) => {
+          const bounds = target.getBoundingClientRect();
+          this.callback([{
+            target, isIntersecting, intersectionRatio: isIntersecting ? 1 : 0,
+            boundingClientRect: bounds, intersectionRect: bounds, rootBounds: null, time: 0,
+          }], this as unknown as IntersectionObserver);
+        };
+        observers.set(target, () => notify(true));
+        notify(target.dataset.blockId !== 'p1-body');
+      }
+      disconnect() {}
+    });
+    const reveal = async () => {
+      if (!initially_offscreen) return;
+      await waitFor(() => {
+        const page = readingBlock('p1-body');
+        expect(page).toBeTruthy();
+        expect(page.getBoundingClientRect().top).toBeLessThan(viewport_height);
+        expect(page.getBoundingClientRect().bottom).toBeGreaterThan(0);
+        expect(observers.has(page)).toBe(true);
+      });
+      // Native IntersectionObserver runs after the approximate scroll reveals
+      // the crop; preparation then supplies the exact source-point mapping.
+      act(() => observers.get(readingBlock('p1-body'))!());
+    };
+    const view = render(<PdfReader {...props} />);
+    await reveal();
+    await expectSplitReady();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    const reading_location = latestLocation(props);
+    const source_button = readingBlock('p1-body').closest('article')!.querySelector<HTMLElement>('button[title="View in PDF"]')!;
+    fireEvent.click(source_button);
+    const navigation = vi.mocked(props.on_navigate).mock.calls.at(-1)![0];
+    if (navigation.kind !== 'pdf') throw new Error('Expected a PDF source destination');
+    expect(navigation.location).toMatchObject({ reader_mode: 'pdf', page_number: 1, reading_block_id: null });
+    view.rerender(<PdfReader {...props} target_location={navigation.location} navigation_key={2} />);
+    await waitFor(() => expect(latestLocation(props).reader_mode).toBe('pdf'));
+    view.rerender(<PdfReader {...props} target_location={reading_location} navigation_key={3} />);
+    await reveal();
+    await expectSplitReady();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    const bounds = readingBlock('p1-body').getBoundingClientRect();
+    expect(bounds.left + 20 * 8.4).toBeCloseTo(20);
+    expect(bounds.top + 110 * 8.4).toBeCloseTo(20);
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+});
 
 describe('left-edge reader navigation', () => {
   const touch = (x: number, y = 240) => ({ identifier: 1, clientX: x, clientY: y });

@@ -72,6 +72,15 @@ pub struct ReadingLayout {
   pub blocks: Vec<ReadingBlock>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ReadingBlockPreference {
+  pub pdf_hash: String,
+  pub page_number: u32,
+  /// [left, bottom, right, top] in the original PDF's user space.
+  pub source_rect: [f64; 4],
+  pub split_lines: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PaperMetadata {
   pub paper_id: String,

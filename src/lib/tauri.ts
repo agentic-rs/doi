@@ -3,7 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   AiAnswer, AiConversation, AiConversationRequest, AiConversationResponse, AiConversationSaveResult,
   AiModel, AiRequest, AiSettings, AiStreamEvent, Annotation, OperationProgress, Paper, PaperPreview,
-  ReaderCapabilities, ReaderOrientation, ReadingLayout, ReadingLocation, ReferenceCandidate,
+  ReaderCapabilities, ReaderOrientation, ReadingBlockPreference, ReadingLayout, ReadingLocation,
+  ReferenceCandidate,
 } from './types';
 
 export const nativeAvailable = isTauri;
@@ -24,6 +25,12 @@ export const getReadingLayout = (paper_id: string, layout_version: number) =>
   invoke<ReadingLayout | null>('get_reading_layout', { paper_id, layout_version });
 export const saveReadingLayout = (paper_id: string, layout: ReadingLayout) =>
   invoke<void>('save_reading_layout', { paper_id, layout });
+export const listReadingBlockPreferences = (paper_id: string) =>
+  invoke<ReadingBlockPreference[]>('list_reading_block_preferences', { paper_id });
+export const saveReadingBlockPreference = (paper_id: string, preference: ReadingBlockPreference) =>
+  invoke<void>('save_reading_block_preference', { paper_id, preference });
+export const resetReadingBlockPreference = (paper_id: string, preference: ReadingBlockPreference) =>
+  invoke<void>('reset_reading_block_preference', { paper_id, preference });
 export const listAnnotations = (paper_id: string) =>
   invoke<Annotation[]>('list_annotations', { paper_id });
 export const saveAnnotation = (annotation: Annotation) =>

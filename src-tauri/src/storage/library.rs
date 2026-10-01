@@ -256,7 +256,7 @@ mod tests {
           .unwrap()
           .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
           .unwrap(),
-        4
+        5
       );
       assert!(database.mark_paper_opened("missing".into()).await.is_err());
     });

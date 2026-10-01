@@ -11,6 +11,7 @@ use std::{
 
 mod conversations;
 mod library;
+mod reading_preferences;
 pub(crate) use conversations::ConversationAnswer;
 
 #[derive(Clone)]
@@ -30,7 +31,7 @@ impl Database {
     let version: u32 = transaction
       .query_row("PRAGMA user_version", [], |row| row.get(0))
       .map_err(storage_error)?;
-    if version > 4 {
+    if version > 5 {
       return Err("The library was created by a newer Papertrail version.".into());
     }
     transaction
@@ -61,6 +62,18 @@ impl Database {
          layout_version INTEGER NOT NULL,
          data TEXT NOT NULL
        );
+       CREATE TABLE IF NOT EXISTS reading_block_preferences (
+         paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+         pdf_hash TEXT NOT NULL,
+         page_number INTEGER NOT NULL,
+         source_left REAL NOT NULL,
+         source_bottom REAL NOT NULL,
+         source_right REAL NOT NULL,
+         source_top REAL NOT NULL,
+         split_lines INTEGER NOT NULL CHECK(split_lines=1),
+         PRIMARY KEY (paper_id, pdf_hash, page_number,
+           source_left, source_bottom, source_right, source_top)
+       );
        CREATE TABLE IF NOT EXISTS ai_conversations (
          conversation_id TEXT PRIMARY KEY,
          paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
@@ -87,7 +100,7 @@ impl Database {
         .map_err(storage_error)?;
     }
     transaction
-      .pragma_update(None, "user_version", 4)
+      .pragma_update(None, "user_version", 5)
       .map_err(storage_error)?;
     transaction.commit().map_err(storage_error)?;
     connection

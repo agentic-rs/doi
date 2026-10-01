@@ -9,6 +9,10 @@ export interface SelectionPage {
   page_element: HTMLElement;
   viewport: PdfCoordinates;
   text: string;
+  // Split lines use original character geometry rather than a linear viewport.
+  quads_for_range?: (range: Range) => QuadPoints[];
+  source_point_for_position?: (position: [number, number]) => [number, number];
+  position_for_source_point?: (point: [number, number]) => [number, number];
 }
 
 /** Intersect one browser selection with each text layer before saving anchors. */
@@ -24,8 +28,9 @@ export function selectionContext(range: Range, pages: SelectionPage[]): Selectio
     if (!exact) continue;
     const bounds = page.page_element.getBoundingClientRect();
     const seen_quads = new Set<string>();
-    const quads = [...local.getClientRects()]
-      .map((rect) => rectToPdfQuad(rect, bounds, page.viewport))
+    const candidates = page.quads_for_range ? page.quads_for_range(local) : [...local.getClientRects()]
+      .map((rect) => rectToPdfQuad(rect, bounds, page.viewport));
+    const quads = candidates
       .filter((quad): quad is QuadPoints => {
         if (quad === null) return false;
         const key = quad.map((coordinate) => coordinate.toFixed(2)).join(',');
