@@ -31,6 +31,7 @@ const math_pattern = /[=≠≈≤≥∈∉∑∏∫√∞∂∇±×÷→↦∝�
 const numbered_heading = /^(?:\d+(?:\.\d+)*\.?|[A-Z](?:\.\d+)*)\s+\p{Lu}/u;
 const named_heading = /^(?:abstract|introduction|background|related work|conclusions?|discussion|limitations?|acknowledg(?:e)?ments(?: and [\p{L} ]+)?|appendi(?:x|ces)(?:\s+[A-Z](?:\.|\s|$).*)?|supplementary material)$/iu;
 const caption_pattern = /^(Table|Figure|Fig\.?)[ \t]+(?:[A-Z]\.?\d+|\d+|[IVX]+)[a-z]?(?:\.\d+)*\s*[:.]\s+/i;
+const contextual_types = new Set<ReadingBlockType>(['content', 'others', 'title']);
 
 function words(text: string): string[] {
   return text.match(/[\p{L}]{3,}/gu) ?? [];
@@ -141,6 +142,7 @@ export function classifyReadingDocument(blocks: ReadingBlock[], page_bounds: Rea
   for (const block of blocks) if (!first_on_page.has(block.page_number)) first_on_page.set(block.page_number, block);
   const headers = new Map<string, ReadingBlock[]>();
   for (const block of first_on_page.values()) {
+    if (!contextual_types.has(block.block_type)) continue;
     const text = block.text.trim().replace(/\s+/g, ' ');
     if (block.page_number === 1 || !text || text.length > 180 || block.text.split('\n').length > 2
       || block.source_rect[3] - block.source_rect[1] > 40 || isHeading(text)) continue;
@@ -173,11 +175,13 @@ export function classifyReadingDocument(blocks: ReadingBlock[], page_bounds: Rea
       if (in_bibliography) reference_lines++;
       else other_lines++;
     }
+    // A figure may contain the appendix heading after a plot label in PDF text
+    // order. Update section state above without replacing its recognized type.
+    if (!contextual_types.has(block.block_type)) return block;
     let block_type = block.block_type;
     if (heading && !reference_lines && !other_lines) block_type = 'title';
     else if (reference_lines && (heading || other_lines)) block_type = 'others';
-    else if (reference_lines && ['content', 'others', 'title'].includes(block_type)
-      && lines.some((line) => words(line).length >= 2)) block_type = 'reference';
+    else if (reference_lines && lines.some((line) => words(line).length >= 2)) block_type = 'reference';
     return block_type === block.block_type ? block : { ...block, block_type };
   });
 }

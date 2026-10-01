@@ -4,7 +4,7 @@ import { classifyReadingDocument, classifyReadingRegion, readingPageEvidence } f
 import type { ReadingTextLine } from './reading-block-classification';
 import type { PdfSourceRect, ReadingBlock, ReadingLayout } from './types';
 
-export const READING_LAYOUT_VERSION = 2;
+export const READING_LAYOUT_VERSION = 3;
 
 type Rect = [number, number, number, number];
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;

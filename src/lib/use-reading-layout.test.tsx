@@ -7,20 +7,20 @@ import { useReadingLayout } from './use-reading-layout';
 
 const fixture = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), build: vi.fn() }));
 vi.mock('./tauri', () => ({ nativeAvailable: () => true, getReadingLayout: fixture.get, saveReadingLayout: fixture.save }));
-vi.mock('./reading-layout', () => ({ READING_LAYOUT_VERSION: 2, buildReadingLayout: fixture.build }));
+vi.mock('./reading-layout', () => ({ READING_LAYOUT_VERSION: 3, buildReadingLayout: fixture.build }));
 const pages = [{ pageNumber: 1 }] as PDFPageProxy[];
-const layout: ReadingLayout = { layout_version: 2, pdf_hash: 'a', page_count: 1, blocks: [{
+const layout: ReadingLayout = { layout_version: 3, pdf_hash: 'a', page_count: 1, blocks: [{
   block_id: 'p1-b0', page_number: 1, source_rect: [0, 0, 100, 100], kind: 'original', block_type: 'others', text: '', figure_label: null,
 }] };
 beforeEach(() => { vi.resetAllMocks(); fixture.get.mockResolvedValue(null); fixture.save.mockResolvedValue(undefined); fixture.build.mockResolvedValue(layout); });
 afterEach(cleanup);
 
 describe('Reading layout lifecycle', () => {
-  it('rebuilds older derived layouts and reuses a current cache', async () => {
-    fixture.get.mockResolvedValueOnce({ ...layout, layout_version: 1 });
+  it.each([1, 2])('rebuilds version %i derived layouts and reuses a current cache', async (layout_version) => {
+    fixture.get.mockResolvedValueOnce({ ...layout, layout_version });
     const stale = renderHook(() => useReadingLayout(pages, 'a', 'paper', true));
     await waitFor(() => expect(stale.result.current.layout).toEqual(layout));
-    expect(fixture.get).toHaveBeenCalledWith('paper', 2);
+    expect(fixture.get).toHaveBeenCalledWith('paper', 3);
     expect(fixture.build).toHaveBeenCalledTimes(1);
     expect(fixture.save).toHaveBeenCalledWith('paper', layout);
     stale.unmount();

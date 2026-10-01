@@ -395,7 +395,7 @@ async function advancePreviewFrame(duration = 16) {
 
 function readingProps(block_id = 'p1-body'): PdfReaderProps {
   reading_fixture.layout = {
-    layout_version: 2, pdf_hash: 'a'.repeat(64), page_count: 4,
+    layout_version: 3, pdf_hash: 'a'.repeat(64), page_count: 4,
     blocks: [
       { block_id: 'p1-intro', page_number: 1, source_rect: [60, 540, 300, 740], kind: 'text', block_type: 'title', text: 'Introduction', figure_label: null },
       { block_id: 'p2-figure', page_number: 2, source_rect: [60, 380, 540, 700], kind: 'figure', block_type: 'graph', text: 'Figure 1', figure_label: 'Figure 1' },

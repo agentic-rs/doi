@@ -139,6 +139,27 @@ describe('semantic labels for existing Reading crops', () => {
 });
 
 describe('document context for semantic Reading labels', () => {
+  it.each(['graph', 'table', 'equation'] as const)('preserves %s at the bibliography/appendix boundary while updating following content', (block_type) => {
+    const structural = block('p13-b0', 13,
+      'Input-Input Layer5\nAttention Visualizations\ngovernments\nFigure 3: An example of attention patterns.', block_type,
+      { kind: block_type === 'graph' ? 'figure' : 'original', figure_label: block_type === 'graph' ? '3' : null });
+    const blocks = [
+      block('p10-heading', 10, 'References', 'title'),
+      block('p12-entry', 12, '[40] Smith and Jones. 2025. Learning from speech.'),
+      structural,
+      block('p13-body', 13, 'The visualizations show how attention changes across the input sequence.'),
+    ];
+    const result = classifyReadingDocument(blocks);
+    expect(result.map((item) => item.block_type)).toEqual(['title', 'reference', block_type, 'content']);
+    expect(result[2]).toBe(structural);
+  });
+
+  it.each(['graph', 'table', 'equation'] as const)('keeps repeated first-on-page %s crops out of running-header reclassification', (block_type) => {
+    const blocks = [2, 3].map((page_number) => block(`p${page_number}-b0`, page_number, 'Repeated diagram labels', block_type,
+      { source_rect: [50, 760, 500, 780], kind: 'original' }));
+    expect(classifyReadingDocument(blocks)).toEqual(blocks);
+  });
+
   it('preserves nonnumeric footers within bibliography pages, including nonzero PDF origins', () => {
     const blocks = [
       block('p2-heading', 2, 'References', 'title'),

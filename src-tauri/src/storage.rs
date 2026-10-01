@@ -645,34 +645,40 @@ mod tests {
         .await
         .unwrap()
         .is_none());
-      let mut legacy = serde_json::to_value(&layout).unwrap();
-      legacy["layout_version"] = 1.into();
-      for block in legacy["blocks"].as_array_mut().unwrap() {
-        block.as_object_mut().unwrap().remove("block_type");
-      }
-      db.connect()
-        .unwrap()
-        .execute(
-          "UPDATE reading_layouts SET layout_version=1, data=?1 WHERE paper_id=?2",
-          params![legacy.to_string(), paper.paper_id],
-        )
-        .unwrap();
-      for requested_version in [1, reading_layout::LAYOUT_VERSION] {
-        assert!(db
-          .get_reading_layout(paper.paper_id.clone(), requested_version)
-          .await
+      for stale_version in [1, 2] {
+        let mut stale = serde_json::to_value(&layout).unwrap();
+        stale["layout_version"] = stale_version.into();
+        if stale_version == 1 {
+          for block in stale["blocks"].as_array_mut().unwrap() {
+            block.as_object_mut().unwrap().remove("block_type");
+          }
+        } else {
+          stale["blocks"][0]["block_type"] = "others".into();
+        }
+        db.connect()
           .unwrap()
-          .is_none());
-      }
-      db.save_reading_layout(paper.paper_id.clone(), layout.clone())
-        .await
-        .unwrap();
-      assert_eq!(
-        db.get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
+          .execute(
+            "UPDATE reading_layouts SET layout_version=?1, data=?2 WHERE paper_id=?3",
+            params![stale_version, stale.to_string(), paper.paper_id],
+          )
+          .unwrap();
+        for requested_version in [stale_version, reading_layout::LAYOUT_VERSION] {
+          assert!(db
+            .get_reading_layout(paper.paper_id.clone(), requested_version)
+            .await
+            .unwrap()
+            .is_none());
+        }
+        db.save_reading_layout(paper.paper_id.clone(), layout.clone())
           .await
-          .unwrap(),
-        Some(layout.clone())
-      );
+          .unwrap();
+        assert_eq!(
+          db.get_reading_layout(paper.paper_id.clone(), reading_layout::LAYOUT_VERSION)
+            .await
+            .unwrap(),
+          Some(layout.clone())
+        );
+      }
       let mut wrong_revision = layout.clone();
       wrong_revision.pdf_hash = "b".repeat(64);
       assert!(db
