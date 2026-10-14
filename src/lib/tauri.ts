@@ -29,6 +29,8 @@ export const listReadingBlockPreferences = (paper_id: string) =>
   invoke<ReadingBlockPreference[]>('list_reading_block_preferences', { paper_id });
 export const saveReadingBlockPreference = (paper_id: string, preference: ReadingBlockPreference) =>
   invoke<void>('save_reading_block_preference', { paper_id, preference });
+export const saveReadingBlockPreferences = (paper_id: string, preferences: ReadingBlockPreference[]) =>
+  invoke<void>('save_reading_block_preferences', { paper_id, preferences });
 export const resetReadingBlockPreference = (paper_id: string, preference: ReadingBlockPreference) =>
   invoke<void>('reset_reading_block_preference', { paper_id, preference });
 export const listAnnotations = (paper_id: string) =>

@@ -124,6 +124,9 @@ export function PdfReader(props: PdfReaderProps) {
   const { layout, progress: layout_progress, error: layout_error, retry: retryLayout } = useReadingLayout(loaded?.pages ?? null, paper.pdf_hash, paper.paper_id, reading);
   const block_preferences = useReadingBlockPreferences(paper.paper_id, paper.pdf_hash, reading);
   const [split_status, setSplitStatus] = useState<Map<string, { state: string; message?: string }>>(new Map());
+  const content_blocks = useMemo(() => layout?.blocks.filter((block) => block.block_type === 'content') ?? [], [layout]);
+  const all_content_split = content_blocks.length > 0 && content_blocks.every(block_preferences.isSplit);
+  const all_split_label = all_content_split ? 'Restore original lines in all Content blocks' : 'Split lines in all Content blocks';
   const [outline, setOutline] = useState<OutlineEntry[]>([]);
   const [references, setReferences] = useState<ReferenceItem[]>([]);
   const [citation_links, setCitationLinks] = useState<CitationLink[]>([]);
@@ -940,7 +943,7 @@ export function PdfReader(props: PdfReaderProps) {
     return zoom * Math.min(760, Math.max(40, available_width - padding - 4)) / region.width;
   }
 
-  async function toggleSplitLines(block: ReadingBlock) {
+  async function changeSplitLines(save: () => Promise<boolean>) {
     reportLocation();
     const owns_pending_location = !pending_location.current;
     const source = pending_location.current ?? readLocation();
@@ -949,11 +952,15 @@ export function PdfReader(props: PdfReaderProps) {
       if (owns_pending_location) pending_layout_location.current = source;
     }
     window.getSelection()?.removeAllRanges();
-    const success = await block_preferences.setSplit(block, !block_preferences.isSplit(block));
+    const success = await save();
     if (!success && owns_pending_location && pending_location.current === source) {
       pending_location.current = null;
       pending_layout_location.current = null;
     }
+  }
+
+  function toggleSplitLines(block: ReadingBlock) {
+    return changeSplitLines(() => block_preferences.setSplit(block, !block_preferences.isSplit(block)));
   }
 
   function locationAtElement(element: HTMLElement, position: [number, number]) {
@@ -1073,6 +1080,11 @@ export function PdfReader(props: PdfReaderProps) {
           <span className="pdf-toolbar-divider" />
           <button type="button" title="Fit page width" aria-label="Fit page width" aria-pressed={zoom_mode.current === 'fit_width'} disabled={!loaded} onClick={fitWidth}><Scan size={16} /></button>
           <button type="button" title="Rotate clockwise" aria-label="Rotate clockwise" disabled={!loaded} onClick={() => changeView(zoom, (rotation + 90) % 360, zoom_mode.current)}><RotateCw size={16} /></button>
+          {reading && <button type="button" title={all_split_label} aria-label={all_split_label} aria-pressed={all_content_split}
+            disabled={!loaded || !content_blocks.length || block_preferences.loading || block_preferences.load_failed || block_preferences.saving || render_paused || !reading_active}
+            onClick={() => { void changeSplitLines(() => block_preferences.setAllSplit(content_blocks, !all_content_split)); }}>
+            {block_preferences.busy_all ? <LoaderCircle size={16} className="pdf-spinner" aria-hidden="true" /> : <WrapText size={16} aria-hidden="true" />}
+          </button>}
         </div>
       </div>
       {immersive && reading_active && <button type="button" className="pdf-controls-accessible" onClick={() => props.on_toggle_controls?.()}>{controls_visible ? 'Hide reading controls' : 'Show reading controls'}</button>}
@@ -1111,7 +1123,7 @@ export function PdfReader(props: PdfReaderProps) {
                 title={block_preferences.isSplit(block) ? 'Restore original lines' : 'Split lines'}
                 aria-label={`${block_preferences.isSplit(block) ? 'Restore original lines' : 'Split lines'} in block on page ${block.page_number}`}
                 aria-pressed={block_preferences.isSplit(block)}
-                disabled={block_preferences.loading || block_preferences.load_failed || Boolean(block_preferences.busy) || render_paused || !reading_active || split_status.get(block.block_id)?.state === 'preparing'}
+                disabled={block_preferences.loading || block_preferences.load_failed || block_preferences.saving || render_paused || !reading_active || split_status.get(block.block_id)?.state === 'preparing'}
                 onClick={() => { void toggleSplitLines(block); }}>
                 {block_preferences.busy === block.block_id || split_status.get(block.block_id)?.state === 'preparing'
                   ? <LoaderCircle size={16} className="pdf-spinner" aria-hidden="true" /> : <WrapText size={16} aria-hidden="true" />}

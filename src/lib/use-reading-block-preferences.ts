@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReadingBlock, ReadingBlockPreference } from './types';
-import { listReadingBlockPreferences, nativeAvailable, resetReadingBlockPreference, saveReadingBlockPreference } from './tauri';
+import { listReadingBlockPreferences, nativeAvailable, resetReadingBlockPreference, saveReadingBlockPreference, saveReadingBlockPreferences } from './tauri';
 
 interface PreferenceState {
   paper_id: string;
   pdf_hash: string;
   status: 'idle' | 'loading' | 'ready' | 'failed';
   preferences: ReadingBlockPreference[];
-  busy: string | null;
+  busy: { kind: 'block'; block_id: string } | { kind: 'all' } | null;
   error: string | null;
 }
 
@@ -74,26 +74,29 @@ export function useReadingBlockPreferences(paper_id: string, pdf_hash: string, e
     setAttempt((value) => value + 1);
   }, [isCurrent, publish]);
 
-  const setSplit = useCallback(async (block: ReadingBlock, split: boolean): Promise<boolean> => {
+  const setChoices = useCallback(async (blocks: ReadingBlock[], split: boolean, busy: NonNullable<PreferenceState['busy']>): Promise<boolean> => {
     const request_generation = generation.current;
     const current = state_ref.current;
     if (!isCurrent(request_generation) || current.status !== 'ready' || current.busy !== null) return false;
-    if (current.preferences.some((preference) => matchesBlock(preference, block)) === split) {
+    const changed = blocks.filter((block) => block.block_type === 'content'
+      && current.preferences.some((preference) => matchesBlock(preference, block)) !== split);
+    if (!changed.length) {
       if (current.error) publish({ ...current, error: null });
       return true;
     }
-    const preference: ReadingBlockPreference = {
+    const choices: ReadingBlockPreference[] = changed.map((block) => ({
       pdf_hash, page_number: block.page_number, source_rect: [...block.source_rect], split_lines: split,
-    };
-    publish({ ...current, busy: block.block_id, error: null });
+    }));
+    publish({ ...current, busy, error: null });
     try {
       if (nativeAvailable()) {
-        if (split) await saveReadingBlockPreference(paper_id, preference);
-        else await resetReadingBlockPreference(paper_id, preference);
+        if (busy.kind === 'all') await saveReadingBlockPreferences(paper_id, choices);
+        else if (split) await saveReadingBlockPreference(paper_id, choices[0]);
+        else await resetReadingBlockPreference(paper_id, choices[0]);
       }
       if (!isCurrent(request_generation)) return false;
-      const preferences = current.preferences.filter((item) => !matchesBlock(item, block));
-      if (split) preferences.push(preference);
+      const preferences = current.preferences.filter((item) => !changed.some((block) => matchesBlock(item, block)));
+      if (split) preferences.push(...choices);
       publish({ ...current, preferences, busy: null, error: null });
       return true;
     } catch (failure) {
@@ -103,6 +106,11 @@ export function useReadingBlockPreferences(paper_id: string, pdf_hash: string, e
     }
   }, [paper_id, pdf_hash, isCurrent, publish]);
 
+  const setSplit = useCallback((block: ReadingBlock, split: boolean) =>
+    setChoices([block], split, { kind: 'block', block_id: block.block_id }), [setChoices]);
+  const setAllSplit = useCallback((blocks: ReadingBlock[], split: boolean) =>
+    setChoices(blocks, split, { kind: 'all' }), [setChoices]);
+
   const current = state.paper_id === paper_id && state.pdf_hash === pdf_hash ? state : null;
   const isSplit = useCallback((block: ReadingBlock) => current?.status === 'ready'
     && current.preferences.some((preference) => matchesBlock(preference, block)), [current]);
@@ -110,9 +118,12 @@ export function useReadingBlockPreferences(paper_id: string, pdf_hash: string, e
     isSplit,
     loading: current?.status === 'loading' || (enabled && (!current || current.status === 'idle')),
     load_failed: current?.status === 'failed',
-    busy: current?.busy ?? null,
+    busy: current?.busy?.kind === 'block' ? current.busy.block_id : null,
+    busy_all: current?.busy?.kind === 'all',
+    saving: !!current?.busy,
     error: current?.error ?? null,
     retry,
     setSplit,
+    setAllSplit,
   };
 }

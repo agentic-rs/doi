@@ -110,6 +110,18 @@ pub async fn save_reading_block_preference(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn save_reading_block_preferences(
+  state: State<'_, AppState>,
+  paper_id: String,
+  preferences: Vec<ReadingBlockPreference>,
+) -> Result<()> {
+  state
+    .database
+    .save_reading_block_preferences(paper_id, preferences)
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn reset_reading_block_preference(
   state: State<'_, AppState>,
   paper_id: String,

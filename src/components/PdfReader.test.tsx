@@ -46,16 +46,18 @@ const pdf_fixture = vi.hoisted(() => ({
 const reading_fixture = vi.hoisted(() => ({ layout: null as ReadingLayout | null }));
 const split_fixture = vi.hoisted(() => ({
   initial_ids: new Set<string>(), loading: false, load_failed: false, error: null as string | null,
-  change: vi.fn(), retry: vi.fn(), prepare: vi.fn(),
+  change: vi.fn(), change_all: vi.fn(), retry: vi.fn(), prepare: vi.fn(),
 }));
 
 vi.mock('../lib/use-reading-block-preferences', () => ({
   useReadingBlockPreferences: () => {
     const [split_ids, setSplitIds] = useState(() => new Set(split_fixture.initial_ids));
     const [busy, setBusy] = useState<string | null>(null);
+    const [busy_all, setBusyAll] = useState(false);
     return {
       isSplit: (block: ReadingBlock) => split_ids.has(block.block_id),
       loading: split_fixture.loading, load_failed: split_fixture.load_failed, busy, error: split_fixture.error, retry: split_fixture.retry,
+      busy_all, saving: busy !== null || busy_all,
       setSplit: async (block: ReadingBlock, split: boolean) => {
         setBusy(block.block_id);
         const accepted = await split_fixture.change(block, split);
@@ -66,6 +68,20 @@ vi.mock('../lib/use-reading-block-preferences', () => ({
           return next;
         });
         setBusy(null);
+        return accepted;
+      },
+      setAllSplit: async (blocks: ReadingBlock[], split: boolean) => {
+        setBusyAll(true);
+        const accepted = await split_fixture.change_all(blocks, split);
+        if (accepted) setSplitIds((current) => {
+          const next = new Set(current);
+          for (const block of blocks) {
+            if (split) next.add(block.block_id);
+            else next.delete(block.block_id);
+          }
+          return next;
+        });
+        setBusyAll(false);
         return accepted;
       },
     };
@@ -265,6 +281,7 @@ beforeEach(() => {
   split_fixture.load_failed = false;
   split_fixture.error = null;
   split_fixture.change.mockReset().mockResolvedValue(true);
+  split_fixture.change_all.mockReset().mockResolvedValue(true);
   split_fixture.retry.mockReset();
   split_fixture.prepare.mockReset().mockImplementation((page: PDFPageProxy, source_rect: PdfSourceRect) => Promise.resolve(preparedSplit(page, source_rect)));
   vi.stubGlobal('devicePixelRatio', 1);
@@ -501,6 +518,103 @@ async function expectSplitReady() {
 }
 
 describe('split lines in Reading view', () => {
+  it('splits all Content blocks, restores them together, and keeps individual overrides', async () => {
+    const props = readingProps();
+    split_fixture.initial_ids.add('p2-body');
+    render(<PdfReader {...props} />);
+    const split_all = await screen.findByRole('button', { name: 'Split lines in all Content blocks' });
+    await waitFor(() => expect((split_all as HTMLButtonElement).disabled).toBe(false));
+    expect(split_all.textContent).toBe('');
+    expect(split_all.getAttribute('aria-pressed')).toBe('false');
+    expect(split_all.closest('.pdf-toolbar')).toBeTruthy();
+    fireEvent.click(split_all);
+    const content = reading_fixture.layout!.blocks.filter((block) => block.block_type === 'content');
+    expect(split_fixture.change_all).toHaveBeenCalledExactlyOnceWith(content, true);
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Restore original lines in all Content blocks' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getAllByRole('button', { name: /Restore original lines in block/ })).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Restore original lines in block on page 2' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Split lines in all Content blocks' }).getAttribute('aria-pressed')).toBe('false'));
+    fireEvent.click(screen.getByRole('button', { name: 'Split lines in all Content blocks' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Restore original lines in all Content blocks' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Restore original lines in all Content blocks' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Split lines in block/ })).toHaveLength(2));
+    expect(split_fixture.change_all).toHaveBeenLastCalledWith(content, false);
+    expect(readingBlock('p2-figure').querySelector('.textLayer > .textLayer')).toBeNull();
+  });
+
+  it('waits for the batch save and retains mixed block choices when it fails', async () => {
+    const props = readingProps();
+    split_fixture.initial_ids.add('p2-body');
+    let finish_save!: (accepted: boolean) => void;
+    split_fixture.change_all.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finish_save = resolve; }));
+    render(<PdfReader {...props} />);
+    const button = await screen.findByRole('button', { name: 'Split lines in all Content blocks' });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    const original_height = readingBlock('p1-body').style.height;
+    fireEvent.click(button);
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.querySelector('.pdf-spinner')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Split lines in block on page 1' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(readingBlock('p1-body').style.height).toBe(original_height);
+    await act(async () => finish_save(false));
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Restore original lines in block on page 2' })).toBeTruthy();
+    expect(readingBlock('p1-body').style.height).toBe(original_height);
+  });
+
+  it('preserves the visible source point when several blocks split or restore together', async () => {
+    const props = splitReadingProps();
+    // Include a block before the visible passage so its height changes too.
+    reading_fixture.layout!.blocks[0].block_type = 'content';
+    render(<PdfReader {...props} />);
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    fireEvent.click(screen.getByRole('button', { name: 'Split lines in all Content blocks' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Restore original lines in all Content blocks' }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => {
+      expect(readingBlock('p1-body').querySelector('.textLayer > .textLayer')).toBeTruthy();
+      expect(readingBlock('p1-body').dataset.splitPreparing).toBeUndefined();
+      expect(readingBlock('p1-intro').querySelector('.textLayer > .textLayer')).toBeTruthy();
+    });
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    fireEvent.click(screen.getByRole('button', { name: 'Restore original lines in all Content blocks' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Split lines in block on page 1' })).toHaveLength(2));
+    await waitFor(() => expect(readingBlock('p1-body').querySelector('.textLayer > .textLayer')).toBeNull());
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('can restore all lines while a lazy split preparation is still pending', async () => {
+    const props = splitReadingProps();
+    let finish_prepare!: () => void;
+    split_fixture.prepare.mockImplementationOnce((page: PDFPageProxy, rect: PdfSourceRect) => new Promise<PreparedSplitText>((resolve) => {
+      finish_prepare = () => resolve(preparedSplit(page, rect));
+    }));
+    render(<PdfReader {...props} />);
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+    const original_height = readingBlock('p1-body').style.height;
+    fireEvent.click(screen.getByRole('button', { name: 'Split lines in all Content blocks' }));
+    await waitFor(() => expect(readingBlock('p1-body').dataset.splitPreparing).toBe('true'));
+    const restore = screen.getByRole('button', { name: 'Restore original lines in all Content blocks' });
+    expect((restore as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(restore);
+    await waitFor(() => expect(readingBlock('p1-body').dataset.splitPreparing).toBeUndefined());
+    await act(async () => finish_prepare());
+    expect(readingBlock('p1-body').style.height).toBe(original_height);
+    expect(readingBlock('p1-body').querySelector('.textLayer > .textLayer')).toBeNull();
+    await waitFor(() => expectSplitSource(latestLocation(props)));
+  });
+
+  it('disables the all-lines icon without Content blocks and hides it in original PDF mode', async () => {
+    const props = readingProps();
+    reading_fixture.layout!.blocks = reading_fixture.layout!.blocks.filter((block) => block.block_type !== 'content');
+    const view = render(<PdfReader {...props} />);
+    expect((screen.getByRole('button', { name: 'Split lines in all Content blocks' }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<PdfReader {...props} navigation_key={props.navigation_key + 1} target_location={{ ...props.target_location!, reader_mode: 'pdf' }} />);
+    await screen.findByLabelText('Scrollable PDF pages');
+    expect(screen.queryByRole('button', { name: 'Split lines in all Content blocks' })).toBeNull();
+  });
+
   it('offers an icon only for Content blocks and waits for preferences to load', async () => {
     const props = readingProps('p1-intro');
     const types = ['content', 'equation', 'graph', 'table', 'reference', 'title', 'others'] as const;
@@ -514,12 +628,14 @@ describe('split lines in Reading view', () => {
     expect(buttons).toHaveLength(1);
     expect(buttons[0].textContent).toBe('');
     expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Split lines in all Content blocks' }) as HTMLButtonElement).disabled).toBe(true);
     expect(buttons[0].closest('article')?.querySelector('.reading-block-type')?.textContent).toBe('Content');
     split_fixture.loading = false;
     split_fixture.load_failed = true;
     split_fixture.error = 'Preferences could not be loaded';
     view.rerender(<PdfReader {...props} />);
     expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Split lines in all Content blocks' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(split_fixture.retry).toHaveBeenCalledOnce();
     split_fixture.load_failed = false;

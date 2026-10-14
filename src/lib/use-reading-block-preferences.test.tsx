@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReadingBlock, ReadingBlockPreference } from './types';
 import { useReadingBlockPreferences } from './use-reading-block-preferences';
 
-const fixture = vi.hoisted(() => ({ native: true, list: vi.fn(), save: vi.fn(), reset: vi.fn() }));
+const fixture = vi.hoisted(() => ({ native: true, list: vi.fn(), save: vi.fn(), save_all: vi.fn(), reset: vi.fn() }));
 vi.mock('./tauri', () => ({
   nativeAvailable: () => fixture.native,
   listReadingBlockPreferences: fixture.list,
   saveReadingBlockPreference: fixture.save,
+  saveReadingBlockPreferences: fixture.save_all,
   resetReadingBlockPreference: fixture.reset,
 }));
 
@@ -32,11 +33,94 @@ beforeEach(() => {
   fixture.native = true;
   fixture.list.mockResolvedValue([]);
   fixture.save.mockResolvedValue(undefined);
+  fixture.save_all.mockResolvedValue(undefined);
   fixture.reset.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
 
 describe('Reading block preferences', () => {
+  it('saves all changed Content blocks together, retains other choices, and permits individual overrides', async () => {
+    const next: ReadingBlock = { ...block, block_id: 'p3-body', page_number: 3 };
+    const graph: ReadingBlock = { ...block, block_id: 'p4-figure', page_number: 4, block_type: 'graph' };
+    const graph_preference = { ...preference, page_number: 4 };
+    fixture.list.mockResolvedValue([preference, graph_preference]);
+    const save = deferred<void>();
+    fixture.save_all.mockReturnValueOnce(save.promise);
+    const hook = renderHook(() => useReadingBlockPreferences('paper', 'a', true));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    let result!: Promise<boolean>;
+    act(() => { result = hook.result.current.setAllSplit([block, next, graph], true); });
+    expect(hook.result.current.busy_all).toBe(true);
+    expect(hook.result.current.saving).toBe(true);
+    expect(hook.result.current.isSplit(block)).toBe(true);
+    expect(hook.result.current.isSplit(next)).toBe(false);
+    expect(fixture.save_all).toHaveBeenCalledExactlyOnceWith('paper', [{ ...preference, page_number: 3 }]);
+    expect(await hook.result.current.setSplit(block, false)).toBe(false);
+    expect(await hook.result.current.setAllSplit([block, next], false)).toBe(false);
+    await act(async () => { save.resolve(); expect(await result).toBe(true); });
+    expect(hook.result.current.isSplit(next)).toBe(true);
+    expect(hook.result.current.busy_all).toBe(false);
+    await act(async () => { expect(await hook.result.current.setSplit(block, false)).toBe(true); });
+    expect(hook.result.current.isSplit(block)).toBe(false);
+    expect(hook.result.current.isSplit(next)).toBe(true);
+    await act(async () => { expect(await hook.result.current.setAllSplit([block, next, graph], false)).toBe(true); });
+    expect(fixture.save_all).toHaveBeenLastCalledWith('paper', [{ ...preference, page_number: 3, split_lines: false }]);
+    expect(hook.result.current.isSplit(next)).toBe(false);
+    expect(hook.result.current.isSplit(graph)).toBe(true);
+  });
+
+  it('leaves every visible choice intact on a failed batch and supports retry', async () => {
+    const next = { ...block, block_id: 'next', page_number: 3 };
+    fixture.list.mockResolvedValue([preference]);
+    fixture.save_all.mockRejectedValueOnce(new Error('Disk full'));
+    const hook = renderHook(() => useReadingBlockPreferences('paper', 'a', true));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    await act(async () => { expect(await hook.result.current.setAllSplit([block, next], true)).toBe(false); });
+    expect(hook.result.current.isSplit(block)).toBe(true);
+    expect(hook.result.current.isSplit(next)).toBe(false);
+    expect(hook.result.current.error).toBe('Disk full');
+    expect(hook.result.current.saving).toBe(false);
+    await act(async () => { expect(await hook.result.current.setAllSplit([block, next], true)).toBe(true); });
+    expect(hook.result.current.isSplit(next)).toBe(true);
+    expect(hook.result.current.error).toBeNull();
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores a late batch %s after changing PDF revisions', async (completion) => {
+    const save = deferred<void>();
+    fixture.save_all.mockReturnValueOnce(save.promise);
+    const hook = renderHook(({ hash }) => useReadingBlockPreferences('paper', hash, true), { initialProps: { hash: 'a' } });
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    let result!: Promise<boolean>;
+    act(() => { result = hook.result.current.setAllSplit([block], true); });
+    const stale_set_all = hook.result.current.setAllSplit;
+    hook.rerender({ hash: 'b' });
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    await act(async () => {
+      if (completion === 'resolve') save.resolve();
+      else save.reject('Old revision failed');
+      expect(await result).toBe(false);
+    });
+    expect(await stale_set_all([block], true)).toBe(false);
+    expect(hook.result.current.isSplit(block)).toBe(false);
+    expect(hook.result.current.saving).toBe(false);
+    expect(hook.result.current.error).toBeNull();
+  });
+
+  it('supports a memory-only batch and avoids writing empty or unchanged choices', async () => {
+    fixture.native = false;
+    const hook = renderHook(() => useReadingBlockPreferences('paper', 'a', true));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    await act(async () => { expect(await hook.result.current.setAllSplit([block], true)).toBe(true); });
+    fixture.native = true;
+    await act(async () => {
+      expect(await hook.result.current.setAllSplit([block], true)).toBe(true);
+      expect(await hook.result.current.setAllSplit([], false)).toBe(true);
+      expect(await hook.result.current.setAllSplit([{ ...block, block_type: 'equation' }], false)).toBe(true);
+    });
+    expect(hook.result.current.isSplit(block)).toBe(true);
+    expect(fixture.save_all).not.toHaveBeenCalled();
+  });
+
   it('loads on demand and matches source geometry independently of rebuilt block IDs', async () => {
     fixture.list.mockResolvedValue([preference, { ...preference, pdf_hash: 'old', page_number: 3 }]);
     const hook = renderHook(({ enabled }) => useReadingBlockPreferences('paper', 'a', enabled), { initialProps: { enabled: false } });
@@ -71,13 +155,16 @@ describe('Reading block preferences', () => {
     fixture.list.mockReturnValueOnce(load.promise);
     const hook = renderHook(({ enabled }) => useReadingBlockPreferences('paper', 'a', enabled), { initialProps: { enabled: false } });
     expect(await hook.result.current.setSplit(block, true)).toBe(false);
+    expect(await hook.result.current.setAllSplit([block], true)).toBe(false);
     hook.rerender({ enabled: true });
     expect(hook.result.current.loading).toBe(true);
     expect(await hook.result.current.setSplit(block, true)).toBe(false);
+    expect(await hook.result.current.setAllSplit([block], true)).toBe(false);
     await act(async () => load.reject(new Error('Database unavailable')));
     expect(hook.result.current.error).toBe('Database unavailable');
     expect(hook.result.current.loading).toBe(false);
     expect(await hook.result.current.setSplit(block, true)).toBe(false);
+    expect(await hook.result.current.setAllSplit([block], true)).toBe(false);
     expect(fixture.save).not.toHaveBeenCalled();
     fixture.list.mockResolvedValue([preference]);
     act(() => hook.result.current.retry());

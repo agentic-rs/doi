@@ -49,6 +49,7 @@ pub fn run() {
       commands::save_reading_layout,
       commands::list_reading_block_preferences,
       commands::save_reading_block_preference,
+      commands::save_reading_block_preferences,
       commands::reset_reading_block_preference,
       commands::list_annotations,
       commands::save_annotation,
