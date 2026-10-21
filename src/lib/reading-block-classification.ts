@@ -137,7 +137,8 @@ export function classifyReadingRegion(region: ReadingRegionEvidence, page: Readi
 }
 
 /** Apply bibliography context in source order, before figures are relocated. */
-export function classifyReadingDocument(blocks: ReadingBlock[], page_bounds: ReadonlyMap<number, readonly number[]> = new Map()): ReadingBlock[] {
+export function classifyReadingDocument(blocks: ReadingBlock[], page_bounds: ReadonlyMap<number, readonly number[]> = new Map(),
+  section_endings: ReadonlyMap<number, ReadonlySet<string>> = new Map()): ReadingBlock[] {
   const first_on_page = new Map<number, ReadingBlock>();
   for (const block of blocks) if (!first_on_page.has(block.page_number)) first_on_page.set(block.page_number, block);
   const headers = new Map<string, ReadingBlock[]>();
@@ -170,7 +171,8 @@ export function classifyReadingDocument(blocks: ReadingBlock[], page_bounds: Rea
     let heading = false;
     for (const line of lines) {
       if (isReferenceHeading(line)) { in_bibliography = true; heading = true; continue; }
-      if (in_bibliography && (isReferenceSectionEnd(line) || (block.block_type === 'title' && isHeading(line)))) in_bibliography = false;
+      if (in_bibliography && (isReferenceSectionEnd(line) || section_endings.get(block.page_number)?.has(line)
+        || (block.block_type === 'title' && isHeading(line)))) in_bibliography = false;
       if (/^\d{1,4}$/.test(line)) continue;
       if (in_bibliography) reference_lines++;
       else other_lines++;

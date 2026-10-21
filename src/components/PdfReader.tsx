@@ -940,7 +940,11 @@ export function PdfReader(props: PdfReaderProps) {
     const style = pages ? getComputedStyle(pages) : null;
     const padding = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 20;
     const available_width = zoom_preview.current?.layout_width ?? scroll_root.clientWidth;
-    return zoom * Math.min(760, Math.max(40, available_width - padding - 4)) / region.width;
+    // A narrow rotated margin stamp must not become many screens tall when
+    // fitted to the paper width. Keep the intact source strip compact.
+    const fitting_width = block.kind === 'original' && block.block_type === 'others' && region.width < region.height * 0.15
+      ? region.height : region.width;
+    return zoom * Math.min(760, Math.max(40, available_width - padding - 4)) / fitting_width;
   }
 
   async function changeSplitLines(save: () => Promise<boolean>) {

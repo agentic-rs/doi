@@ -16,7 +16,7 @@ export interface ReadingBlock {
 }
 
 export interface ReadingLayout {
-  layout_version: 4;
+  layout_version: 5;
   pdf_hash: string;
   page_count: number;
   blocks: ReadingBlock[];

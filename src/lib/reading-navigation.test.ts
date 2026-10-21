@@ -3,7 +3,7 @@ import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { ReadingLayout, ReadingLocation } from './types';
 import { findReadingBlock } from './reading-navigation';
 
-const layout: ReadingLayout = { layout_version: 4, pdf_hash: 'hash', page_count: 1, blocks: [
+const layout: ReadingLayout = { layout_version: 5, pdf_hash: 'hash', page_count: 1, blocks: [
   { block_id: 'p1-b0', page_number: 1, source_rect: [50, 100, 300, 700], kind: 'text', block_type: 'content', text: 'Left', figure_label: null },
   { block_id: 'p1-b1', page_number: 1, source_rect: [310, 100, 560, 700], kind: 'text', block_type: 'content', text: 'Right', figure_label: null },
 ] };

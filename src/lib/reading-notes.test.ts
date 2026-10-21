@@ -18,7 +18,7 @@ function note(page_anchors: PageAnchor[], annotation_id = 'note'): Annotation {
 }
 
 const layout: ReadingLayout = {
-  layout_version: 4, pdf_hash: 'hash', page_count: 3,
+  layout_version: 5, pdf_hash: 'hash', page_count: 3,
   blocks: [
     { block_id: 'left', page_number: 1, source_rect: [0, 0, 40, 100], kind: 'text', block_type: 'content', text: '', figure_label: null },
     { block_id: 'moved-figure', page_number: 2, source_rect: [0, 60, 100, 100], kind: 'figure', block_type: 'graph', text: '', figure_label: '1' },

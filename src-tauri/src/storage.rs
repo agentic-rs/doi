@@ -658,7 +658,7 @@ mod tests {
         .await
         .unwrap()
         .is_none());
-      for stale_version in [1, 2, 3] {
+      for stale_version in [1, 2, 3, 4] {
         let mut stale = serde_json::to_value(&layout).unwrap();
         stale["layout_version"] = stale_version.into();
         if stale_version == 1 {

@@ -62,7 +62,7 @@ function authorList(text: string): string[] {
   // "Et al." describes omitted authors; it is never an author's surname.
   // Retain the complete printed list in citation_text, and index only names.
   const value = text.replace(/\s*([`´\u0300\u0301])(\p{L})/gu, (_, accent: string, letter: string) => `${letter}${/[`\u0300]/u.test(accent) ? '\u0300' : '\u0301'}`)
-    .normalize('NFC').trim().replace(/[\s,(]+$/, '')
+    .normalize('NFC').replace(/;\s*(?:and\s+)?/g, ', ').trim().replace(/[\s,(]+$/, '')
     .replace(/(?:,\s*|\s+)et\s+al\.?$/iu, '').replace(/[.\s,]+$/, '');
   if (!value || value.length > 900 || /\b(?:proceedings|journal|conference|preprint|volume|pages|https|arxiv)\b/i.test(value)) return [];
   // Do not consume a title before a year printed at the end of the entry.
@@ -200,7 +200,10 @@ export function extractReferences(pages: PageText[]): ReferenceItem[] {
   for (const source of all_lines) {
     const line = { ...source, text: source.text.trim() };
     if (isReferenceHeading(line.text)) { in_bibliography = true; has_heading = true; continue; }
-    if (in_bibliography && isReferenceSectionEnd(line.text)) break;
+    const heights = lines.slice(0, 30).flatMap((item) => item.source_rect ? [item.source_rect[3] - item.source_rect[1]] : []).sort((a, b) => a - b);
+    const body_size = heights[Math.floor(heights.length / 2)] ?? Infinity;
+    const line_size = line.source_rect ? line.source_rect[3] - line.source_rect[1] : 0;
+    if (in_bibliography && isReferenceSectionEnd(line.text, line_size, body_size)) break;
     if (in_bibliography && line.text && !/^\d+$/.test(line.text)) lines.push(line);
   }
   if (!has_heading) {
@@ -233,7 +236,20 @@ export function extractReferences(pages: PageText[]): ReferenceItem[] {
     const year = lookahead.match(year_pattern);
     const author_start = /^[\p{Lu}]/u.test(line.text) && year?.index !== undefined
       && (authorList(lookahead.slice(0, year.index)).length > 0 || abbreviatedAuthorPrefix(lookahead) !== null);
-    const start = numbered ? label_pattern.test(line.text) : hanging_starts.length ? hanging : author_start;
+    // Without hanging indents, several wrapped author lines can each look like
+    // an entry when looking ahead to the same year. Keep them together until
+    // the current entry has reached its date/title, and use paragraph spacing
+    // when consecutive lines share a column.
+    let start = numbered ? label_pattern.test(line.text) : hanging_starts.length ? hanging : author_start;
+    if (start && !numbered && !hanging_starts.length && current.length) {
+      const previous = lines[index - 1];
+      const same_column = previous?.source_rect && line.source_rect && previous.page_number === line.page_number
+        && Math.abs(previous.source_rect[0] - line.source_rect[0]) < 2;
+      const paragraph_start = !same_column || previous.source_rect![1] - line.source_rect![3]
+        > (line.source_rect![3] - line.source_rect![1]) * 0.18;
+      const current_text = current.map((item) => item.text).join(' ');
+      start = paragraph_start && (publicationYears(current_text).length > 0 || metadata(current_text).title !== null);
+    }
     if (start && current.length) { groups.push(current); current = []; }
     if (start || current.length) current.push(line);
     else if (identifiers(line.text).arxiv_id || identifiers(line.text).doi || identifiers(line.text).url) groups.push([line]);

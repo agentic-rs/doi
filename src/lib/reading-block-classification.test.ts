@@ -139,6 +139,19 @@ describe('semantic labels for existing Reading crops', () => {
 });
 
 describe('document context for semantic Reading labels', () => {
+  it('ends bibliography context at a measured unnumbered heading even inside a mixed content crop', () => {
+    const blocks = [
+      block('p8-heading', 8, 'References', 'title'),
+      block('p9-entry', 9, 'Chu, Y.; and Xu, J. 2023. A useful model. Journal.'),
+      block('p10-body', 10, 'Real-World Validation and Case Study\nReal-World Validation\nWe test our model in practical scenarios.'),
+      block('p10-more', 10, 'The following application experiments compare the baselines.'),
+    ];
+    const endings = new Map([[10, new Set(['Real-World Validation and Case Study'])]]);
+    expect(classifyReadingDocument(blocks, new Map(), endings).map((item) => item.block_type))
+      .toEqual(['title', 'reference', 'content', 'content']);
+    // A title continued at normal bibliography size has no measured boundary.
+    expect(classifyReadingDocument(blocks.slice(0, 3)).at(-1)?.block_type).toBe('reference');
+  });
   it.each(['graph', 'table', 'equation'] as const)('preserves %s at the bibliography/appendix boundary while updating following content', (block_type) => {
     const structural = block('p13-b0', 13,
       'Input-Input Layer5\nAttention Visualizations\ngovernments\nFigure 3: An example of attention patterns.', block_type,

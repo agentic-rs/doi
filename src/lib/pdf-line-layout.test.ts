@@ -367,6 +367,36 @@ describe('printed whitespace refinement at line cuts', () => {
 });
 
 describe('per-row adaptive split geometry', () => {
+  it('expands underestimated font bounds to the printed capitals and descenders before splitting', () => {
+    // 2606.05121 reports a 0.453 ascent and zero descent for its body font.
+    const underreported: SplitLineRow[] = [
+      { rect: [1, 8, 99, 12], breaks: [30, 50, 70] },
+      { rect: [1, 24, 99, 28], breaks: [30, 50, 70] },
+    ];
+    const { raster, pixel } = rasterFixture(400, 160);
+    for (const [top, bottom] of [[3, 15], [20, 32]]) {
+      for (let y = top * 4; y < bottom * 4; y++) for (let x = 4; x < 396; x++) {
+        if (x < 48 * 4 || x >= 52 * 4) pixel(x, y);
+      }
+    }
+    const provisional = createAdaptiveSplitLineLayout(100, 40, underreported)!;
+    const layout = createAdaptiveSplitLineLayout(100, 40, underreported, raster, 4, provisional)!;
+    expect(layout.line_counts).toEqual([2, 2]);
+    expect(layout.fit_width).toBe(provisional.fit_width);
+    expect(splitLineInkCovered(layout, raster, 4)).toBe(true);
+    const descender: SplitLineRect = [80, 12, 90, 15];
+    const restored = mapSplitSourceRect(layout, descender).flatMap((rect) => mapSplitDisplayRect(layout, rect));
+    expect(restored).toHaveLength(1);
+    restored[0].forEach((value, index) => expect(value).toBeCloseTo(descender[index]));
+    const repeated = createAdaptiveSplitLineLayout(100, 40, underreported, raster, 4, layout)!;
+    expect(repeated.line_counts).toEqual(layout.line_counts);
+    expect(repeated.pieces).toHaveLength(layout.pieces.length);
+    repeated.pieces.forEach((piece, index) => {
+      expect(piece.source_rect).toEqual(layout.pieces[index].source_rect);
+      piece.display_rect.forEach((value, edge) => expect(value).toBeCloseTo(layout.pieces[index].display_rect[edge]));
+    });
+  });
+
   const mixed_rows: SplitLineRow[] = [
     { rect: [0, 2, 100, 12], breaks: [30, 50, 70] },
     { rect: [0, 22, 100, 32], breaks: [30, 50, 70] },

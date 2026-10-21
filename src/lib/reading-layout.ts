@@ -1,11 +1,12 @@
 import type { PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readPdfTextContent } from './pdf-compatibility';
 import { pdfFontMetrics } from './pdf-font-metrics';
+import { isReferenceSectionEnd } from './reference-section';
 import { classifyReadingDocument, classifyReadingRegion, readingPageEvidence } from './reading-block-classification';
 import type { ReadingTextLine } from './reading-block-classification';
 import type { PdfSourceRect, ReadingBlock, ReadingLayout } from './types';
 
-export const READING_LAYOUT_VERSION = 4;
+export const READING_LAYOUT_VERSION = 5;
 
 type Rect = [number, number, number, number];
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;
@@ -134,12 +135,18 @@ function textOf(lines: TextBox[]): string {
 
 /** Pure geometry entry point, also used by synthetic layout regression tests. */
 export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
+  return analyzeReadingPage(input).blocks;
+}
+
+function analyzeReadingPage(input: ReadingPageInput): { blocks: ReadingBlock[]; section_endings: Set<string> } {
   const { page_number, viewport, raster } = input;
   const { width, height, data } = raster;
   const scale = Math.hypot(viewport.transform[0], viewport.transform[1]);
   const { boxes, horizontal } = textGeometry(input);
   const lines = combineLines(boxes);
   const page_evidence = readingPageEvidence(lines, page_number, viewport.width, viewport.height, scale);
+  const section_endings = new Set(lines.filter((line) =>
+    isReferenceSectionEnd(line.text, line.font_size, page_evidence.body_font_size)).map((line) => line.text.trim()));
   const ink = new Uint8Array(width * height);
   let bounds: Rect | null = null;
   for (let y = 0; y < height; y++) {
@@ -171,7 +178,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
 
   const original = (): ReadingBlock[] => [{ block_id: `p${page_number}-b0`, page_number,
     source_rect: sourceRect(crop), kind: 'original', block_type: 'others', text: textOf(lines), figure_label: null }];
-  if (!bounds || !boxes.length || viewport.rotation % 360 !== 0) return original();
+  if (!bounds || !boxes.length || viewport.rotation % 360 !== 0) return { blocks: original(), section_endings };
 
   // Protect complete text boxes, not just their dark pixels. Every split below
   // must pass through genuinely empty space in both the raster and text layer.
@@ -214,9 +221,9 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
       && caption.rect[1] > figure_crop[1] + (figure_crop[3] - figure_crop[1]) * 0.6) {
       const figure: ReadingBlock = { ...original()[0], source_rect: sourceRect(figure_crop),
         kind: 'figure', block_type: 'graph', text: textOf(lines.filter((line) => line !== footer)), figure_label: captionLabel(caption.text) };
-      return footer ? [figure, { ...original()[0], block_id: `p${page_number}-b1`,
+      return { section_endings, blocks: footer ? [figure, { ...original()[0], block_id: `p${page_number}-b1`,
         source_rect: sourceRect([crop[0], footer.rect[1] - 3 * scale, crop[2], crop[3]]),
-        kind: 'text', text: footer.text }] : [figure];
+        kind: 'text', text: footer.text }] : [figure] };
     }
   }
 
@@ -339,7 +346,36 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
       ...divide([rect[0], end - padding, rect[2], rect[3]], depth + 1)];
   }
 
-  const regions = divide(crop, 0);
+  // A tall, rotated margin stamp must not bridge every horizontal corridor in
+  // the body. Isolate it only through a blank strip outside all horizontal text;
+  // rotated plot labels inside a figure remain part of their source region.
+  const margin_gap = !horizontal ? gaps(crop, 0, 4 * scale).find(([start, end]) => {
+    const left = boxes.filter((box) => box.rect[2] <= start);
+    const right = boxes.filter((box) => box.rect[0] >= end);
+    const marginal = (margin: TextBox[], body: TextBox[], outer: boolean) => {
+      if (!outer || !margin.length || margin.some((box) => box.horizontal)
+        || !margin.some((box) => box.rect[3] - box.rect[1] >= viewport.height * 0.25)) return false;
+      const body_width = Math.max(...body.map((box) => box.rect[2])) - Math.min(...body.map((box) => box.rect[0]));
+      return combineLines(body).filter((line) => isProse(line, body_width)).length >= 3;
+    };
+    return marginal(left, right, end <= viewport.width * 0.15)
+      || marginal(right, left, start >= viewport.width * 0.85);
+  }) : undefined;
+  let regions: Region[];
+  if (margin_gap) {
+    const [start, end] = margin_gap;
+    const left_margin = boxes.filter((box) => box.rect[2] <= start).every((box) => !box.horizontal);
+    const margin_rect: Rect = left_margin ? [crop[0], crop[1], start + scale, crop[3]] : [end - scale, crop[1], crop[2], crop[3]];
+    const margin = region(margin_rect);
+    const occupied = margin.graphic_rect ? [margin.graphic_rect, ...margin.lines.map((line) => line.rect)] : margin.lines.map((line) => line.rect);
+    // The stamp is independent metadata. Keep its actual vertical extent and
+    // show it after the page body, rather than inserting a page-height strip
+    // before the title or making it the nearest top-of-page destination.
+    margin.rect = [margin_rect[0], Math.max(crop[1], Math.min(...occupied.map((rect) => rect[1])) - 2 * scale),
+      margin_rect[2], Math.min(crop[3], Math.max(...occupied.map((rect) => rect[3])) + 2 * scale)];
+    const body_rect: Rect = left_margin ? [end - scale, crop[1], crop[2], crop[3]] : [crop[0], crop[1], start + scale, crop[3]];
+    regions = [...divide(body_rect, 0), margin];
+  } else regions = divide(crop, 0);
   const grouped: Array<{ region: Region; figure_label: string | null }> = [];
   for (const current of regions) {
     const label = captionLabel(current.lines[0]?.text ?? '');
@@ -382,7 +418,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
     grouped.splice(start, grouped.length - start, { region: combined, figure_label: label });
   }
 
-  return grouped.map(({ region: value, figure_label }, index): ReadingBlock => ({
+  return { section_endings, blocks: grouped.map(({ region: value, figure_label }, index): ReadingBlock => ({
     block_id: `p${page_number}-b${index}`,
     page_number,
     source_rect: sourceRect(value.rect),
@@ -391,7 +427,7 @@ export function extractReadingPage(input: ReadingPageInput): ReadingBlock[] {
     block_type: classifyReadingRegion(value, page_evidence, figure_label),
     text: textOf(value.lines),
     figure_label,
-  }));
+  })) };
 }
 
 /** Move only uniquely numbered figures with a single-number prose reference. */
@@ -443,6 +479,7 @@ export async function buildReadingLayout(
   on_progress: (completed: number, total: number) => void,
 ): Promise<ReadingLayout> {
   const blocks: ReadingBlock[] = [];
+  const section_endings = new Map<number, Set<string>>();
   on_progress(0, pages.length);
   for (const [index, page] of pages.entries()) {
     checkCancellation(signal);
@@ -461,7 +498,9 @@ export async function buildReadingLayout(
       const [text_content] = await Promise.all([readPdfTextContent(page), render.promise]);
       checkCancellation(signal);
       const raster = context.getImageData(0, 0, canvas.width, canvas.height);
-      blocks.push(...extractReadingPage({ page_number: page.pageNumber, viewport, text_content, raster }));
+      const analyzed = analyzeReadingPage({ page_number: page.pageNumber, viewport, text_content, raster });
+      blocks.push(...analyzed.blocks);
+      section_endings.set(page.pageNumber, analyzed.section_endings);
     } catch (error) {
       checkCancellation(signal);
       throw error;
@@ -478,5 +517,5 @@ export async function buildReadingLayout(
   }
   checkCancellation(signal);
   return { layout_version: READING_LAYOUT_VERSION, pdf_hash, page_count: pages.length,
-    blocks: placeFiguresNearReferences(classifyReadingDocument(blocks, new Map(pages.map((page) => [page.pageNumber, page.view])))) };
+    blocks: placeFiguresNearReferences(classifyReadingDocument(blocks, new Map(pages.map((page) => [page.pageNumber, page.view])), section_endings)) };
 }

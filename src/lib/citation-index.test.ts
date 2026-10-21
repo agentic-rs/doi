@@ -5,6 +5,21 @@ import { referenceAtDestination, referencesForText } from './citation-index';
 const numbered = [2, 5, 6, 7].map((number) => referenceFromText(`[${number}] Jane Doe. A useful paper. Journal, 2020.`, 10, number)!);
 
 describe('citation associations', () => {
+  it('matches grouped parenthetical author/year citations without commas before years', () => {
+    const refs = [
+      referenceFromText('Chu, Y.; Xu, J.; and Yang, Q. 2023. Qwen-audio technical report. arXiv:2311.07919.', 8, 0)!,
+      referenceFromText('Tang, C.; Yu, W.; and Sun, G. 2023. A useful speech model. Journal.', 9, 1)!,
+      referenceFromText('Xie, Z.; and Wu, C. 2024a. A useful first paper. Journal.', 9, 2)!,
+      referenceFromText('Xie, Z.; and Wu, C. 2024b. A useful second paper. Journal.', 9, 3)!,
+    ];
+    expect(referencesForText('Earlier work (Chu et al. 2023; Tang et\nal. 2023; Xie and Wu 2024a).', refs)).toEqual(refs.slice(0, 3));
+    expect(referencesForText('[Chu, Xu, and Yang 2023; Xie & Wu 2024b]', refs)).toEqual([refs[0], refs[3]]);
+    expect(referencesForText('(Chu, Xu and Yang 2023)', refs)).toEqual([refs[0]]);
+    expect(referencesForText('Chu et al. 2023 results; Xie and Wu 2024a experiments.', refs)).toEqual([]);
+    expect(referencesForText('(Xie and Other 2024a; Tang et al. 2023abcd)', refs)).toEqual([]);
+    expect(referencesForText('(Chu et al. 2023–2024)', refs)).toEqual([]);
+    expect(referencesForText('(Chu et al. 2023)', [...refs, { ...refs[0], reference_id: 'ambiguous' }])).toEqual([]);
+  });
   it('uses actual labels, groups and bounded ranges, deduplicating repeated citations', () => {
     expect(referencesForText('Earlier work [2, 5–7] also cited [2].', numbered).map((r) => r.label)).toEqual(['2', '5', '6', '7']);
     expect(referencesForText('Equations [2] and Figure [5]. Values [1–9999].', numbered)).toEqual([]);

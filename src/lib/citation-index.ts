@@ -33,6 +33,14 @@ function pairedAuthorPattern(item: ReferenceItem): string {
   return `\\s+(?:and|&)\\s+${particles ? `(?:${particles}\\s+)?` : ''}${last}`;
 }
 
+function listedAuthorPattern(item: ReferenceItem): string {
+  if (item.authors.length < 3 || item.authors.length > 8) return '';
+  const names = item.authors.slice(1).map((author) => surnameWords(author).map(escaped).join('\\s+'));
+  if (names.some((name) => !name)) return '';
+  const last = names.pop()!;
+  return `,\\s*${names.join(',\\s*')},?\\s+(?:and|&)\\s+${last}`;
+}
+
 export function referencesForText(text: string, references: ReferenceItem[]): ReferenceItem[] {
   const ids = new Set<string>();
   const labels = new Map<string, ReferenceItem[]>();
@@ -55,6 +63,7 @@ export function referencesForText(text: string, references: ReferenceItem[]): Re
     }
   }
   const normalized = folded(text);
+  const parentheticals = [...normalized.matchAll(/\(([^()]{1,1500})\)|\[([^\[\]]{1,1500})\]/g)].map((match) => match[1] ?? match[2]);
   const author_matches = new Map<string, ReferenceItem[]>();
   for (const item of references) {
     if (!item.authors.length || !item.publication_year) continue;
@@ -69,12 +78,14 @@ export function referencesForText(text: string, references: ReferenceItem[]): Re
     // Require a citation-shaped span; a grouped list contains complete years,
     // including suffixes, so 2025 cannot accidentally match 2025a.
     const citation_year = '(?:18|19|20)\\d{2}[a-z]?';
-    const coauthors = ['\\s+et\\s+al\\.?', pairedAuthorPattern(matches[0])].filter(Boolean).join('|');
+    const coauthors = ['\\s+et\\s+al\\.?', pairedAuthorPattern(matches[0]), listedAuthorPattern(matches[0])].filter(Boolean).join('|');
     const author = `(?<![\\p{L}\\p{N}'-])${escaped(surname)}(?:${coauthors})?`;
     const separator = '\\s*(?:(?:,\\s*)?(?:\\(|\\[)|,)\\s*';
     const years = `(${citation_year}(?:\\s*[,;]\\s*${citation_year}){0,19})(?![\\p{L}\\p{N}_–—-])`;
     const pattern = new RegExp(`${author}${separator}${years}`, 'gu');
-    if ([...normalized.matchAll(pattern)].some((match) => match[1].split(/\s*[,;]\s*/).includes(year))) ids.add(matches[0].reference_id);
+    const bare = new RegExp(`${author}\\s+${years}(?=\\s*(?:[,;]|$))`, 'gu');
+    if ([...normalized.matchAll(pattern), ...parentheticals.flatMap((group) => [...group.matchAll(bare)])]
+      .some((match) => match[1].split(/\s*[,;]\s*/).includes(year))) ids.add(matches[0].reference_id);
   }
   return references.filter((item) => ids.has(item.reference_id));
 }

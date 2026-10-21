@@ -88,11 +88,16 @@ function splitFragments(layout: SplitLineLayout, measurements: SplitSourceMeasur
 }
 
 function sameLayout(first: SplitLineLayout, second: SplitLineLayout): boolean {
-  return first.width === second.width && first.height === second.height && first.fit_width === second.fit_width
+  // Rebase/compose can change the final floating-point bit of a strip offset.
+  // Keep the completed bitmap, selectable layer, and mapping as one object
+  // when their source/display geometry is indistinguishable.
+  const same = (a: number | undefined, b: number | undefined) => a === b
+    || (a !== undefined && b !== undefined && Math.abs(a - b) < 1e-8);
+  return same(first.width, second.width) && same(first.height, second.height) && same(first.fit_width, second.fit_width)
     && first.pieces.length === second.pieces.length && first.pieces.every((piece, index) => {
       const next = second.pieces[index];
-      return piece.source_rect.every((value, edge) => value === next.source_rect[edge])
-        && piece.display_rect.every((value, edge) => value === next.display_rect[edge]);
+      return piece.source_rect.every((value, edge) => same(value, next.source_rect[edge]))
+        && piece.display_rect.every((value, edge) => same(value, next.display_rect[edge]));
     });
 }
 

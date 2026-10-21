@@ -208,6 +208,28 @@ function horizontalCutIsBlank(raster: SplitLineRaster, scale: number, source_wid
   return true;
 }
 
+/** Font em bounds can omit capitals or descenders in subset PDF fonts. Once
+ * the row band is known to be independent, include all of its printed ink in
+ * continuation strips instead of rejecting otherwise safe word boundaries. */
+function printedRow(row: SplitLineRow, band: [number, number], raster: SplitLineRaster, scale: number, width: number): SplitLineRow {
+  const top = Math.max(0, Math.floor(band[0] * scale));
+  const bottom = Math.min(raster.height, Math.ceil(band[1] * scale));
+  const right = Math.min(raster.width, Math.ceil(width * scale));
+  let first = Infinity;
+  let last = -Infinity;
+  for (let y = top; y < bottom; y++) {
+    for (let offset = y * raster.width * 4; offset < (y * raster.width + right) * 4; offset += 4) {
+      if (raster.data[offset + 3] < 16 || Math.min(raster.data[offset], raster.data[offset + 1], raster.data[offset + 2]) >= 230) continue;
+      first = Math.min(first, y / scale);
+      last = (y + 1) / scale;
+      break;
+    }
+  }
+  if (!Number.isFinite(first)) return row;
+  return { ...row, rect: [row.rect[0], Math.max(band[0], Math.min(row.rect[1], first)),
+    row.rect[2], Math.min(band[1], Math.max(row.rect[3], last))] };
+}
+
 /**
  * Choose a safe layout independently for each source row. Two display lines
  * are preferred; a failed printed cut tries three, then retains that full row.
@@ -235,7 +257,7 @@ export function createAdaptiveSplitLineLayout(width: number, height: number, row
   });
   const layouts: SplitLineLayout[] = [];
   for (let index = 0; index < ordered.length; index++) {
-    const row = ordered[index];
+    let row = ordered[index];
     let last = index;
     while (merged_boundaries[last]) last++;
     if (last > index) {
@@ -249,6 +271,7 @@ export function createAdaptiveSplitLineLayout(width: number, height: number, row
       index = last;
       continue;
     }
+    if (raster) row = printedRow(row, bands[index], raster, scale!, width);
     const long = row.rect[2] - row.rect[0] > width / 2;
     const cuts = proposed_cuts[index];
     const original = (full_band = long) => {

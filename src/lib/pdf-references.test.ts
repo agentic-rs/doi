@@ -2,6 +2,57 @@ import { describe, expect, it } from 'vitest';
 import { extractReferences, referenceFromText } from './pdf-references';
 
 describe('bibliography extraction', () => {
+  it('keeps wrapped semicolon author lists together without hanging indents and stops at a larger unnumbered section', () => {
+    const line = (text: string, y: number, height = 10, x = 54) => ({ text, source_rect: [x, y, x + 240, y + height] as [number, number, number, number] });
+    const refs = extractReferences([
+      { page_number: 8, text: '', lines: [
+        line('References', 728, 12),
+        line('Abouelenin, A.; Ashfaq, A.; Atkinson, A.; Awadalla, H.;', 714),
+        line('Bach, N.; Bao, J.; Chen, C.; et al. 2025. Phi-4-mini technical', 703),
+        line('report: Compact yet powerful multimodal language models.', 692),
+        line('arXiv preprint arXiv:2503.01743.', 681),
+        line('Chu, Y.; Xu, J.; and Yang, Q. 2023. Qwen-audio technical', 667),
+        line('report. arXiv preprint arXiv:2311.07919.', 656),
+        line('Xie, Z.; and Wu, C. 2024a. A first useful paper.', 642),
+        line('Smith, J.; Jones, M.; and Doe,', 628),
+      ] },
+      { page_number: 9, text: '', lines: [
+        line('A. 2025. A useful paper continued over a page.', 728),
+        line('Example Journal.', 717),
+        line('Qwen Team. 2025. A model technical report.', 703),
+        line('arXiv preprint arXiv:2503.20215.', 692),
+      ] },
+      { page_number: 10, text: '', lines: [
+        line('Real-World Validation and Case Study', 728, 12),
+        line('This section reports our application experiments.', 700),
+        line('13. Stage 1 converts matched annotations into a scenario.', 680),
+        line('A body link https://example.org/application.', 660),
+      ] },
+    ]);
+    expect(refs).toHaveLength(5);
+    expect(refs.every((item) => item.parse_confidence === 'parsed' && item.label === null)).toBe(true);
+    expect(refs[0]).toMatchObject({ authors: ['A. Abouelenin', 'A. Ashfaq', 'A. Atkinson', 'H. Awadalla', 'N. Bach', 'J. Bao', 'C. Chen'], publication_year: '2025', arxiv_id: '2503.01743' });
+    expect(refs[1]).toMatchObject({ authors: ['Y. Chu', 'J. Xu', 'Q. Yang'], publication_year: '2023' });
+    expect(refs[2]).toMatchObject({ authors: ['Z. Xie', 'C. Wu'], publication_year: '2024a' });
+    expect(refs[3]).toMatchObject({ authors: ['J. Smith', 'M. Jones', 'A. Doe'], publication_year: '2025', page_number: 8 });
+    expect(refs[4]).toMatchObject({ authors: ['Qwen Team'], publication_year: '2025' });
+    expect(refs.every((item) => !/Real-World|Stage 1|example.org/.test(item.citation_text))).toBe(true);
+  });
+
+  it('does not treat ordinary-sized title continuations at a page top as a section end', () => {
+    const refs = extractReferences([
+      { page_number: 8, text: '', lines: [
+        { text: 'References', source_rect: [54, 728, 130, 740] },
+        { text: 'Chu, Y.; and Xu, J. 2023.', source_rect: [54, 700, 290, 710] },
+      ] },
+      { page_number: 9, text: '', lines: [
+        { text: 'Real-World Audio Understanding', source_rect: [54, 728, 290, 738] },
+        { text: 'and generation. Example Journal.', source_rect: [54, 717, 290, 727] },
+      ] },
+    ]);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].title).toBe('Real-World Audio Understanding and generation');
+  });
   it('joins wrapped numbered references over a page break and stops at the appendix', () => {
     const references = extractReferences([
       { page_number: 7, text: 'References\n[1] A. Author. Attention is all you need.\narXiv:1706.03762v7\n[2] B. Author. A long' },

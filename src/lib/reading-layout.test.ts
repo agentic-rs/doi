@@ -43,6 +43,35 @@ function pageFixture(page_number = 1, width = 600, height = 800) {
 }
 
 describe('conservative source-region analysis', () => {
+  it.each(['left', 'right'] as const)('isolates a tall %s margin stamp so a first-page body can split into Content columns', (side) => {
+    const page = pageFixture();
+    page.text(70, 55, 470, 'Audio interaction model', 16);
+    for (const [x, name] of [[70, 'Left'], [330, 'Right']] as const) {
+      for (let index = 0; index < 15; index++) {
+        page.text(x, 200 + index * 14, 210, `${name} paragraph contains enough words to recognize ordinary prose.`);
+      }
+    }
+    const x = side === 'left' ? 30 : 580;
+    page.input.text_content.items.push({ str: 'arXiv:2606.05121v2 [cs.SD] 21 Aug 2026', dir: 'ltr',
+      transform: [0, 20, -20, 0, x, 220], width: 350, height: 20, fontName: 'body', hasEOL: false });
+    page.ink(x - 16, 230, 20, 350);
+    const blocks = extractReadingPage(page.input);
+    const stamp = blocks.find((block) => block.text.startsWith('arXiv:'))!;
+    expect(stamp, JSON.stringify(blocks)).toBeDefined();
+    expect(stamp.block_type).toBe('others');
+    expect(stamp.kind).toBe('original');
+    expect(blocks.at(-1)).toBe(stamp);
+    expect(stamp.source_rect[3] - stamp.source_rect[1]).toBeLessThan(360);
+    expect(blocks[0].block_type).toBe('title');
+    const content = blocks.filter((block) => block.block_type === 'content');
+    expect(content).toHaveLength(2);
+    expect(content[0].text).toContain('Left paragraph');
+    expect(content[1].text).toContain('Right paragraph');
+    expect(content.every((block) => !block.text.includes('arXiv:'))).toBe(true);
+    expect(content[0].source_rect[2]).toBeLessThan(content[1].source_rect[0]);
+    page.expectCompleteCoverage(blocks);
+  });
+
   it('recognizes paragraphs and inline font switches when the body font reports zero bounds', () => {
     const page = pageFixture(3);
     page.input.text_content.styles.body.ascent = 0;

@@ -455,7 +455,7 @@ async function advancePreviewFrame(duration = 16) {
 
 function readingProps(block_id = 'p1-body'): PdfReaderProps {
   reading_fixture.layout = {
-    layout_version: 4, pdf_hash: 'a'.repeat(64), page_count: 4,
+    layout_version: 5, pdf_hash: 'a'.repeat(64), page_count: 4,
     blocks: [
       { block_id: 'p1-intro', page_number: 1, source_rect: [60, 540, 300, 740], kind: 'text', block_type: 'title', text: 'Introduction', figure_label: null },
       { block_id: 'p2-figure', page_number: 2, source_rect: [60, 380, 540, 700], kind: 'figure', block_type: 'graph', text: 'Figure 1', figure_label: 'Figure 1' },
@@ -518,6 +518,16 @@ async function expectSplitReady() {
 }
 
 describe('split lines in Reading view', () => {
+  it('keeps an isolated narrow margin stamp compact instead of fitting it to full width', async () => {
+    const props = readingProps('p1-intro');
+    reading_fixture.layout!.blocks.push({ block_id: 'p1-stamp', page_number: 1,
+      source_rect: [20, 220, 46, 575], kind: 'original', block_type: 'others',
+      text: 'arXiv:2606.05121v2 [cs.SD] 21 Aug 2026', figure_label: null });
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(readingBlock('p1-stamp')).toBeTruthy());
+    expect(parseFloat(readingBlock('p1-stamp').style.height)).toBeLessThanOrEqual(760);
+    expect(parseFloat(readingBlock('p1-stamp').style.width)).toBeLessThan(100);
+  });
   it('splits all Content blocks, restores them together, and keeps individual overrides', async () => {
     const props = readingProps();
     split_fixture.initial_ids.add('p2-body');
@@ -2461,6 +2471,27 @@ describe('reference details in both reading modes', () => {
     expect(buttons[1].textContent).toContain('A third useful title');
     fireEvent.click(buttons[0]);
     expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: null, title: 'A useful paper', publication_year: '2025' }) });
+    expect(props.on_error).not.toHaveBeenCalled();
+  });
+
+  it('shows parenthetical citations from an unindented semicolon bibliography beside the first-page block', async () => {
+    const item = (str: string, y: number) => ({ str, transform: [10, 0, 0, 10, 54, y], width: 240, height: 10, fontName: 'body', dir: 'ltr', hasEOL: true });
+    pdf_fixture.text_content.set(4, [item('References', 750),
+      item('Chu, Y.; Xu, J.; and Yang, Q. 2023. Qwen-audio:', 714),
+      item('Advancing universal audio understanding. arXiv:2311.07919.', 703),
+      item('Tang, C.; Yu, W.; and Sun, G. 2023. Salmonn:', 689),
+      item('Towards generic hearing abilities. arXiv:2310.13289.', 678),
+    ]);
+    const props = readingProps('p1-body');
+    reading_fixture.layout!.blocks[2].text = 'Earlier models (Chu et al. 2023; Tang et al. 2023) support audio understanding.';
+    render(<PdfReader {...props} />);
+    await waitFor(() => expect(document.querySelectorAll('.reference-strip button')).toHaveLength(2));
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('.reference-strip button')];
+    expect(buttons[0].closest('article')?.querySelector('[data-block-id]')?.getAttribute('data-block-id')).toBe('p1-body');
+    expect(buttons[0].textContent).toContain('Qwen-audio');
+    expect(buttons[1].textContent).toContain('Salmonn');
+    fireEvent.click(buttons[0]);
+    expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ authors: ['Y. Chu', 'J. Xu', 'Q. Yang'], publication_year: '2023', arxiv_id: '2311.07919' }) });
     expect(props.on_error).not.toHaveBeenCalled();
   });
 

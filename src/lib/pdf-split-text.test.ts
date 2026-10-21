@@ -167,6 +167,19 @@ function blockColumns(raster: SplitLineRaster, left: number, right: number, top 
 }
 
 describe('source line measurement', () => {
+  it('reuses a completed mapping after insignificant strip-offset rounding and still checks changed ink', async () => {
+    const { page, host } = measuredFixture();
+    const initial = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
+    const raster = blankRaster();
+    const prepared = refinePreparedSplitText(initial, raster, 1);
+    prepared.layout.pieces[1].display_rect[1] += 1e-11;
+    expect(refinePreparedSplitText(prepared, raster, 1)).toBe(prepared);
+    blockColumns(raster, 0, 128);
+    const corrected = refinePreparedSplitText(prepared, raster, 1);
+    expect(corrected).not.toBe(prepared);
+    expect(corrected.fragments.map((fragment) => fragment.text).join('')).toBe('alpha beta gamma deltashort');
+  });
+
   it.each([false, true])('separates overlapping browser font boxes and preserves an explicit narrow PDF space (zero font bounds: %s)', async (zero_bounds) => {
     const { page, host } = measuredFixture({ zero_bounds });
     const prepared = await prepareSplitPdfText(page, [0, 0, 128, 50], host);
