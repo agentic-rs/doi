@@ -36,7 +36,7 @@ import {
   previewArxivPaper, downloadArxivPaper, cancelPaperOperation, markPaperOpened, removePaper,
   resolveReference, saveAnnotation, saveAnnotationFile, saveReadingPosition,
   getReaderCapabilities, setReaderOrientation,
-} from '../lib/tauri';
+} from '../lib/backend';
 import {
   canGoBack, canGoForward, createHistory, currentLocation, goBack, goForward,
   pushLocation, updateCurrent,
@@ -928,7 +928,7 @@ export function WorkspacePage() {
     if (!active || exporting) return;
     setExporting(true);
     try {
-      const fileName = `${active.paper.arxiv_id.replace('/', '-')}-v${active.paper.arxiv_version}.papertrail.json`;
+      const fileName = `${active.paper.arxiv_id.replace('/', '-')}-v${active.paper.arxiv_version}.doi.json`;
       const path = await saveAnnotationFile(fileName, serializeAnnotations(active.paper, annotations));
       if (path) setNotice({ tone: 'success', message: `Annotations exported to ${path}. The original PDF is unchanged.` });
     } catch (cause) {

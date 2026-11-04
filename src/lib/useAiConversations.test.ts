@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as backend from './tauri';
+import * as backend from './backend';
 import type { AiConversation, AiConversationRequest, AiConversationResponse, AiNoteDraft, AiStreamEvent, Annotation, Paper, SelectionContext } from './types';
 import { useAiConversations } from './useAiConversations';
 
-vi.mock('./tauri', () => ({
+vi.mock('./backend', () => ({
   askAiConversation: vi.fn(), generateAiConversationNote: vi.fn(), listAiConversations: vi.fn(),
   updateAiConversationNote: vi.fn(), saveAiConversationNote: vi.fn(), onAiStream: vi.fn(), cancelAiRequest: vi.fn(),
 }));

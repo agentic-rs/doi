@@ -105,7 +105,7 @@ export function LibraryHome(props: LibraryHomeProps) {
   return <section className="library-home" aria-label="Paper library">
     <div className="library-home-inner">
       <header className="library-home-header">
-        <div className="library-home-brand"><span><BookOpen size={26} strokeWidth={1.6} aria-hidden="true" /></span><div><h1>Papertrail</h1><p>A place for curious minds</p></div></div>
+        <div className="library-home-brand"><span><BookOpen size={26} strokeWidth={1.6} aria-hidden="true" /></span><div><h1>Paper Reader</h1><p>A place for curious minds</p></div></div>
         <button type="button" className="library-home-settings" aria-label="AI settings" onClick={props.on_settings}><Settings2 size={21} aria-hidden="true" /></button>
       </header>
       <section className="library-home-add" aria-labelledby={`${inputId}-heading`}>

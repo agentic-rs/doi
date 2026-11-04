@@ -92,7 +92,7 @@ describe('library home', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     expect(document.activeElement).toBe(more);
     fireEvent.click(more);
-    fireEvent.pointerDown(screen.getByRole('heading', { name: 'Papertrail' }));
+    fireEvent.pointerDown(screen.getByRole('heading', { name: 'Paper Reader' }));
     expect(screen.queryByRole('menu')).toBeNull();
     expect(values.on_remove).not.toHaveBeenCalled();
     fireEvent.click(more);

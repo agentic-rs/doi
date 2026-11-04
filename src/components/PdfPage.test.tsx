@@ -414,11 +414,11 @@ describe('PDF region rendering', () => {
     render(<PdfPage page={page} zoom={1} rotation={0} render_paused={false}
       scroll_root={document.createElement('div')} annotations={[]} register_page={vi.fn()} on_link={vi.fn()} on_error={vi.fn()} />);
     const pdf = await screen.findByRole('button', { name: 'Go to destination within this paper' });
-    const app = screen.getByRole('button', { name: 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762' });
+    const app = screen.getByRole('button', { name: 'Open paper in Paper Reader: https://arxiv.org/abs/1706.03762' });
     const external = screen.getByRole('button', { name: 'Open in browser: https://example.com/paper' });
     expect([pdf.dataset.linkKind, app.dataset.linkKind, external.dataset.linkKind]).toEqual(['pdf', 'app', 'external']);
     expect([pdf.title, app.title, external.title]).toEqual([
-      'Within this paper', 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762', 'Open in browser: https://example.com/paper',
+      'Within this paper', 'Open paper in Paper Reader: https://arxiv.org/abs/1706.03762', 'Open in browser: https://example.com/paper',
     ]);
     expect([pdf.childElementCount, app.childElementCount, external.childElementCount]).toEqual([0, 0, 0]);
   });

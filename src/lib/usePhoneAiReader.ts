@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { setReaderAiMode } from './tauri';
+import { setReaderAiMode } from './backend';
 import type { ReaderOrientation } from './types';
 
 interface PhoneAiReaderOptions {
@@ -73,7 +73,6 @@ export function usePhoneAiReader({ enabled, on_error, on_orientation }: PhoneAiR
           if (generationRef.current === generation) close();
           return false;
         }
-        if (orientation !== 'portrait') throw new Error('The iPhone has not reached portrait orientation.');
         phaseRef.current = 'open';
         setPending(false);
         callbacksRef.current.on_orientation(orientation);

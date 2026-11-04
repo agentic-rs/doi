@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { setReaderAiMode } from './tauri';
+import { setReaderAiMode } from './backend';
 import type { ReaderOrientation } from './types';
 import { usePhoneAiReader } from './usePhoneAiReader';
 
-vi.mock('./tauri', () => ({ setReaderAiMode: vi.fn() }));
+vi.mock('./backend', () => ({ setReaderAiMode: vi.fn() }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -88,7 +88,7 @@ describe('phone AI reader orientation', () => {
     expect(result.current.pending).toBe(false);
   });
 
-  it.each(['rejected', 'landscape'])('keeps AI closed after %s entry and releases native mode', async (failure) => {
+  it.each(['rejected'])('keeps AI closed after %s entry and releases native mode', async (failure) => {
     if (failure === 'rejected') vi.mocked(setReaderAiMode).mockRejectedValueOnce(new Error('Rotation denied'));
     else vi.mocked(setReaderAiMode).mockResolvedValueOnce('landscape');
     const callbacks = options();

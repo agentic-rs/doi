@@ -6,7 +6,7 @@ Status: PDF.js accepted and implemented with app-owned annotation storage and ov
 
 An app-owned annotation format is compatible with PDF.js. The important boundary is between PDF rendering and the app's annotation domain. Selecting an engine should depend on rendering fidelity, selection behavior, link access, performance, and packaging rather than whether it offers its own annotation editor.
 
-PDF.js remains the leading candidate for a Tauri/React reader. Prefer composing its documented display API and reusable viewer components inside our reader. Evaluate the components we need before committing to either the full viewer or rebuilding page management ourselves. Avoid a viewer fork or changes to PDF.js internals.
+PDF.js provides the Apell/React reader. Prefer composing its documented display API and reusable viewer components inside our reader. Evaluate the components we need before committing to either the full viewer or rebuilding page management ourselves. Avoid a viewer fork or changes to PDF.js internals.
 
 ## Ownership
 
@@ -41,7 +41,7 @@ Saved papers open directly at their reading location; newly confirmed downloads 
 
 The iOS plugin requests portrait or landscape through the foreground window scene. Screen orientation is independent of PDF page rotation and never changes annotation coordinates or the sidecar schema. Viewport changes preserve the normalized page position; fit-width mode refits automatically, while manually chosen or restored zoom remains stable.
 
-On short landscape screens, the top and bottom controls use single rows with 44-point targets, and references and notes open in a narrow panel below the top bar. Safe-area insets keep overlays clear of the notch and home indicator. A UIKit container retains Tauri's original controller as a child and manages the iPhone status bar: hidden in landscape and visible in portrait, including physical rotation. The WKWebView disables native scroll-inset adjustment because CSS already handles safe areas; applying both would shrink and shift the document viewport. Native dialog guards check both the original controller and its root container.
+On short landscape screens, the top and bottom controls use single rows with 44-point targets, and references and notes open in a narrow panel below the top bar. Safe-area insets keep overlays clear of the notch and home indicator. Apell owns native safe-area and WebView integration. The applet follows physical device orientation; it cannot change native orientation or status-bar policy.
 
 On iPhone, opening Ask AI or a saved conversation first requests portrait and waits for the native scene to settle. The full-screen conversation keeps portrait locked until Back or Escape, then releases the lock and restores the exact previous reading orientation. References, manual notes, and saved annotations remain usable in landscape. Native device idiom identifies phones independently of window width, so narrow iPad windows and Mac retain the existing AI panel. Unknown capabilities must resolve before opening AI. The PDF, conversation requests, selection, and unsent follow-up drafts stay mounted or owned by the workspace across this transition. Native calls serialize entry and restoration, and a full webview reload releases any stale lock.
 
@@ -87,7 +87,7 @@ Check:
 3. Create and restore anchors spanning pages without assuming all pages remain mounted.
 4. Overlay highlights while keeping text selection and embedded links usable.
 5. Route embedded link navigation through app-owned history and restore the source position.
-6. Check page rendering and memory behavior in the Tauri webview on a longer document.
+6. Check page rendering and memory behavior in the Apell webview on a longer document.
 7. Export/reimport our record without depending on viewer state or altering the PDF bytes.
 
 Accept PDF.js if these checks pass. Consider a native-engine comparison if a concrete failure cannot be resolved through its supported integration surface. Keep the annotation format independent either way.

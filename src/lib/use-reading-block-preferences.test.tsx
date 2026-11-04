@@ -5,7 +5,7 @@ import type { ReadingBlock, ReadingBlockPreference } from './types';
 import { useReadingBlockPreferences } from './use-reading-block-preferences';
 
 const fixture = vi.hoisted(() => ({ native: true, list: vi.fn(), save: vi.fn(), save_all: vi.fn(), reset: vi.fn() }));
-vi.mock('./tauri', () => ({
+vi.mock('./backend', () => ({
   nativeAvailable: () => fixture.native,
   listReadingBlockPreferences: fixture.list,
   saveReadingBlockPreference: fixture.save,

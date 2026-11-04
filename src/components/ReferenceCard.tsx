@@ -56,7 +56,7 @@ export function ReferenceCard(props: ReferenceCardProps) {
     {reference.doi && <p className="reference-entry-identifier">DOI: {reference.doi}</p>}
     <div className="reference-entry-actions">
       {target && <button type="button" className="reference-entry-open" disabled={disabled}
-        data-link-kind={target.kind} title={app_link ? 'Open paper in Papertrail' : `External website · ${target.url}`}
+        data-link-kind={target.kind} title={app_link ? 'Open paper in Paper Reader' : `External website · ${target.url}`}
         onClick={() => props.on_open(reference)}>
         {app_link ? <BookOpen size={16} aria-hidden="true" /> : <ArrowUpRight size={16} aria-hidden="true" />}{open_label}
       </button>}
@@ -84,7 +84,7 @@ export function ReferenceCard(props: ReferenceCardProps) {
               return <li key={`${candidate.arxiv_id ?? candidate.doi ?? candidate.url}-${index}`}>
                 <button type="button" className="reference-entry-candidate" disabled={props.busy || !candidate_target}
                   data-link-kind={candidate_target?.kind}
-                  title={candidate_target?.kind === 'app' ? 'Open paper in Papertrail' : candidate_target ? `External website · ${candidate_target.url}` : undefined}
+                  title={candidate_target?.kind === 'app' ? 'Open paper in Paper Reader' : candidate_target ? `External website · ${candidate_target.url}` : undefined}
                   aria-label={`Open ${candidate.match_kind === 'identifier' ? 'identifier match' : 'possible match'}: ${candidate.title}`}
                   onClick={() => props.on_open(candidate)}>
                   <CandidateDetails candidate={candidate} />{candidate_target?.kind === 'app' ? <BookOpen size={16} aria-hidden="true" /> : <ArrowUpRight size={16} aria-hidden="true" />}

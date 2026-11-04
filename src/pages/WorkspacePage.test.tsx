@@ -2,10 +2,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiConversation, AiConversationRequest, AiConversationResponse, AiStreamEvent, Annotation, OperationProgress, Paper, PaperPreview, PdfReaderProps, ReaderOrientation, ReadingLocation, ReferenceCandidate, ReferenceItem, SelectionContext } from '../lib/types';
-import * as backend from '../lib/tauri';
+import * as backend from '../lib/backend';
 import { WorkspacePage } from './WorkspacePage';
 
-vi.mock('../lib/tauri', () => ({
+vi.mock('../lib/backend', () => ({
   nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
   previewArxivPaper: vi.fn(), downloadArxivPaper: vi.fn(), cancelPaperOperation: vi.fn(), markPaperOpened: vi.fn(), removePaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
   askAiConversation: vi.fn(), listAiConversations: vi.fn(), generateAiConversationNote: vi.fn(), updateAiConversationNote: vi.fn(), saveAiConversationNote: vi.fn(),
@@ -1379,7 +1379,7 @@ describe('classified hyperlink flows', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Follow cited paper' }));
     expect(backend.getPdfBytes).toHaveBeenLastCalledWith(second.paper_id);
     act(() => lastReader.on_navigate({ kind: 'external', url: 'https://example.org/paper' }));
-    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    const dialog = screen.getByRole('dialog', { name: 'External link' });
     await act(async () => loading.resolve(new Uint8Array([4, 5, 6])));
     expect(lastReader.paper.paper_id).toBe(first.paper_id);
     expect(lastReader.target_location).toEqual(location);
@@ -1393,9 +1393,9 @@ describe('classified hyperlink flows', () => {
     await openReadingBlock();
     const location = lastReader.target_location;
     act(() => lastReader.on_navigate({ kind: 'external', url: 'https://example.org/research?q=paper#figure-2' }));
-    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    const dialog = screen.getByRole('dialog', { name: 'External link' });
     expect(within(dialog).getByText('example.org')).toBeTruthy();
-    expect(within(dialog).getByText('https://example.org/research?q=paper#figure-2')).toBeTruthy();
+    expect(within(dialog).getByDisplayValue('https://example.org/research?q=paper#figure-2')).toBeTruthy();
     expect(lastReader.reading_active).toBe(false);
     expect(backend.openExternal).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: 'k', metaKey: true });
@@ -1407,7 +1407,7 @@ describe('classified hyperlink flows', () => {
     expect(backend.openExternal).not.toHaveBeenCalled();
   });
 
-  it('keeps DOI failures in the confirmation dialog and restores the citation popup after retry', async () => {
+  it('shows a copyable DOI and restores the citation popup on dismissal', async () => {
     await openFirst();
     const reference: ReferenceItem = {
       reference_id: 'doi-reference', label: '7', citation_text: '[7] A cited paper.', title: null,
@@ -1416,18 +1416,15 @@ describe('classified hyperlink flows', () => {
     };
     act(() => lastReader.on_navigate({ kind: 'reference', reference }));
     fireEvent.click(screen.getByRole('button', { name: 'Open DOI' }));
-    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    const dialog = screen.getByRole('dialog', { name: 'External link' });
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     expect(screen.queryByRole('dialog', { name: 'Reference details' })).toBeNull();
     expect(backend.openExternal).not.toHaveBeenCalled();
-    vi.mocked(backend.openExternal).mockRejectedValueOnce(new Error('Browser unavailable'));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Open in browser' }));
-    expect((await within(dialog).findByRole('alert')).textContent).toContain('Browser unavailable');
-    expect(backend.openExternal).toHaveBeenCalledExactlyOnceWith('https://doi.org/10.1234/example');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Open in browser' }));
+    expect(within(dialog).getByDisplayValue('https://doi.org/10.1234/example')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await screen.findByRole('dialog', { name: 'Reference details' });
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(backend.openExternal).toHaveBeenCalledTimes(2);
+    expect(backend.openExternal).not.toHaveBeenCalled();
     expect(lastReader.paper.paper_id).toBe(first.paper_id);
   });
 
@@ -1435,9 +1432,9 @@ describe('classified hyperlink flows', () => {
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Show paper abstract and metadata' }));
     fireEvent.click(screen.getByRole('button', { name: 'View on arXiv' }));
-    const dialog = screen.getByRole('dialog', { name: 'Open external link?' });
+    const dialog = screen.getByRole('dialog', { name: 'External link' });
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(within(dialog).getByText('https://arxiv.org/abs/1706.03762v7')).toBeTruthy();
+    expect(within(dialog).getByDisplayValue('https://arxiv.org/abs/1706.03762v7')).toBeTruthy();
     expect(backend.openExternal).not.toHaveBeenCalled();
     expect(backend.previewArxivPaper).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));

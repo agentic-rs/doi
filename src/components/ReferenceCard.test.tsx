@@ -58,7 +58,7 @@ describe('reference cards', () => {
     render(<ReferenceCard {...callbacks} />);
     const preview = screen.getByRole('button', { name: 'Preview paper' });
     expect(preview.getAttribute('data-link-kind')).toBe('app');
-    expect(preview.title).toBe('Open paper in Papertrail');
+    expect(preview.title).toBe('Open paper in Paper Reader');
     expect(screen.queryByRole('button', { name: 'Find a match' })).toBeNull();
     fireEvent.click(preview);
     expect(callbacks.on_open).toHaveBeenCalledWith(value);

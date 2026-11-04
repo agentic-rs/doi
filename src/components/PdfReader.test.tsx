@@ -2260,7 +2260,7 @@ describe('PDF link targets', () => {
     pdf_fixture.annotations.set(1, [{ subtype: 'Link', id: 'url', rect: [100, 500, 125, 512], url }]);
     const props = readerProps();
     render(<PdfReader {...props} />);
-    const label = kind === 'app' ? 'Open paper in Papertrail' : 'Open in browser';
+    const label = kind === 'app' ? 'Open paper in Paper Reader' : 'Open in browser';
     fireEvent.click(await screen.findByRole('button', { name: `${label}: ${url}` }));
     expect(props.on_navigate).toHaveBeenCalledWith(kind === 'app' ? { kind, url, arxiv_id } : { kind, url });
   });
@@ -2422,7 +2422,7 @@ describe('reference details in both reading modes', () => {
     render(<PdfReader {...props} />);
     await waitFor(() => expect(props.on_references).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ label: '7', arxiv_id: '1706.03762' })]), 'ready'));
     const baseline = pdf_fixture.render_requests.length;
-    fireEvent.click(await screen.findByRole('button', { name: 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open paper in Paper Reader: https://arxiv.org/abs/1706.03762' }));
     expect(props.on_navigate).toHaveBeenLastCalledWith({ kind: 'reference', reference: expect.objectContaining({ label: '7' }) });
     expect(pdf_fixture.render_requests.length).toBe(baseline);
     expect(props.on_error).not.toHaveBeenCalled();

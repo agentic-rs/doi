@@ -1,46 +1,24 @@
-# AI setup
+# AI in the Apell applet
 
-Papertrail embeds [Tokn](https://github.com/tokn-ai/tokn)'s Rust provider components on desktop and iOS. Bring your own API key for OpenAI, DeepSeek, Z.ai, or Zhipu, including the Z.ai and Zhipu Coding Plan endpoints. Choose **OpenAI-compatible** for a custom chat-completions service; a local service can work without a key.
+Apell owns provider settings, credentials, model selection, transport, and streaming. Paper Reader constructs the source context and completed conversation history, validates note proposals in Rust/WASM, and persists conversations and annotations through the applet's SQLite store.
 
-1. Open AI settings from Library home or the reading overlay.
-2. Choose a provider. Papertrail fills its default API base URL; change it if your account uses a different compatible endpoint.
-3. Enter your provider's API key. Leave the field blank to retain a saved key for the same endpoint.
-4. Choose **Load models**, then select a model. If discovery is unavailable or your model is not listed, enter its ID manually.
-5. Save settings. Select a passage and use the sparkle icon to open **Ask AI**.
-6. Ask a question and continue with **Ask follow-up**. Choose **Generate note** to distill the conversation, review the draft, then **Save note** to annotate the passage.
+Close the applet and use Apell Settings to configure the shared model. Demo mode provides scripted replies and is not evidence of a live model connection.
 
-Model discovery uses the entered key without saving it. Saving settings stores the key in the native credential store. Switching providers or changing the endpoint clears an unsaved key, and an endpoint never inherits another endpoint's saved key. To remove a saved key, select the removal checkbox and save settings.
+The initial answer offers `propose_annotation` as an optional tool. A valid call becomes a draft only; Paper Reader returns a tool result and requests a final text answer. Follow-ups do not offer tools. **Generate note** requires exactly one valid proposal, and failures retain the previous draft. **Save note** writes the reviewed content without another model call.
 
-On iPhone, Ask AI and saved conversations open full screen in portrait. **Back to paper** restores your previous reading direction; unsent questions, edited note drafts, and running requests remain available when you return. References and saved notes still work in landscape. iPad and Mac retain their AI panel in either orientation.
+The runner uses `llm.generate`, not the legacy `llm.complete`. Each provider round has a distinct request ID, while UI events retain the enclosing operation ID. Stop cancels the currently active round and prevents starting another. Cancelled, truncated, failed, and unsupported outcomes retain available answer text as incomplete. Incomplete turns are excluded from future context.
 
-Returning to Library home, switching paper tabs on iPad/Mac, or closing a reader preserves running AI conversations and saved drafts. Reopening the paper loads its conversations at the original passage. Selecting **Remove** from a library paper's menu is different: its confirmation deletes the PDF, notes, and AI conversations, and stops that paper's requests. A late answer or note-save response cannot restore those deleted records.
+Apell returns a replayable assistant `message`. Paper Reader passes it back intact during the tool exchange, preserving native `provider_state`. Ordinary completed question/answer turns form the durable history.
 
-Papertrail sends the selected passage, nearby text, paper metadata, and your question to the chosen provider. Follow-ups and note generation also send the completed questions and answers in that conversation. Model discovery requests its model list without sending paper text. Saved AI notes retain the source answer, model, endpoint, question, and supplied context in the annotation sidecar.
+Thinking events are displayed transiently and excluded from stored answers and exports. Stored turns and notes carry `llm_provenance` with the connection ID, requested model, and nullable provider-reported model. The legacy display field `model_id` uses the requested model when the actual model is unknown; `llm_provenance.model_id` retains that distinction.
 
-The app does not require a Tokn gateway or a separate Tokn configuration. Cloud providers work directly from each device. A custom network endpoint must use HTTPS; HTTP is accepted for loopback endpoints. On iPhone, localhost refers to the phone itself.
+Paper Reader sends the selected passage, nearby context, title, authors, abstract, and completed conversation turns. It does not automatically read every cited paper. The applet rejects oversized context instead of silently truncating it.
 
-## Asking and saving
+Current compatibility limits:
 
-**Ask** streams the response into a draft. When the provider returns thinking text, it appears in an expandable **Thinking** section, separate from the answer. Providers that do not expose thinking still show request activity. **Stop** cancels the request and leaves received text visible as an incomplete answer.
+- Provider capability reports can be `unknown`; each request's outcome is authoritative.
+- A positively identified unsupported-tools response permits one text-only retry for an initial answer. Explicit note generation never substitutes ordinary answer text for a required proposal.
+- Apell has no per-request thinking control. Providers that reject required tools in their configured thinking mode need a compatible model/host configuration.
+- The current host cannot preserve nonempty streaming `reasoning_details`; it rejects that format explicitly.
 
-For the first answer, the model can call `propose_annotation` to suggest a concise note. This tool prepares content for review; it never writes annotations. If the first answer has no proposal, you can edit and save the answer instead.
-
-Use **Ask follow-up** to continue in the same conversation. Follow-ups produce answers without requesting new notes. **Generate note** explicitly asks the model to choose the useful takeaways from the completed conversation through `propose_annotation`. Review and edit that draft before choosing **Save note**. If the model cannot provide a valid tool proposal, the app shows an error and retains the previous draft. Saving does not request another model response, and a failed save retains the draft for retry.
-
-Conversations and note drafts persist locally, separately from annotations, and reopen with the same paper revision and original selected passage. Collapsing a conversation keeps its history. Interrupted answers are marked incomplete and excluded from future model context. Thinking is visible during the session but is not persisted or exported. Annotation exports include saved notes and their source answers; unsaved conversations and drafts are not exported. A note generated from a conversation retains the completed questions and answers it was based on.
-
-Further answers do not change a saved annotation or silently regenerate a draft. A draft based on earlier answers is labelled accordingly; generate a new draft to include later answers. Saving a new generated draft creates a new annotation. Saved notes display the reviewed text and retain their source answer for reference. Older annotations without a separate note continue to display their original answer.
-
-## Connection troubleshooting
-
-Papertrail honors proxy environment variables. On desktop, a proxy using a private certificate authority can provide a PEM certificate bundle through `SSL_CERT_FILE`, or `CURL_CA_BUNDLE` when the former is unset or empty. Papertrail loads this bundle when it starts and adds its certificates to Papertrail's trust configuration alongside the operating system's trusted roots. Certificate and hostname verification remain enabled. Restart Papertrail after changing this configuration.
-
-Connection errors distinguish certificate verification, secure-connection, DNS, refused-connection, and timeout failures. Model discovery identifies its own failures. An unreadable or invalid configured certificate bundle prevents network requests but leaves the local library available. A manually entered model ID bypasses model discovery; it cannot fix a connection failure affecting AI answers.
-
-## Implementation
-
-Tokn's provider crates are pinned to upstream revision `4db3eedb869604b460980956ad42152daaa23ad1`. Papertrail constructs a request-scoped account using a key read from Keychain, then uses Tokn's provider request, credential, and input-transformation APIs. Model discovery uses the same provider headers with a bounded response reader. The custom compatible option uses Tokn's llama.cpp chat adapter with the configured endpoint and optional key.
-
-The full gateway and file-backed SDK client are not started. App settings remain in Papertrail's database, credentials remain in Keychain, and existing endpoint/model settings deserialize as a custom compatible provider. No Tokn auth file or request archive is created by this integration. Tokn may read an existing cache of public model metadata when constructing a provider.
-
-Answers use a bounded streaming parser with buffered-response compatibility. Conversation history uses structured user/assistant messages; total context is bounded and oversized requests fail without silently discarding earlier turns. Tool arguments are validated before becoming a draft, and tool follow-ups are bounded. Explicit note generation disables DeepSeek thinking to support its required tool-call mode without storing reasoning history. OAuth account setup and direct Anthropic BYOK are not part of this integration.
+Live-provider and physical-device behavior still require integration testing.

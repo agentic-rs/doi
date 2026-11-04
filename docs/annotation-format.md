@@ -20,7 +20,7 @@ Each record contains:
 
 A note body has `kind: "note"` and `content`. An AI answer has `kind: "ai_answer"`, `question`, `answer`, `provider_id`, `model_id`, and `context_text`. Its optional `note_content` contains the note reviewed and saved by the user, while `answer` preserves the complete response. Missing `note_content` identifies a legacy record that displays `answer` directly. Editing an AI note changes `note_content` and retains the original answer and provenance. Provider credentials and thinking text are never exported.
 
-Asking creates a session draft, not an annotation. The model's `propose_annotation` tool supplies only proposed text; Papertrail owns IDs, source anchors, and timestamps. The dedicated Save action persists a draft with a stable ID so retries cannot create duplicate annotations. This is an optional field extension of version 1; existing sidecars remain readable without migration.
+Asking creates a session draft, not an annotation. The model's `propose_annotation` tool supplies only proposed text; Paper Reader owns IDs, source anchors, and timestamps. The dedicated Save action persists a draft with a stable ID so retries cannot create duplicate annotations. This is an optional field extension of version 1; existing sidecars remain readable without migration.
 
 ## Anchoring
 
@@ -41,3 +41,10 @@ Reading locations are separate from annotation geometry. `page_position` is a pa
 Import validates the envelope, version, IDs, timestamps, finite quadrilateral coordinates, text anchors, and body type before attempting saves. The backend validates again against the local paper. Duplicate IDs within a sidecar are rejected; importing an existing ID updates that record.
 
 Unsupported versions fail explicitly. Future schema migrations belong to the app and remain independent of the chosen PDF renderer. Optional export to native PDF highlights/comments would be an additional projection of these records, not the source of truth.
+
+## Apell model attribution
+
+New AI annotations may include `body.llm_provenance` with `connection_id`,
+`requested_model_id`, and nullable `model_id`. A null actual model remains unknown;
+the existing display `model_id` can fall back to the requested model. Continuation
+handles and thinking are never exported. Older sidecars remain valid.

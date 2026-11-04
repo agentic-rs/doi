@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { ReadingLayout } from './types';
 import { buildReadingLayout, READING_LAYOUT_VERSION } from './reading-layout';
-import { getReadingLayout, nativeAvailable, saveReadingLayout } from './tauri';
+import { getReadingLayout, nativeAvailable, saveReadingLayout } from './backend';
 
 export function useReadingLayout(pages: PDFPageProxy[] | null, pdf_hash: string, paper_id: string, enabled: boolean) {
   const [cached, setCached] = useState<{ pages: PDFPageProxy[]; layout: ReadingLayout } | null>(null);

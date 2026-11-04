@@ -1,99 +1,65 @@
-# Papertrail
+# Paper Reader
 
-A local desktop and iOS app for reading arXiv papers, following references, and saving AI explanations beside selected passages.
+A local Apell applet for reading arXiv papers, following references, and saving AI explanations beside selected passages. React and PDF.js provide the reader; Rust/WASM owns AI prompts, tool-call policy, arXiv parsing, hashing, and record validation. Apell supplies SQLite, private files, HTTP, and the shared model connection.
 
-Built with Tauri 2, Rust, React, TypeScript, and PDF.js. PDFs stay unchanged; annotations belong to the app and can be exported separately.
+The package name is `@agentic-rs/doi`, the Apell applet ID is `doi`, and the display name is **Paper Reader**. The `doi` applet uses a separate data store from the earlier `papertrail` nightly.
 
-## Run locally
+The applet replaces the standalone Tauri application. PDFs remain unchanged; annotations belong to Paper Reader.
 
-Prerequisites: Node.js 22.18 or newer, pnpm, Rust 1.90 or newer, and your platform's [Tauri development prerequisites](https://v2.tauri.app/start/prerequisites/).
+## Build and install
 
-```sh
-pnpm install
-pnpm desktop:dev
-```
-
-This opens the native desktop app for testing. Frontend changes reload automatically; Rust changes rebuild and restart the app. Keep the terminal running, and press Ctrl+C to stop. Local desktop development does not require an iPhone installation or Apple device signing.
-
-The install step copies PDF.js fonts, character maps, and WASM assets locally. The development server binds to `127.0.0.1:1427`. Your desktop library persists between runs and is separate from the phone's library. See [desktop development](docs/desktop.md) for the workflow.
-
-To make a desktop bundle:
+Requires Node.js 24+, pnpm, Rust, the `wasm32-unknown-unknown` target, and `wasm-bindgen-cli` **0.2.126** (matching the pinned crate).
 
 ```sh
-pnpm desktop:build
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.126 --locked
+pnpm install --frozen-lockfile
+cargo fetch --manifest-path crates/doi-ai/Cargo.toml
+APELL_BIN=apell pnpm build
 ```
 
-To check the project:
+Builds use the locked Rust dependencies offline after that initial fetch. Output:
 
-```sh
-pnpm test
-pnpm build
-cargo test --manifest-path src-tauri/Cargo.toml
-```
+- `artifacts/doi.apel`: self-contained installable bundle.
+- `artifacts/doi.sha256`: checksum of the exact bundle bytes.
 
-`pnpm dev` displays the interface in a browser for layout development. Downloads, storage, and AI requests require the native app runtime.
+In an updated Apell host, choose **+ → Choose a bundle** and select the JSON file. Install the current Apell CLI and put `apell` on PATH, or set `APELL_BIN` to its executable. Packaging uses `apell pack` with API revision 2.
 
-## Build for iOS
+The required LLM contract includes `llm.generate`, tool continuation, explicit outcomes, and per-request provenance. The SDK snapshot is pinned in `applet/vendor/apell-sdk/ORIGIN.md`.
 
-Requires macOS, Xcode with iOS support, CocoaPods, XcodeGen, libimobiledevice, and the Rust iOS targets. The app supports iOS 18 or newer.
-
-```sh
-pnpm ios:init
-pnpm ios:sim
-```
-
-To build or run on an iPhone through Xcode:
-
-```sh
-pnpm ios:open
-```
-
-This prepares the local Xcode toolchain environment, bundles the frontend, and opens the generated project. Keep the terminal running while using Xcode's Run or Build actions; Ctrl+C stops the helper. Select your Apple account/team and iPhone in Xcode, then press Run. The launcher itself does not install or run the app on the phone.
-
-To export a signed iPhone package after configuring signing:
-
-```sh
-APPLE_DEVELOPMENT_TEAM=YOUR_TEAM_ID pnpm ios:build
-```
-
-See [iOS build and installation](docs/ios.md) for simulator installation, signed device installation, and Xcode troubleshooting. The generated Xcode project and signing settings stay local; run `pnpm ios:init` on each fresh checkout.
+Updating the bundle with the same `doi` applet ID preserves its library. This version starts a separate applet library; it does not automatically read the former standalone application's files or credentials. Those files are not modified. Existing annotation sidecars can be imported after downloading the exact same PDF revision.
 
 ## Use
 
-1. The app opens to your library, with recent papers, search, and **Add a paper**. Enter an arXiv ID or URL and choose **Find paper**. Modern IDs, legacy IDs, and explicit versions are supported.
-2. Review the title, authors, ID/version, and abstract before downloading. The preview has two actions: **Download & add to library** and **Cancel**. Cancel returns to the input with your entry preserved. A successful download adds the paper and opens it; reopening a saved paper resumes reading directly. **Info** remains available for its metadata and abstract.
-3. Tap a page to show or hide the reading controls. The overlay opens the library, **Info**, **Refs & notes**, and settings. **Close paper** saves the reading position and keeps the paper in the library. iPhone has one active reader; iPad and Mac use tabs, and closing the last tab returns home. On iOS, **Landscape** or **Portrait** changes the viewer's screen orientation; **Rotate clockwise** in the PDF controls separately rotates the PDF pages.
-4. Select text, then tap the floating sparkle icon to ask AI. Use the Notes panel to add a manual note. Drag the icon to move it out of the way. **Ask** streams the answer and any provider-exposed thinking. Review and edit the model's suggested note, then use **Save note** to keep it beside the passage. In Settings, choose your AI provider, enter your own API key, and use **Load models** to choose a model. You can also enter its ID manually. On iPhone, AI opens full screen in portrait; **Back to paper** restores the previous reading direction. iPad and Mac keep AI available alongside landscape reading. Tokn's Rust provider components run inside the app on desktop and iOS. See [AI setup](docs/ai.md).
-5. In Reading view, compact reference rows appear below citing blocks. Tap a row or an embedded citation in the original PDF to inspect its title, authors, year, venue, and original citation. **View bibliography** jumps to the source entry; Back returns to the passage. **Preview paper** reads arXiv metadata before offering **Download & add to library** or **Cancel**. Saved papers open directly. **Find a match** offers clearly marked Crossref suggestions for references without an arXiv ID. See [References](docs/references.md).
-6. Back and Forward restore earlier positions and view modes. On iPhone, history includes cross-paper links. On iPad and Mac, each tab has its own history; following a paper reference opens or focuses its tab, with **Back to source** returning to the referring paper. Switching tabs or returning home preserves running AI conversations.
-7. Use a library paper's menu to **Remove** it. Confirmation deletes its downloaded PDF, notes, AI conversations, and reading cache, and closes its tabs. Closing a reader or tab does not remove these records.
-8. Export annotations as a JSON sidecar. Import it alongside the exact same PDF revision.
+1. Enter an arXiv ID or URL, inspect its metadata, then download and open it.
+2. Read the original PDF or switch to Reading view. Reading view crops source blocks and preserves the paper's typography; it does not use OCR or reflow text.
+3. Select a passage to ask a question or add a manual note. Follow-up answers and editable note drafts persist with the paper.
+4. Configure the model in **Apell Settings**. Paper Reader does not collect API keys. Model-proposed notes require your review and an explicit **Save note** action.
+5. Follow detected arXiv references in the reader; Crossref can suggest matches for citations without an identifier.
+6. Removing a paper deletes its library records and queues its cached PDF files for cleanup. Closing a tab only saves the reading position.
 
-Choose **Reading view** in the overlay for an optional stream of cropped source blocks. It trims whitespace, reads clear columns in sequence, and places reliably detected figures with their captions after an explicit figure reference. Tap a figure or choose **Enlarge** for a closer look. The small document icon (**View in PDF**) opens its original location; Back returns to the reading block. Source icons for text appear with the reading controls, hover, or keyboard focus. Switch back using **Original PDF**. The layout is analyzed locally and cached for later openings.
+## Current host limits
 
-Reading view preserves the paper's original typography. It does not reflow text or use OCR. Complex layouts and uncertain figure matches retain their source arrangement, so some papers benefit more than others.
+- PDF downloads use Apell HTTP and are limited to **16 MiB**. Redirect responses are reported as errors. Cancellation stops waiting and prevents saving a cancelled download; the host does not expose individual HTTP transport cancellation.
+- PDF.js runs its worker protocol on the main thread with embedded fonts, CMaps, and decoder assets. Native font-face loading is disabled to comply with Apell's sandbox. Large or complex documents may render more slowly.
+- Screen orientation follows the device. Applet-controlled rotation of the screen is unavailable; PDF page rotation still works.
+- External links are shown as selectable addresses. Annotation export shows selectable JSON. Native browser opening, file export/share, and automatic import of the standalone library require additional host support.
+- LLM compatibility depends on the selected provider. Required note tools may be unsupported; failed generation retains the existing draft. Provider-specific thinking controls and streaming `reasoning_details` are not available through the current host contract.
 
-Pinch the PDF with two fingers, use a Mac trackpad pinch, or hold Ctrl while scrolling to zoom. Only the PDF scales; reading overlays keep their size. A page preview follows the gesture, then sharpens after release or a short pause in Ctrl+scroll.
+## Verification
 
-**Fit page width** remains selected across page and citation jumps, reopening a paper, viewport changes, and PDF rotation. A PDF link with an explicit zoom level can override this. Pinching or using the + and − buttons selects manual zoom. Older saved reading positions retain their numeric zoom until you select **Fit page width**.
+```sh
+pnpm test
+pnpm test:ai
+```
 
-PDFs, library metadata, positions, and annotations live in the platform's app data directory for `app.papertrail.reader`. Credentials use the native credential store, rather than the annotation file or frontend storage. Reading cached papers and notes works offline; paper downloads, reference lookup, and remote AI calls need a connection.
+`pnpm test` first builds the applet and type-checks it, then runs the reader/UI suite, compiled-WASM LLM tests, SQLite-backed persistence tests, and an actual PDF.js rendering check. Provider tests use fixtures and do not spend model credits. See [verification notes](docs/verification.md) for the limits of these checks.
 
-If arXiv returns HTTP 429 during metadata lookup or PDF download, Papertrail shows **Waiting for arXiv** and the retry time. Requests share a three-second pacing clock and use up to three automatic retries, honoring `Retry-After` or increasing delays when it is absent. Cooldowns persist across app restarts. Cancel stops waiting and keeps your input; cached papers remain readable. A failed PDF download keeps the preview so retrying does not repeat its metadata lookup.
+## Source layout
 
-Reference extraction from plain PDF text is heuristic. Embedded links and explicit identifiers are the most reliable path; bibliography text without an identifier can require manual review. AI answers use the selected passage, surrounding text, and paper metadata; they do not automatically read every cited paper.
+- `src/`: reader UI, PDF analysis, navigation, and annotation contracts.
+- `applet/src/`: Apell bridge adapters, transactional storage, paper downloads, conversations, and embedded PDF setup.
+- `crates/doi-ai/`: portable Rust/WASM policy, parsing, models, and validation.
+- `scripts/build-applet.ts`: self-contained bundle packaging.
 
-## Project layout
-
-- `src/pages`: workspace and interaction state.
-- `src/components`: reader, selection/annotation UI, and settings.
-- `src/lib/types.ts`: shared serialized contracts.
-- `src/lib/tauri.ts`: command wrappers.
-- `src/lib/history.ts`: reading-location history for the phone reader and each desktop/iPad tab.
-- `src/lib/annotations.ts`: sidecar validation and serialization.
-- `src-tauri/src`: downloads, persistence, provider requests, and reference lookup.
-- `docs`: product plan, reader decisions, and annotation format.
-
-All website content stays local. There is no hosting or deployment setup.
-
-See [verification notes](docs/verification.md) for completed checks and remaining native interaction limits.
+All output stays local. No hosting, publishing, or deployment is configured.

@@ -10,11 +10,11 @@ The first release treats discovery as following references and reopening the loc
 
 ## Proposed defaults
 
-- Local desktop app using Tauri 2, Rust, React, and TypeScript.
+- Local Apell applet using Rust/WASM, React, and TypeScript.
 - Original PDF layout with selectable text using PDF.js.
 - An app-owned, versioned annotation format, independent of the PDF engine and its annotation editor.
 - A local library, cached PDFs, and saved annotations that remain usable offline.
-- User-configured AI providers through embedded Tokn components, with keys in the native credential store.
+- Shared model connection managed by Apell; provider keys stay in the host credential store.
 - User-directed reference exploration. Automatic AI traversal requires a separate decision about depth, context, and cost.
 - No website creation or deployment.
 
@@ -74,7 +74,7 @@ On iPhone, internal paper jumps and cross-paper links share the active reader's 
 
 ## Command plan
 
-All network and file operations use async Rust command handlers. Keep invocation wrappers in `src/lib/tauri.ts`; keep the app entry points small and place domain logic in modules.
+Network, files, SQLite, and LLM transport use the asynchronous Apell bridge. `src/lib/backend.ts` exposes the applet adapters; portable domain validation and AI policy live in Rust/WASM. See the README for current host limits.
 
 Library commands:
 
@@ -148,7 +148,7 @@ SQLite schema v4 stores metadata, positions, annotations, reading caches, and AI
 - [arXiv API terms of use](https://info.arxiv.org/help/api/tou.html)
 - [PDF.js getting started](https://mozilla.github.io/pdf.js/getting_started/)
 - [PDF.js API](https://mozilla.github.io/pdf.js/api/)
-- [Tauri command interface](https://v2.tauri.app/develop/calling-rust/)
+- The pinned Apell SDK contract in `applet/vendor/apell-sdk/ORIGIN.md`.
 - [Crossref bibliographic lookup](https://github.com/CrossRef/rest-api-doc)
 
 ## Future decisions

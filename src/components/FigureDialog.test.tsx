@@ -233,7 +233,7 @@ describe('enlarged PDF figures', () => {
     await ready();
     fireEvent.click(await screen.findByRole('button', { name: 'Go to destination within this paper' }));
     expect(props.on_link).toHaveBeenCalledWith(expect.objectContaining({ destination: [0, { name: 'Fit' }], url: null }), 2);
-    fireEvent.click(screen.getByRole('button', { name: 'Open paper in Papertrail: https://arxiv.org/abs/1706.03762' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open paper in Paper Reader: https://arxiv.org/abs/1706.03762' }));
     expect(props.on_link).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'https://arxiv.org/abs/1706.03762' }), 2);
     expect(props.on_source).not.toHaveBeenCalled();
     const source_button = screen.getByRole('button', { name: 'View in PDF' });

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openExternal } from './tauri';
+import { openExternal } from './backend';
 import { useExternalLink } from './useExternalLink';
 
-vi.mock('./tauri', () => ({ openExternal: vi.fn() }));
+vi.mock('./backend', () => ({ openExternal: vi.fn() }));
 
 function deferred() {
   let resolve!: () => void;

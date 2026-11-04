@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan, Expand, FileText, WrapText } from 'lucide-react';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import worker_url from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import { pdf_options } from '../../applet/src/pdf';
 import type { PageAnchor, PdfReaderProps, PdfZoomMode, ReadingLocation, ReaderMode, ReaderTarget, ReadingBlock, ReferenceItem } from '../lib/types';
 import { anchorViewportPosition, clamp, safeReferenceUrl } from '../lib/pdf-geometry';
 import { extractReferences, referenceAtDestination, referencesForText } from '../lib/pdf-references';
@@ -31,7 +31,7 @@ import { NoteCard } from './NoteCard';
 import './pdf-reader.css';
 import './reading-view.css';
 
-GlobalWorkerOptions.workerSrc = worker_url;
+
 
 const minimum_zoom = 0.1;
 const maximum_zoom = 3;
@@ -334,15 +334,11 @@ export function PdfReader(props: PdfReaderProps) {
     setZoom(clamp(initial.zoom, minimum_zoom, maximum_zoom));
     setRotation(initial.rotation);
     setActivePage(initial.page_number);
-    const asset_base = new URL(`${import.meta.env.BASE_URL}pdfjs/`, document.baseURI).href;
     const loading_task = getDocument({
       // PDF.js transfers this buffer to its worker. The app's cached bytes must
       // survive paper switches and React StrictMode's effect replay.
       data: pdf_data.slice(),
-      cMapUrl: `${asset_base}cmaps/`,
-      cMapPacked: true,
-      standardFontDataUrl: `${asset_base}standard_fonts/`,
-      wasmUrl: `${asset_base}wasm/`,
+      ...pdf_options,
     });
     void (async () => {
       const document = await loading_task.promise;

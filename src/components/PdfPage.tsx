@@ -352,7 +352,7 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
               if (right <= left || bottom <= top) return null;
               const target = link.url ? classifyPaperUrl(link.url) : null;
               const link_kind = target?.kind ?? 'pdf';
-              const title = target?.kind === 'app' ? 'Open paper in Papertrail'
+              const title = target?.kind === 'app' ? 'Open paper in Paper Reader'
                 : target?.kind === 'external' ? 'Open in browser' : 'Within this paper';
               return (
                 <button

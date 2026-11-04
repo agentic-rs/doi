@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { safeReferenceUrl } from './pdf-geometry';
-import { openExternal } from './tauri';
+import { openExternal } from './backend';
 
 interface ExternalLinkRequest {
   url: string;

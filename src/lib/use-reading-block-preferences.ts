@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReadingBlock, ReadingBlockPreference } from './types';
-import { listReadingBlockPreferences, nativeAvailable, resetReadingBlockPreference, saveReadingBlockPreference, saveReadingBlockPreferences } from './tauri';
+import { listReadingBlockPreferences, nativeAvailable, resetReadingBlockPreference, saveReadingBlockPreference, saveReadingBlockPreferences } from './backend';
 
 interface PreferenceState {
   paper_id: string;

@@ -105,6 +105,7 @@ export type AnnotationBody =
       provider_id: string;
       model_id: string;
       context_text: string;
+      llm_provenance?: LlmProvenance;
     };
 
 export interface Annotation {
@@ -157,6 +158,14 @@ export interface AiSettings {
   base_url: string;
   model_id: string;
   has_api_key: boolean;
+  host_managed?: boolean;
+  mode?: 'demo' | 'provider';
+}
+
+export interface LlmProvenance {
+  connection_id: string;
+  requested_model_id: string;
+  model_id: string | null;
 }
 
 export interface AiModel {
@@ -191,6 +200,7 @@ export interface AiConversationTurn {
   model_id: string;
   error: string | null;
   created_at: string;
+  llm_provenance?: LlmProvenance;
 }
 
 export interface AiNoteDraft {
@@ -204,6 +214,7 @@ export interface AiNoteDraft {
   created_at: string;
   saved_annotation_id: string | null;
   source_turn_count: number;
+  llm_provenance?: LlmProvenance;
 }
 
 export interface AiConversation {

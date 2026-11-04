@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   askAiConversation, cancelAiRequest, generateAiConversationNote, listAiConversations,
   onAiStream, saveAiConversationNote, updateAiConversationNote,
-} from './tauri';
+} from './backend';
 import type { AiConversation, AiConversationRequest, AiConversationResponse, Annotation, Paper, SelectionContext } from './types';
 
 export interface AiConversationView {

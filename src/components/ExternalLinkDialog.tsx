@@ -21,20 +21,17 @@ export function ExternalLinkDialog(props: ExternalLinkDialogProps) {
     dismissible={!props.busy} on_cancel={props.on_cancel}>
     <div className="library-dialog-scroll external-link-content">
       <span className="external-link-symbol"><ArrowUpRight size={22} aria-hidden="true" /></span>
-      <h2 id={titleId}>Open external link?</h2>
-      <p id={descriptionId}>This link opens in your browser.</p>
+      <h2 id={titleId}>External link</h2>
+      <p id={descriptionId}>Copy this address to open it in your browser. Apell does not open external links yet.</p>
       <dl className="external-link-destination">
         <div><dt>Domain</dt><dd dir="ltr">{destination.hostname}</dd></div>
-        <div><dt>Full URL</dt><dd className="external-link-url" dir="ltr">{props.url}</dd></div>
+        <div><dt>Full URL</dt><dd className="external-link-url" dir="ltr"><input aria-label="Link address" readOnly value={props.url} onFocus={(event) => event.currentTarget.select()} /></dd></div>
       </dl>
       {props.busy && <p className="library-dialog-message" role="status"><LoaderCircle size={18} className="spin" aria-hidden="true" /> Opening browser…</p>}
       {props.error && <p className="library-dialog-error" role="alert">{props.error}</p>}
     </div>
     <footer className="library-dialog-actions">
       <button type="button" className="library-dialog-cancel" data-dialog-cancel disabled={props.busy} onClick={props.on_cancel}>Cancel</button>
-      <button type="button" className="library-dialog-confirm" disabled={props.busy} onClick={props.on_confirm}>
-        <ArrowUpRight size={18} aria-hidden="true" />Open in browser
-      </button>
     </footer>
   </LibraryDialog>;
 }

@@ -6,7 +6,7 @@ import type { ReadingLayout } from './types';
 import { useReadingLayout } from './use-reading-layout';
 
 const fixture = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), build: vi.fn() }));
-vi.mock('./tauri', () => ({ nativeAvailable: () => true, getReadingLayout: fixture.get, saveReadingLayout: fixture.save }));
+vi.mock('./backend', () => ({ nativeAvailable: () => true, getReadingLayout: fixture.get, saveReadingLayout: fixture.save }));
 vi.mock('./reading-layout', () => ({ READING_LAYOUT_VERSION: 5, buildReadingLayout: fixture.build }));
 const pages = [{ pageNumber: 1 }] as PDFPageProxy[];
 const layout: ReadingLayout = { layout_version: 5, pdf_hash: 'a', page_count: 1, blocks: [{
