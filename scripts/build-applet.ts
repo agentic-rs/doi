@@ -1,6 +1,6 @@
 import './build-applet-ai.ts';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { build } from 'esbuild';
 
@@ -28,6 +28,7 @@ const staging = 'artifacts/package';
 await mkdir(staging, { recursive: true });
 await writeFile(staging + '/manifest.json', JSON.stringify(manifest));
 await writeFile(staging + '/index.html', html);
+await copyFile('assets/icon.png', staging + '/icon.png');
 const packer = process.env.APELL_BIN ?? 'apell';
 execFileSync(packer, ['pack', staging, '--output', 'artifacts/doi.apel'], { stdio: 'inherit' });
 const bundle = await readFile('artifacts/doi.apel');

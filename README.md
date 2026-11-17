@@ -62,4 +62,28 @@ pnpm test:ai
 - `crates/doi-ai/`: portable Rust/WASM policy, parsing, models, and validation.
 - `scripts/build-applet.ts`: self-contained bundle packaging.
 
-All output stays local. No hosting, publishing, or deployment is configured.
+## Publish to Apell Store
+
+The [manual GitHub Actions workflow](.github/workflows/publish.yml) builds and
+tests Paper Reader on `main`, then publishes the verified bundle through Apell's
+GitHub OIDC integration. Normal pushes do not trigger Store publishing.
+
+1. Sign in to the intended Apell Store and register or claim access to `doi`.
+2. Set the repository Actions variable `APELL_STORE_URL` to that Store's canonical HTTPS origin.
+3. Connect the package to `agentic-rs/doi`, `.github/workflows/publish.yml`,
+   `refs/heads/main`, and the `workflow_dispatch` event. A Store maintainer can
+   configure this in the Store or run the following after `apell login`:
+
+   ```sh
+   apell package oidc set doi --repo agentic-rs/doi \
+     --workflow .github/workflows/publish.yml \
+     --ref refs/heads/main --event workflow_dispatch
+   ```
+
+4. Once the tested release commit is on `main`, run **Publish Paper Reader to
+   Apell Store** from the Actions tab.
+
+Store versions are immutable. Bump `package.json` before publishing changed
+bundle bytes, listing metadata, or artwork. The artwork migrated from Apell's
+Paper Reader showcase is now maintained in `assets/icon.svg` here. When it changes,
+regenerate the 256 × 256 `assets/icon.png` used in the package and Store listing.
