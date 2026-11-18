@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build-applet.ts",
     "build:ai": "node scripts/build-applet-ai.ts",
+    "simulator:sync": "pnpm test && pnpm test:ai && \"${APELL_BIN:-apell}\" dev --project \"${APELL_PROJECT:-../apell}\" --target \"${APELL_SIMULATOR:-Apell iPhone 16 Pro}\" --install artifacts/doi.apel",
     "test": "pnpm build && vitest run",
     "test:ai": "cargo test --offline --manifest-path crates/doi-ai/Cargo.toml"
   },

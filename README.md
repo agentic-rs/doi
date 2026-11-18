@@ -23,11 +23,21 @@ Builds use the locked Rust dependencies offline after that initial fetch. Output
 - `artifacts/doi.apel`: self-contained installable bundle.
 - `artifacts/doi.sha256`: checksum of the exact bundle bytes.
 
-In an updated Apell host, choose **+ → Choose a bundle** and select the JSON file. Install the current Apell CLI and put `apell` on PATH, or set `APELL_BIN` to its executable. Packaging uses `apell pack` with API revision 2.
+In Apell, tap **+ → Install an .apel file** and select `artifacts/doi.apel`. Install the current Apell CLI and put `apell` on PATH, or set `APELL_BIN` to its executable. Packaging uses `apell pack` with API revision 2.
 
 The required LLM contract includes `llm.generate`, tool continuation, explicit outcomes, and per-request provenance. The SDK snapshot is pinned in `applet/vendor/apell-sdk/ORIGIN.md`.
 
 Updating the bundle with the same `doi` applet ID preserves its library. This version starts a separate applet library; it does not automatically read the former standalone application's files or credentials. Those files are not modified. Existing annotation sidecars can be imported after downloading the exact same PDF revision.
+
+### Update the iOS simulator
+
+After changing the applet, run the following command on the development Mac with Xcode and a configured Apell iOS checkout.
+
+```sh
+pnpm simulator:sync
+```
+
+This builds Paper Reader, runs the applet and Rust tests, then uses `apell dev --install` to launch the shell and wait for its install receipt. The defaults are the sibling `../apell` checkout and the **Apell iPhone 16 Pro** simulator. Set `APELL_PROJECT` or `APELL_SIMULATOR` to use another checkout or simulator. Same-version development builds update in place and keep the simulator's Paper Reader library.
 
 ## Use
 
