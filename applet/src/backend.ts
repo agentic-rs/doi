@@ -2,7 +2,8 @@ import { createId, fs, hostCall, http, llm } from '../vendor/apell-sdk';
 import type { AiAnswer, AiModel, AiRequest, AiSettings, ReaderCapabilities, ReaderOrientation, ReferenceCandidate } from '../../src/lib/types';
 import { store } from './store';
 import { cancelPaperAi } from './conversations';
-import { invalidatePreviews, live_downloads, type PdfFiles } from './papers';
+import { invalidatePreviews } from './papers';
+import type { CachedPdf, LegacyPdfFiles } from './pdf-cache';
 import { ai_events, progress_events } from './events';
 
 export * from './library';
@@ -16,8 +17,8 @@ export async function removePaper(paper_id: string): Promise<void> {
   invalidatePreviews(paper_id);
   await cancelPaperAi(paper_id);
   await store.transaction(async (db) => {
-    const files = await db.get<PdfFiles>('pdf', paper_id);
-    if (files) await db.put('garbage', createId(), '', files);
+    const file = await db.get<CachedPdf>('pdf', paper_id);
+    if (file && 'paths' in file) await db.put('garbage', createId(), '', file);
     await db.execute('DELETE FROM documents WHERE paper_id=?', [paper_id]);
   });
   await collectGarbage();
@@ -26,16 +27,15 @@ export async function removePaper(paper_id: string): Promise<void> {
 export async function collectGarbage() {
   const records = await store.transaction(async (db) => {
     const result = await db.query("SELECT id FROM documents WHERE kind='garbage' LIMIT 100");
-    const records: { id: string; files: PdfFiles }[] = [];
+    const records: { id: string; files: LegacyPdfFiles }[] = [];
     for (const row of result.rows) if (row[0].type === 'text') {
-      const files = await db.get<PdfFiles>('garbage', row[0].value);
+      const files = await db.get<LegacyPdfFiles>('garbage', row[0].value);
       if (files) records.push({ id: row[0].value, files });
     }
     return records;
   });
   if (records.length) await fs.mkdir('papers');
   for (const { id, files } of records) {
-    if (live_downloads.has(files.directory)) continue;
     // Files already deleted by an interrupted cleanup are harmless. Keep the
     // durable job if a directory remains so a later launch can retry it.
     const parent = await fs.list('papers');

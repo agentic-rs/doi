@@ -2,10 +2,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import type { LlmRequest, LlmResult, SqlValue } from '../vendor/apell-sdk/types';
+import type { LlmRequest, LlmResult } from '../vendor/apell-sdk/types';
 import type { AiConversation, AiConversationRequest, Paper } from '../../src/lib/types';
 import init, { hashBytes } from '../generated/doi_ai';
 import { makePdf } from './test-pdf';
+import { sqliteCall } from './test-sqlite';
 import { parseAnnotationSidecar, serializeAnnotations } from '../../src/lib/annotations';
 
 const fixture = vi.hoisted(() => ({ call: vi.fn(), generate: vi.fn(), read: vi.fn(), cancel: vi.fn(async () => {}) }));
@@ -30,20 +31,7 @@ const response = (request: LlmRequest, overrides: Partial<LlmResult> = {}): LlmR
 
 beforeAll(async () => {
   await init({ module_or_path: readFileSync('applet/generated/doi_ai_bg.wasm') });
-  fixture.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
-    if (method === 'sqlite.open') return { database_handle: 'database' };
-    if (method === 'sqlite.begin') { database.exec('BEGIN IMMEDIATE'); return { transaction_handle: 'transaction' }; }
-    if (method === 'sqlite.commit') { database.exec('COMMIT'); return null; }
-    if (method === 'sqlite.rollback') { database.exec('ROLLBACK'); return null; }
-    const sql = String(params.sql);
-    const statement = database.prepare(sql);
-    const values = (params.parameters as SqlValue[]).map((value) => value.type === 'null' ? null : value.type === 'integer' ? BigInt(value.value) : value.type === 'blob' ? Uint8Array.from(value.value) : value.value);
-    if (method === 'sqlite.execute') { statement.run(...values); return { affected_rows: 1, last_insert_row_id: '0' }; }
-    if (method === 'sqlite.query') {
-      return { columns: statement.columns().map((column) => column.name), rows: statement.all(...values).map((row) => Object.values(row).map((value) => value === null ? { type: 'null' } : typeof value === 'number' ? { type: 'integer', value: String(value) } : { type: 'text', value })) };
-    }
-    throw new Error(`Unexpected method ${method}`);
-  });
+  fixture.call.mockImplementation(async (method, params) => sqliteCall(database, method, params));
 });
 beforeEach(async () => {
   fixture.generate.mockReset();

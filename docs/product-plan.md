@@ -28,11 +28,11 @@ The home screen lists recently opened papers, a library search, and an input acc
 
 Reopening a library paper restores its position and reading mode directly; **Info** optionally shows metadata over the reader. **View on arXiv** in that information sheet deliberately opens the website through browser confirmation. An explicit arXiv version stays pinned, and annotations attach to the exact PDF revision.
 
-Metadata and PDF requests share one serialized arXiv connection and at least three seconds between requests. HTTP 429 produces a waiting state with a retry deadline. The app respects `Retry-After`, otherwise applies increasing delays with jitter, and stops after three automatic retries. The cooldown is saved for app restarts. Cancel stops queued work, waiting, network requests, and incomplete downloads; completed cached papers remain usable offline. A cancellation that arrives after the atomic download commit keeps the saved paper in the library without unexpectedly opening it.
+Metadata and PDF requests share a pacing clock with at least three seconds between starts. HTTP 429 produces a waiting state with a retry deadline. Metadata requests honor `Retry-After` when available. Apell's resource downloads omit response headers, so PDF retries use increasing delays. The cooldown survives app restarts. Cancelling a pending download dismisses it before it is added to the library. The host can finish caching bytes for an in-flight transfer.
 
 **Close paper** keeps library data and the reading position. iPhone has one active reader. iPad and Mac maintain paper tabs, reuse an existing tab for the same revision, and return home after the last tab closes. Returning home retains open desktop/iPad tabs. Each tab retains its selection, unsent question, manual-note draft, and navigation history when switching away.
 
-**Remove** in a library paper's menu requires confirmation explicitly naming the downloaded PDF, notes, and AI conversations. Successful removal deletes those records and the derived reading cache, stops that paper's AI requests, closes its tabs, and removes references to it from navigation history. Failed removal leaves the paper available and reports the error in the confirmation dialog.
+**Remove** in a library paper's menu requires confirmation. Successful removal deletes the paper’s library entry, notes, AI conversations, and derived reading cache, stops its AI requests, closes its tabs, and removes references to it from navigation history. Apell retains resource bytes after their library reference is removed.
 
 ### Reader
 
@@ -83,7 +83,7 @@ Library commands:
 - `cancel_paper_operation`: cancel lookup or download by request ID, including queued work and cooldown waits.
 - `list_papers`: return local papers ordered by most recent opening, falling back to download time.
 - `mark_paper_opened`: persist recency while preserving metadata and the reading position.
-- `remove_paper`: invalidate pending previews and delete the PDF and all dependent local records after UI confirmation.
+- `remove_paper`: invalidate pending previews and delete the PDF reference and dependent library records after confirmation.
 - `get_pdf_bytes`: read a validated cached PDF.
 - `save_reading_position`: persist a paper's last location.
 - `resolve_reference`: look up an explicit identifier or return citation-match candidates.
@@ -114,7 +114,7 @@ Shared frontend contracts live in `src/lib/types.ts` and map to Rust models. Per
 - `AiSettings`: `provider_kind`, `base_url`, `model_id`, and derived `has_api_key` presence.
 - `NavigationHistory`: `entries`, `current_index`.
 
-SQLite schema v4 stores metadata, positions, annotations, reading caches, and AI conversations; PDFs are separate files in the app data directory. Atomic download completion prevents incomplete PDFs from appearing as cached successes. Paper removal uses a staged PDF move and a database transaction with cascading deletes; failure restores the file, and startup repairs interrupted removals.
+SQLite stores metadata, positions, annotations, reading caches, and AI conversations. New downloads record Apell’s resource ID and byte count in the same transaction as the paper. Earlier private-file downloads remain readable and are queued for cleanup when their paper is removed.
 
 ## Delivery order
 
@@ -132,7 +132,7 @@ SQLite schema v4 stores metadata, positions, annotations, reading caches, and AI
 - Follow an arXiv reference: preview unsaved papers, inherit the source reading mode while preserving the target position, restore cross-paper locations on iPhone, and return through **Back to source** with separate tab histories on iPad/Mac.
 - Follow an external link or **View on arXiv**, inspect its domain and full URL, then confirm or cancel. Verify a failed browser launch allows retry and cancellation preserves any underlying reference popup and reader position.
 - Close a reader or the last tab and return home without deleting library data.
-- Confirm removal and verify PDF, notes, chats, and reading cache are deleted; late download/AI completions cannot restore the removed records.
+- Confirm removal and verify that the PDF reference, notes, chats, and reading cache are deleted and that late download or AI completions cannot restore the removed records.
 - Simulate metadata and PDF HTTP 429 responses, honor cooldowns across restart, and cancel waits without affecting cached reading.
 - Start a new navigation after Back and verify that the previous forward branch is removed.
 - Ask about a selection, save the answer, restart, and revisit the annotation at the same passage.

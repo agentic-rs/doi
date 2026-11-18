@@ -1343,7 +1343,7 @@ describe('library, previews, and open papers', () => {
     await openFirst();
     fireEvent.click(screen.getByRole('button', { name: 'Library home' }));
     let dialog = await showRemoveConfirmation();
-    expect(dialog.textContent).toContain('downloaded PDF, notes, and AI conversations');
+    expect(dialog.textContent).toContain('notes, and its AI conversations from your library');
     expect(backend.removePaper).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(screen.getByRole('button', { name: 'Open First paper' })).toBeTruthy();

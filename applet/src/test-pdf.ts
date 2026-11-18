@@ -8,7 +8,7 @@ function pdfLiteral(value: string): string {
   }).join('');
 }
 
-export function makePdf(contents: string[][]) {
+export function makePdf(contents: string[][], padding_bytes = 0) {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     `<< /Type /Pages /Kids [${contents.map((_, i) => `${4 + 2 * i} 0 R`).join(' ')}] /Count ${contents.length} >>`,
@@ -25,6 +25,7 @@ export function makePdf(contents: string[][]) {
     entries.push(`${String(pdf.length).padStart(10, '0')} 00000 n `);
     pdf += `${i + 1} 0 obj\n${object}\nendobj\n`;
   }
+  pdf += ' '.repeat(padding_bytes);
   const xref = pdf.length;
   return new TextEncoder().encode(pdf + `xref\n0 ${entries.length}\n${entries.join('\n')}\ntrailer\n<< /Size ${entries.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
 }

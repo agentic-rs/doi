@@ -46,11 +46,11 @@ This builds Paper Reader, runs the applet and Rust tests, then uses `apell dev -
 3. Choose **Ask AI** in the reader, or select a passage to ask about it. The agent can search the cached PDF and read page excerpts. Tap a citation to inspect the quoted passage, then return to your answer.
 4. Use **Save as note** on an answer, edit the takeaway, and choose the whole paper or a passage as its home. The note carries its cited passages when exported. Conversations and drafts persist locally. Set the shared model connection in **Apell Settings**.
 5. Follow detected arXiv references in the reader; Crossref can suggest matches for citations without an identifier.
-6. Removing a paper deletes its library records and queues its cached PDF files for cleanup. Closing a tab only saves the reading position.
+6. Removing a paper deletes its library entry, notes, and conversations. Apell retains PDF bytes in its resource cache. Closing a tab saves the reading position.
 
 ## Current host limits
 
-- PDF downloads use Apell HTTP and are limited to **16 MiB**. Redirect responses are reported as errors. Cancellation stops waiting and prevents saving a cancelled download; the host does not expose individual HTTP transport cancellation.
+- Paper Reader gets arXiv metadata with `http.request` and PDFs with `resources.download`. Apell accepts PDFs up to **32 MiB** per download, allows 120 seconds per transfer, and rejects redirects. Cancelling before the library entry is saved prevents the paper from being added. An in-flight transfer can still finish in Apell’s cache.
 - PDF.js runs its worker protocol on the main thread with embedded fonts, CMaps, and decoder assets. Native font-face loading is disabled to comply with Apell's sandbox. Large or complex documents may render more slowly.
 - Screen orientation follows the device. Applet-controlled rotation of the screen is unavailable; PDF page rotation still works.
 - External links are shown as selectable addresses. Annotation export shows selectable JSON. Native browser opening, file export/share, and automatic import of the standalone library require additional host support.

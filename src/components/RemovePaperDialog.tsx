@@ -23,7 +23,7 @@ export function RemovePaperDialog(props: RemovePaperDialogProps) {
       <span className="remove-paper-symbol"><Trash2 size={22} aria-hidden="true" /></span>
       <h2 id={titleId}>Remove paper?</h2>
       <p className="remove-paper-title">{props.paper.title}</p>
-      <p id={descriptionId}>This removes the downloaded PDF, notes, and AI conversations for this paper from this device.</p>
+      <p id={descriptionId}>This removes the paper, its notes, and its AI conversations from your library. Apell may retain the downloaded PDF in its cache.</p>
       {props.busy && <p className="library-dialog-message" role="status"><LoaderCircle size={18} className="spin" aria-hidden="true" /> Removing paper…</p>}
       {props.error && <p className="library-dialog-error" role="alert">{props.error}</p>}
     </div>

@@ -19,7 +19,8 @@ describe('remove paper confirmation', () => {
     render(<RemovePaperDialog paper={paper} busy={false} error={null} on_confirm={confirm} on_cancel={vi.fn()} />);
     const dialog = screen.getByRole('dialog', { name: 'Remove paper?' });
     expect(dialog.textContent).toContain(paper.title);
-    expect(dialog.textContent).toContain('downloaded PDF, notes, and AI conversations');
+    expect(dialog.textContent).toContain('notes, and its AI conversations from your library');
+    expect(dialog.textContent).toContain('Apell may retain the downloaded PDF in its cache');
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
     expect(confirm).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Remove paper' }));
