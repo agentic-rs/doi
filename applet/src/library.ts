@@ -1,4 +1,4 @@
-import type { Annotation, Paper, ReadingBlockPreference, ReadingLayout, ReadingLocation } from '../../src/lib/types';
+import type { AiConversation, Annotation, Paper, ReadingBlockPreference, ReadingLayout, ReadingLocation } from '../../src/lib/types';
 import { validateAnnotation } from '../../src/lib/annotations';
 import { store, type Store } from './store';
 import { validateRecord } from '../generated/doi_ai';
@@ -33,6 +33,24 @@ export const saveReadingPosition = (location: ReadingLocation) => store.transact
 });
 
 export const listAnnotations = (paper_id: string) => store.transaction((db) => db.list<Annotation>('annotation', paper_id));
+
+async function syncTurnNote(db: Store, previous: Annotation, replacement?: Annotation) {
+  const origin = previous.body.kind === 'note' && previous.body.origin;
+  if (!origin) return;
+  const conversation = await db.get<AiConversation>('conversation', origin.conversation_id);
+  if (!conversation || conversation.target.paper_id !== previous.target.paper_id || conversation.target.pdf_hash !== previous.target.pdf_hash) return;
+  const turn = conversation.turns.find(t => t.turn_id === origin.turn_id);
+  if (!turn?.note || turn.note.saved_annotation_id !== previous.annotation_id) return;
+  const body = replacement?.body;
+  if (replacement && body?.kind === 'note' && body.origin?.conversation_id === origin.conversation_id && body.origin.turn_id === origin.turn_id) {
+    turn.note = { content: body.content, target: replacement.target, saved_annotation_id: replacement.annotation_id };
+  } else {
+    delete turn.note;
+  }
+  conversation.updated_at = new Date().toISOString();
+  await db.put('conversation', origin.conversation_id, conversation.target.paper_id, conversation);
+}
+
 export const saveAnnotation = (annotation: Annotation) => store.transaction(async (db) => {
   validateRecord('annotation', annotation);
   const paper = await requirePaper(db, annotation.target.paper_id);
@@ -41,9 +59,14 @@ export const saveAnnotation = (annotation: Annotation) => store.transaction(asyn
   if (old && old.target.paper_id !== paper.paper_id) throw new Error('That annotation belongs to another paper.');
   const saved = { ...annotation, created_at: old?.created_at ?? annotation.created_at, updated_at: new Date().toISOString() };
   await db.put('annotation', saved.annotation_id, paper.paper_id, saved);
+  if (old) await syncTurnNote(db, old, saved);
   return saved;
 });
-export const deleteAnnotation = (annotation_id: string) => store.transaction((db) => db.remove('annotation', annotation_id));
+export const deleteAnnotation = (annotation_id: string) => store.transaction(async db => {
+  const old = await db.get<Annotation>('annotation', annotation_id);
+  await db.remove('annotation', annotation_id);
+  if (old) await syncTurnNote(db, old);
+});
 
 export const getReadingLayout = (paper_id: string, layout_version: number) => store.transaction(async (db) => {
   const paper = await requirePaper(db, paper_id);

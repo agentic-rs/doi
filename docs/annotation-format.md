@@ -18,13 +18,15 @@ Each record contains:
 - `body`: a typed note or AI answer.
 - `created_at` and `updated_at`: RFC3339 timestamps.
 
-A note body has `kind: "note"` and `content`. An AI answer has `kind: "ai_answer"`, `question`, `answer`, `provider_id`, `model_id`, and `context_text`. Its optional `note_content` contains the note reviewed and saved by the user, while `answer` preserves the complete response. Missing `note_content` identifies a legacy record that displays `answer` directly. Editing an AI note changes `note_content` and retains the original answer and provenance. Provider credentials and thinking text are never exported.
+A note body has `kind: "note"` and `content`. A note pinned from an AI turn also carries `citations`, a local `origin` containing `conversation_id` and `turn_id`, and available `llm_provenance`. Each citation contains a turn-local `citation_id` such as `S1` and a complete `anchor` in the same PDF revision. Its quote and coordinates travel with the exported note. The local conversation supplies the full answer when available.
 
-Asking creates a session draft, not an annotation. The model's `propose_annotation` tool supplies only proposed text; Paper Reader owns IDs, source anchors, and timestamps. The dedicated Save action persists a draft with a stable ID so retries cannot create duplicate annotations. This is an optional field extension of version 1; existing sidecars remain readable without migration.
+Saving a reviewed turn note updates its annotation and conversation in one transaction. Repeated saves reuse its annotation ID. Earlier `kind: "ai_answer"` records retain their original question, answer, context, attribution, and optional edited `note_content`. Existing sidecars can still be imported.
 
 ## Anchoring
 
 Each page anchor has a one-based `page_number`, `quad_points`, and a `text_quote`.
+
+A passage placement has one or more anchors in `target.page_anchors`. A whole-paper placement explicitly sets `target.scope` to `"paper"` and uses an empty `page_anchors` list. Either placement can cite passages elsewhere in the paper.
 
 Each quadrilateral is eight numbers in the order top-left, top-right, bottom-right, bottom-left as seen in the viewport when captured. The points themselves are converted to the PDF's unscaled, unrotated user-space coordinates. This preserves rotation, crop-box offsets, and page geometry without assuming a screen resolution. The reader's viewport transform converts them back for display.
 

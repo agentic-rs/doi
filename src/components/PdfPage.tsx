@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { RenderingCancelledException, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import type { Annotation, PdfSourceRect } from '../lib/types';
+import type { Annotation, PageAnchor, PdfSourceRect } from '../lib/types';
 import { quadToSvgPoints, safeReferenceUrl } from '../lib/pdf-geometry';
 import { regionGeometry, regionTextContent } from '../lib/pdf-region';
 import type { SelectionPage } from '../lib/pdf-selection';
@@ -34,6 +34,7 @@ export interface PdfPageProps {
   render_paused: boolean;
   scroll_root: HTMLDivElement | null;
   annotations: Annotation[];
+  cited_anchor?: PageAnchor | null;
   register_page: (region_id: string, data: SelectionPage | null) => void;
   on_link: (link: PdfLink, page_number: number) => void;
   on_error: (message: string) => void;
@@ -55,7 +56,7 @@ function readPageData(page: PDFPageProxy): Promise<PageData> {
 }
 
 export function PdfPage({ page, source_rect, block_id, split_lines = false, on_split_status, on_layout_change,
-  zoom, rotation, render_paused, scroll_root, annotations, register_page, on_link, on_error }: PdfPageProps) {
+  zoom, rotation, render_paused, scroll_root, annotations, cited_anchor, register_page, on_link, on_error }: PdfPageProps) {
   const page_ref = useRef<HTMLDivElement>(null);
   const canvas_ref = useRef<HTMLCanvasElement>(null);
   const text_ref = useRef<HTMLDivElement>(null);
@@ -303,7 +304,9 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
 
   const page_annotations = annotations.flatMap((annotation) => annotation.target.page_anchors
     .filter((anchor) => anchor.page_number === page.pageNumber && anchor.quad_points.length > 0)
-    .map((anchor, anchor_index) => ({ annotation, anchor, anchor_index })));
+    .map((anchor, index) => ({ key: `${annotation.annotation_id}-${index}`, anchor,
+      color: annotation.body.kind === 'ai_answer' ? 'pdf-highlight-ai' : 'pdf-highlight-note' })));
+  if (cited_anchor?.page_number === page.pageNumber) page_annotations.push({ key: 'citation-preview', anchor: cited_anchor, color: 'pdf-highlight-source' });
 
   function displayRects(pdf_rect: number[]): SplitLineRect[] {
     const rect = (prepared?.viewport ?? render_viewport).convertToViewportRectangle(pdf_rect);
@@ -330,16 +333,16 @@ export function PdfPage({ page, source_rect, block_id, split_lines = false, on_s
             </div>
           ) : <div className="textLayer" ref={text_ref} hidden={render_paused || rendered_viewport !== render_viewport || rendered_prepared !== prepared} />}
           {page_annotations.length > 0 && <svg className="pdf-highlight-layer" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-            {page_annotations.flatMap(({ annotation, anchor, anchor_index }) => anchor.quad_points.flatMap((quad, index) => {
+            {page_annotations.flatMap(({ key, color, anchor }) => anchor.quad_points.flatMap((quad, index) => {
               const points = prepared ? displayRects([
                 Math.min(quad[0], quad[2], quad[4], quad[6]), Math.min(quad[1], quad[3], quad[5], quad[7]),
                 Math.max(quad[0], quad[2], quad[4], quad[6]), Math.max(quad[1], quad[3], quad[5], quad[7]),
               ]).map(([left, top, right, bottom]) => `${left},${top} ${right},${top} ${right},${bottom} ${left},${bottom}`)
                 : [quadToSvgPoints(quad, render_viewport)];
               return points.map((value, part_index) => <polygon
-                key={`${annotation.annotation_id}-${anchor_index}-${index}-${part_index}`}
+                key={`${key}-${index}-${part_index}`}
                 points={value}
-                className={annotation.body.kind === 'ai_answer' ? 'pdf-highlight-ai' : 'pdf-highlight-note'}
+                className={color}
               />);
             }))}
           </svg>}

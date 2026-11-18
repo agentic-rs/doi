@@ -9,6 +9,7 @@ vi.mock('../lib/backend', () => ({
   nativeAvailable: vi.fn(), listPapers: vi.fn(), getSettings: vi.fn(), onProgress: vi.fn(),
   previewArxivPaper: vi.fn(), downloadArxivPaper: vi.fn(), cancelPaperOperation: vi.fn(), markPaperOpened: vi.fn(), removePaper: vi.fn(), getPdfBytes: vi.fn(), listAnnotations: vi.fn(), saveReadingPosition: vi.fn(),
   askAiConversation: vi.fn(), listAiConversations: vi.fn(), generateAiConversationNote: vi.fn(), updateAiConversationNote: vi.fn(), saveAiConversationNote: vi.fn(),
+  updateAiTurnNoteDraft: vi.fn(), saveAiTurnNote: vi.fn(),
   onAiStream: vi.fn(), cancelAiRequest: vi.fn(), saveAnnotation: vi.fn(), deleteAnnotation: vi.fn(), saveAnnotationFile: vi.fn(),
   resolveReference: vi.fn(), openExternal: vi.fn(), saveSettings: vi.fn(), listAiModels: vi.fn(),
   getReaderCapabilities: vi.fn(), setReaderOrientation: vi.fn(), setReaderAiMode: vi.fn(),
@@ -171,6 +172,107 @@ async function openReadingBlock(): Promise<ReadingLocation> {
 }
 
 describe('assembled paper workspace', () => {
+  it('picks PDF passages for an unsent phone question and follow-up, preserving the reader location on cancel', async () => {
+    mockPhone();
+    const original = await openReadingBlock();
+    openSelection();
+    const input = await screen.findByLabelText('Question about this selection');
+    fireEvent.change(input, { target: { value: 'Compare these passages' } });
+    const extra = (page: number): SelectionContext => ({
+      selected_text: `Additional passage on page ${page}`, context_text: `Nearby text on page ${page}`,
+      page_anchors: [{ ...selection.page_anchors[0], page_number: page,
+        text_quote: { ...selection.page_anchors[0].text_quote, exact_text: `Additional passage on page ${page}` } }],
+    });
+    const capture = (page: number, keep: boolean) => {
+      fireEvent.click(screen.getByText('Add passage'));
+      const openPicker = screen.queryByRole('button', { name: 'Select in paper' });
+      if (openPicker) fireEvent.click(openPicker);
+      expect(screen.getByRole('region', { name: 'Attach a passage' })).toBeTruthy();
+      expect(lastReader.target_location?.reader_mode).toBe('pdf');
+      act(() => lastReader.on_navigate({ kind: 'pdf', location: { ...original, reader_mode: 'pdf', page_number: page } }));
+      act(() => lastReader.on_selection(extra(page)));
+      fireEvent.click(screen.getByRole('button', { name: keep ? 'Attach passage' : 'Cancel' }));
+      expect(lastReader.target_location).toEqual(original);
+    };
+    capture(8, true);
+    capture(9, false);
+    capture(10, true);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove attachment: Additional passage on page 10' }));
+    expect((screen.getByLabelText('Question about this selection') as HTMLTextAreaElement).value).toBe('Compare these passages');
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledTimes(1));
+    const firstRequest = vi.mocked(backend.askAiConversation).mock.calls[0][0];
+    expect(firstRequest.source?.page_anchors).toEqual(selection.page_anchors);
+    expect(firstRequest.attachments).toEqual([{ ...extra(8), paper_id: first.paper_id, pdf_hash: first.pdf_hash }]);
+    fireEvent.change(await screen.findByLabelText('Follow-up question'), { target: { value: 'How about page 12?' } });
+    capture(12, true);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask follow-up' }));
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledTimes(2));
+    const follow = vi.mocked(backend.askAiConversation).mock.calls[1][0];
+    expect(follow.conversation_id).toBe(firstRequest.conversation_id);
+    expect(follow.question).toBe('How about page 12?');
+    expect(follow.attachments?.map(p => p.page_anchors[0].page_number)).toEqual([12]);
+  });
+  it('asks about a whole paper, inspects the cited PDF passage, and pins an edited note with its source', async () => {
+    mockPhone();
+    const anchor = { ...selection.page_anchors[0], page_number: 8 };
+    const citation = { citation_id: 'S1', anchor };
+    vi.mocked(backend.askAiConversation).mockImplementation(async request => {
+      const response = completeConversation(request, 'The derivation is in the appendix [S1].');
+      response.conversation.turns.at(-1)!.citations = [citation];
+      response.conversation.note_draft = null;
+      return response;
+    });
+    vi.mocked(backend.updateAiTurnNoteDraft).mockImplementation(async (id, turnId, content, target) => {
+      const conversation = conversations.get(id)!;
+      conversation.turns.find(t => t.turn_id === turnId)!.note = { content, target, saved_annotation_id: null };
+      return conversation;
+    });
+    vi.mocked(backend.saveAiTurnNote).mockImplementation(async (id, turnId, content, target) => {
+      const conversation = conversations.get(id)!;
+      conversation.turns.find(t => t.turn_id === turnId)!.note = { content, target, saved_annotation_id: 'pinned' };
+      const annotation: Annotation = { schema_version: 1, annotation_id: 'pinned', target, created_at: first.downloaded_at, updated_at: first.downloaded_at,
+        body: { kind: 'note', content, citations: [citation], origin: { conversation_id: id, turn_id: turnId } } };
+      vi.mocked(backend.listAnnotations).mockResolvedValue([annotation]);
+      return { conversation, annotation };
+    });
+    const original = await openReadingBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about paper' }));
+    fireEvent.change(await screen.findByLabelText('Question about this paper'), { target: { value: 'Where is the derivation?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Read S1, page 8' }));
+    expect(vi.mocked(backend.askAiConversation).mock.calls[0][0].source).toMatchObject({ selected_text: '', page_anchors: [], pdf_hash: first.pdf_hash });
+    expect(lastReader.target_location).toMatchObject({ page_number: 8, reader_mode: 'pdf' });
+    expect(lastReader.cited_anchor).toEqual(anchor);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this' }));
+    expect(lastReader.target_location).toEqual(original);
+    fireEvent.change(screen.getByLabelText('Follow-up question'), { target: { value: 'Explain that line.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask follow-up' }));
+    await waitFor(() => expect(backend.askAiConversation).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(backend.askAiConversation).mock.calls[1][0].attachments?.[0].page_anchors).toEqual([anchor]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Save as note' }));
+    fireEvent.change(screen.getByLabelText('Your note'), { target: { value: 'My edited takeaway' } });
+    await waitFor(() => expect(backend.updateAiTurnNoteDraft).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Read source S1 on page 8' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to note draft' }));
+    expect((screen.getByLabelText('Your note') as HTMLTextAreaElement).value).toBe('My edited takeaway');
+    const whole = screen.getByRole('option', { name: 'Whole paper' }) as HTMLOptionElement;
+    fireEvent.change(screen.getByLabelText('Pin to'), { target: { value: whole.value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Pin note' }));
+    await waitFor(() => expect(lastReader.annotations).toHaveLength(1));
+    expect(lastReader.annotations[0].target.scope).toBe('paper');
+    expect(lastReader.annotations[0].body).toMatchObject({ content: 'My edited takeaway', citations: [citation] });
+
+    cleanup();
+    await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Open references and notes panel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand note: My edited takeaway' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Read source S1 on page 8' }));
+    expect(lastReader.cited_anchor).toEqual(anchor);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to saved note' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
+    expect(await screen.findByRole('heading', { name: 'Explain that line.' })).toBeTruthy();
+  });
   it('starts in the library and resumes cached papers directly with metadata available on demand', async () => {
     render(<WorkspacePage />);
     expect(await screen.findByRole('region', { name: 'Paper library' })).toBeTruthy();

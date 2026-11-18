@@ -1,18 +1,17 @@
 # Verification of the Apell migration
 
-The production build and TypeScript check passed. The final Vitest run passed **706 tests across 49 files**; Rust passed **18 tests**. `git diff --check` passed.
-
-The migration is checked with:
+Run `pnpm test` to build the bundle, check TypeScript and exercise the applet and reader in Vitest. Run `pnpm test:ai` for the native Rust tests. Coverage includes the following paths.
 
 - A production self-contained bundle build, including Rust/WASM compilation and TypeScript checking.
 - The reader, annotation, navigation, selection, and workspace UI tests.
-- Compiled-WASM LLM integration tests covering tool continuation, transient reasoning, cancellation, concurrent request isolation, explicit outcomes, and unknown actual-model attribution.
-- Real SQLite-backed tests covering multi-chunk Unicode records, transaction rollback, reopening storage, durable conversations, idempotent annotation saves, interrupted recovery, early cancellation, and preventing deleted-paper resurrection.
+- Compiled-WASM LLM integration tests covering multi-round PDF search and reading, native message replay, validation of source IDs, malformed calls, read budgets, cancellation during extraction, text-only fallback, transient reasoning and attribution.
+- SQLite integration tests search a generated PDF through an Apell tool exchange, save an edited note beside the claim, and reopen its citation on a different page. They also cover whole-paper placement, retries, edits, deletion, annotation export, interrupted requests, and legacy drafts.
 - Actual PDF.js text extraction and canvas rendering using embedded standard-font data without a worker URL or asset fetch. The rendered smoke image is written to `artifacts/pdf-smoke.png`.
+- Revision-pinned PDF tool tests exercise real text extraction, PDF-coordinate anchors, bounded search and page continuation, empty pages, corrupt files and cancellation.
 - Rust policy and inherited model/record-validation tests.
 
-These tests use simulated Apell services and provider fixtures. They do not establish live-provider compatibility or end-to-end installation in the native host. Native UI inspection returned no usable app controls during this migration; a physical-device smoke test remains outstanding.
+The automated tests use simulated Apell services and model replies. Live model tool selection, citation quality on real papers and physical-device interaction require a separate run in the native Apell host.
 
-In particular, verify complex PDFs, selection alignment, zoom performance, the opaque-origin sandbox, real arXiv responses, and required note tools on the intended model before relying on full device parity. The current host limits and deliberate UI changes are listed in the README.
+For 0.4.0, a separate browser smoke test opened the packaged applet inside Apell's scripts-only iframe sandbox with a fixture host. Ask, follow-up, pin, and library lookup buttons invoke their JavaScript actions directly because native form submissions are blocked in that sandbox. Physical-device checks should cover touch selection, the on-screen keyboard, complex PDFs, zoom performance, real arXiv responses, and the intended model connection.
 
 The standalone data directory is untouched. There is no automatic library importer in this version.

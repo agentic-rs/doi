@@ -1,8 +1,8 @@
+import { createId } from '../../applet/vendor/apell-sdk';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import {
-  ArrowLeft, ArrowUpRight, Check,
+  ArrowLeft, BookOpen, Check,
   ChevronRight, CircleHelp, Link2, LoaderCircle,
   MessageSquare, Plus, Settings2,
   Sparkles, StickyNote, X,
@@ -14,6 +14,7 @@ import { FloatingSelectionAction } from '../components/FloatingSelectionAction';
 import { SettingsDialog } from '../components/SettingsDialog';
 import { AiConversationCard } from '../components/AiConversationCard';
 import { SavedNotes } from '../components/SavedNotes';
+import { PaperQuestionComposer } from '../components/PaperQuestionComposer';
 import { useAiConversations } from '../lib/useAiConversations';
 import { usePhoneAiReader } from '../lib/usePhoneAiReader';
 import { LibraryHome } from '../components/LibraryHome';
@@ -45,7 +46,7 @@ import type { NavigationHistory } from '../lib/history';
 import { parseAnnotationSidecar, serializeAnnotations } from '../lib/annotations';
 import { DEFAULT_AI_SETTINGS } from '../lib/ai-providers';
 import type {
-  AiSettings, Annotation, OperationProgress, PageAnchor, Paper, ReaderTarget, ReadingLocation,
+  AiCitation, AiPassage, AiSettings, Annotation, OperationProgress, PageAnchor, Paper, ReaderTarget, ReadingLocation,
   ReferenceCandidate, ReferenceItem, SelectionContext,
   ReaderCapabilities, ReaderOrientation, PaperPreview,
 } from '../lib/types';
@@ -65,6 +66,21 @@ interface OpenOperation {
 interface Notice {
   message: string;
   tone: 'error' | 'success' | 'info';
+}
+
+interface SourcePreview {
+  citation: AiCitation;
+  from: 'answer' | 'note draft' | 'saved note';
+  location: ReadingLocation;
+  conversation_id?: string;
+  annotation_id?: string;
+  trigger: HTMLElement | null;
+}
+
+interface PassageCapture {
+  location: ReadingLocation;
+  draft_key: string;
+  trigger: HTMLElement | null;
 }
 
 function getReaderDirection(): ReaderOrientation {
@@ -141,6 +157,18 @@ export function WorkspacePage() {
   const [question, setQuestion] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [followUpDrafts, setFollowUpDrafts] = useState<Record<string, string>>({});
+  const [attachments, setAttachments] = useState<Record<string, AiPassage[]>>({});
+  const [aiScreen, setAiScreen] = useState<'question' | 'conversation' | 'list'>('question');
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationVisit, setConversationVisit] = useState(0);
+  const [selectedTurn, setSelectedTurn] = useState<string>();
+  const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
+  const previewRef = useRef<SourcePreview | null>(null);
+  const [reopenedNote, setReopenedNote] = useState<string | null>(null);
+  const [passageCapture, setPassageCapture] = useState<PassageCapture | null>(null);
+  const captureRef = useRef<PassageCapture | null>(null);
+  const [candidate, setCandidate] = useState<SelectionContext | null>(null);
+  const paperInFront = Boolean(sourcePreview || passageCapture);
   const [aiEntryPending, setAiEntryPending] = useState(false);
   const [annotationBusy, setAnnotationBusy] = useState<string | null>(null);
   const annotationMutationRef = useRef<string | null>(null);
@@ -180,11 +208,11 @@ export function WorkspacePage() {
   tabIdsRef.current = tabIds;
   const supportsTabs = !isNative || readerCapabilities.device_kind === 'tablet' || readerCapabilities.device_kind === 'desktop';
   const isDesktop = !isNative || readerCapabilities.device_kind === 'desktop';
-  const inspectorBlocksReader = inspectorOpen && !isDesktop;
+  const inspectorBlocksReader = inspectorOpen && !isDesktop && !paperInFront;
   const externalLink = useExternalLink((message) => setNotice({ tone: 'error', message }));
   const modalOpen = Boolean(externalLink.request || selectedReference || preview || removing || paperInfoOpen || settingsOpen || (active && opening?.kind === 'lookup'));
-  const readerActionsRef = useRef({ handleNavigate, handleEdgeNavigation, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation });
-  readerActionsRef.current = { handleNavigate, handleEdgeNavigation, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation };
+  const readerActionsRef = useRef({ handleNavigate, handleEdgeNavigation, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation, readNoteCitation, openNoteOrigin });
+  readerActionsRef.current = { handleNavigate, handleEdgeNavigation, toggleReadingControls, updateAnnotation, removeAnnotation, jumpToAnnotation, editAnnotation, readNoteCitation, openNoteOrigin };
   const aiConversations = useAiConversations(isNative ? active?.paper ?? null : null, storeAnnotation);
   const isPhone = readerCapabilities.device_kind === 'phone';
   const requiresPhoneAi = isNative && (isPhone || readerCapabilities.device_kind === 'unknown');
@@ -200,7 +228,7 @@ export function WorkspacePage() {
   const composingAi = composerKind === 'ai' && (!requiresPhoneAi || phoneAi.open);
   const edgeNavigation = isNative && (isPhone || readerCapabilities.device_kind === 'tablet')
     && active && !opening && !modalOpen && !inspectorOpen && !phoneAi.open && !aiTransition
-    && !orientationPending && !editId && !annotationBusy && !importing && !exporting
+    && !paperInFront && !orientationPending && !editId && !annotationBusy && !importing && !exporting
     ? canGoBack(history) ? 'back' : 'close' : null;
 
   const hideReadingControls = useCallback((keep_sidebar = false) => {
@@ -212,13 +240,13 @@ export function WorkspacePage() {
   }, [phoneAi.close]);
 
   useLayoutEffect(() => {
-    if (!phoneAi.open || !inspectorOpen || settingsOpen) return;
+    if (!phoneAi.open || !inspectorOpen || settingsOpen || paperInFront) return;
     const dialog = aiDialogRef.current;
     dialog?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
     function trapFocus(event: KeyboardEvent) {
       if (event.key !== 'Tab') return;
       const controls = Array.from(dialog?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), summary, a[href]',
+        'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), summary, a[href]',
       ) ?? []).filter((element) => !element.closest('[hidden], [inert]')
         && (!element.closest('details:not([open])') || element.tagName === 'SUMMARY'));
       if (!controls.length) return;
@@ -234,7 +262,7 @@ export function WorkspacePage() {
     }
     document.addEventListener('keydown', trapFocus);
     return () => document.removeEventListener('keydown', trapFocus);
-  }, [phoneAi.open, inspectorOpen, settingsOpen]);
+  }, [phoneAi.open, inspectorOpen, settingsOpen, paperInFront]);
 
   function storeAnnotation(saved: Annotation) {
     if (removedPapersRef.current.has(saved.target.paper_id)) return;
@@ -272,7 +300,7 @@ export function WorkspacePage() {
   }, []);
 
   function focusArxivInput() {
-    if (modalOpen || phoneAi.open || aiTransition) return;
+    if (modalOpen || phoneAi.open || aiTransition || paperInFront) return;
     flushSync(() => showHome());
     arxivInputRef.current?.focus();
   }
@@ -280,6 +308,8 @@ export function WorkspacePage() {
   useLayoutEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape' || event.defaultPrevented || !active || modalOpen) return;
+      if (previewRef.current) { returnFromSource(); return; }
+      if (captureRef.current) { finishCapture(null); return; }
       hideReadingControls();
       document.querySelector<HTMLElement>('[aria-label="Scrollable PDF pages"], [aria-label="Scrollable reading view"]')?.focus({ preventScroll: true });
     }
@@ -341,6 +371,7 @@ export function WorkspacePage() {
 
   const handleLocationChange = useCallback((location: ReadingLocation) => {
     if (activeRef.current?.paper.paper_id !== location.paper_id) return;
+    if (previewRef.current || captureRef.current) return;
     if ((location.reader_mode ?? 'pdf') !== (currentPositionRef.current?.reader_mode ?? 'pdf')) return;
     currentPositionRef.current = location;
     commitHistory(updateCurrent(historyRef.current, location));
@@ -351,24 +382,26 @@ export function WorkspacePage() {
 
   const handleSelection = useCallback((next: SelectionContext | null) => {
     // A sidebar focus change collapses native selection; retain the captured PDF anchor.
-    if (!next || !next.selected_text.trim() || !next.page_anchors.length) return;
+    if (previewRef.current || !next || !next.selected_text.trim() || !next.page_anchors.length) return;
+    if (captureRef.current) { setCandidate(next); return; }
     if (selectionRef.current && selectionKey(next) === selectionKey(selectionRef.current)) return;
     selectionRef.current = next;
     setSelection(next);
     setQuestion('');
     setNoteDraft('');
+    setAiScreen('question');
     setInspectorTab('notes');
   }, []);
 
-  function clearSelection() {
+  function clearSelection(keepQuestion = false) {
     selectionRef.current = null;
     setSelection(null);
-    setQuestion('');
+    if (!keepQuestion) setQuestion('');
     setNoteDraft('');
   }
 
   function toggleReadingControls() {
-    if (modalOpen || phoneAi.open || aiTransition) return;
+    if (previewRef.current || captureRef.current || modalOpen || phoneAi.open || aiTransition) return;
     if (controlsVisible) hideReadingControls(isDesktop);
     else setControlsVisible(true);
   }
@@ -431,6 +464,8 @@ export function WorkspacePage() {
   }
 
   function showHome() {
+    previewRef.current = null; setSourcePreview(null);
+    captureRef.current = null; setPassageCapture(null); setCandidate(null);
     referenceEpochRef.current += 1;
     setSelectedReference(null);
     rememberSession();
@@ -459,6 +494,8 @@ export function WorkspacePage() {
   }
 
   function applyDocument(document: ActiveDocument, notes: Annotation[], nextHistory: NavigationHistory, location: ReadingLocation, session?: ReaderSession) {
+    previewRef.current = null; setSourcePreview(null); setAiScreen('question'); setConversationId(null); setSelectedTurn(undefined); setReopenedNote(null);
+    captureRef.current = null; setPassageCapture(null); setCandidate(null);
     referenceEpochRef.current += 1;
     setSelectedReference(null);
     setReferenceStatus('loading');
@@ -496,7 +533,7 @@ export function WorkspacePage() {
     stopOpening();
     lookupSourceRef.current = source;
     const sequence = ++openSequenceRef.current;
-    const operation: OpenOperation = { request_id: crypto.randomUUID(), label: input.trim(), kind: 'lookup' };
+    const operation: OpenOperation = { request_id: createId(), label: input.trim(), kind: 'lookup' };
     openingRef.current = operation;
     setOpening(operation);
     setLookupError(null);
@@ -533,7 +570,7 @@ export function WorkspacePage() {
     const captured = preview;
     const source = lookupSourceRef.current;
     const sequence = ++openSequenceRef.current;
-    const operation: OpenOperation = { request_id: crypto.randomUUID(), label: captured.metadata.title, kind: 'download' };
+    const operation: OpenOperation = { request_id: createId(), label: captured.metadata.title, kind: 'download' };
     openingRef.current = operation;
     setOpening(operation);
     setDownloadError(null);
@@ -570,7 +607,7 @@ export function WorkspacePage() {
     rememberSession();
     flushPosition();
     const sequence = ++openSequenceRef.current;
-    const operation: OpenOperation = { request_id: crypto.randomUUID(), label: cachedPaper.title, kind: 'open' };
+    const operation: OpenOperation = { request_id: createId(), label: cachedPaper.title, kind: 'open' };
     openingRef.current = operation;
     setOpening(operation);
     setNotice(null);
@@ -662,7 +699,7 @@ export function WorkspacePage() {
       return;
     }
     const sequence = ++openSequenceRef.current;
-    const operation: OpenOperation = { request_id: crypto.randomUUID(), label: paper.title, kind: 'open' };
+    const operation: OpenOperation = { request_id: createId(), label: paper.title, kind: 'open' };
     openingRef.current = operation;
     setOpening(operation);
     setProgress(null);
@@ -729,6 +766,13 @@ export function WorkspacePage() {
   }
 
   function handleNavigate(target: ReaderTarget) {
+    if (previewRef.current) return;
+    if (captureRef.current) {
+      if (target.kind === 'pdf' && target.location.paper_id === captureRef.current.location.paper_id) {
+        setTargetLocation(target.location); setTargetAnchor(null); setNavigationKey(value => value + 1);
+      }
+      return;
+    }
     if (target.kind === 'pdf') jumpTo(target.location);
     else if (target.kind === 'reference') {
       stopOpening();
@@ -770,7 +814,7 @@ export function WorkspacePage() {
     });
   }
 
-  async function openAi(conversationId?: string) {
+  async function openAi(id?: string, turnId?: string) {
     const paperId = activeRef.current?.paper.paper_id;
     if (!paperId || aiTransition || orientationPending) return;
     const sequence = ++aiEntrySequenceRef.current;
@@ -791,11 +835,12 @@ export function WorkspacePage() {
         setInspectorTab('notes');
         setControlsVisible(true);
         setInspectorOpen(true);
-        if (conversationId && aiConversations.conversations.find((view) => view.conversation.conversation_id === conversationId)?.collapsed) {
-          aiConversations.toggleCollapsed(conversationId);
+        if (id) {
+          setAiScreen('conversation'); setConversationId(id); setSelectedTurn(turnId); setConversationVisit(v => v + 1);
+          if (aiConversations.conversations.find((view) => view.conversation.conversation_id === id)?.collapsed) aiConversations.toggleCollapsed(id);
         }
       });
-      if (conversationId) revealConversation(conversationId, paperId);
+      if (id) revealConversation(id, paperId);
     } catch (cause) {
       if (mountedRef.current && sequence === aiEntrySequenceRef.current) {
         setNotice({ tone: 'error', message: `Could not open AI: ${String(cause)}` });
@@ -805,26 +850,28 @@ export function WorkspacePage() {
     }
   }
 
-  async function submitSelection(event: FormEvent) {
-    event.preventDefault();
+  async function submitSelection() {
     const paper = activeRef.current?.paper;
     const capturedSelection = selectionRef.current;
-    if (!paper || !capturedSelection || annotationMutationRef.current) return;
-    if (composingAi) {
+    if (!paper || annotationMutationRef.current) return;
+    if (composingAi || (!requiresPhoneAi && !capturedSelection)) {
       if (!question.trim()) return;
-      const conversationId = aiConversations.ask(paper, capturedSelection, question);
+      const draftKey = `new:${paper.paper_id}:${paper.pdf_hash}`;
+      const conversationId = aiConversations.ask(paper, capturedSelection, question, attachments[draftKey]);
       if (!conversationId) return;
+      setAttachments(previous => ({ ...previous, [draftKey]: [] }));
+      setConversationId(conversationId); setAiScreen('conversation'); setSelectedTurn(undefined);
       setQuestion('');
       askInputRef.current?.blur();
       revealConversation(conversationId, paper.paper_id);
       return;
     }
-    if (!noteDraft.trim()) return;
+    if (!capturedSelection || !noteDraft.trim()) return;
     const capturedKey = selectionKey(capturedSelection);
     const now = new Date().toISOString();
     const annotation: Annotation = {
       schema_version: 1,
-      annotation_id: crypto.randomUUID(),
+      annotation_id: createId(),
       target: {
         paper_id: paper.paper_id,
         pdf_hash: paper.pdf_hash,
@@ -882,6 +929,7 @@ export function WorkspacePage() {
     setAnnotationBusy(annotation.annotation_id);
     try {
       await deleteAnnotation(annotation.annotation_id);
+      if (annotation.body.kind === 'note' && annotation.body.origin) void aiConversations.reload();
       annotationChangesRef.current.set(annotation.annotation_id, { paper_id: annotation.target.paper_id, pdf_hash: annotation.target.pdf_hash, annotation: null });
       if (mountedRef.current && annotationBelongsToReader(annotation)) setAnnotations((existing) => existing.filter((item) => item.annotation_id !== annotation.annotation_id));
       clearAnnotationDraft(annotation);
@@ -906,6 +954,7 @@ export function WorkspacePage() {
         updated_at: new Date().toISOString(),
       });
       storeAnnotation(updated);
+      if (updated.body.kind === 'note' && updated.body.origin) void aiConversations.reload();
       clearAnnotationDraft(annotation);
       return true;
     } catch (cause) {
@@ -922,6 +971,86 @@ export function WorkspacePage() {
     const anchor = source_anchor ?? annotation.target.page_anchors[0];
     if (!location || !anchor || !annotationBelongsToReader(annotation)) return;
     jumpTo({ ...location, page_number: anchor.page_number, page_position: [0, 0], reading_block_id: null }, anchor);
+  }
+
+  function readCitation(citation: AiCitation, from: SourcePreview['from'], conversation_id?: string, annotation_id?: string) {
+    const location = currentPositionRef.current;
+    if (!location || !activeRef.current || previewRef.current) return;
+    const preview = { citation, from, conversation_id, annotation_id, location,
+      trigger: document.activeElement instanceof HTMLElement ? document.activeElement : null };
+    previewRef.current = preview;
+    setSourcePreview(preview);
+    setTargetLocation({ ...location, page_number: citation.anchor.page_number, page_position: [0, 0], reader_mode: 'pdf', reading_block_id: null });
+    setTargetAnchor(citation.anchor);
+    setNavigationKey(value => value + 1);
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.citation-preview-bar button')?.focus({ preventScroll: true }));
+  }
+
+  function readNoteCitation(annotation: Annotation, citation: AiCitation) {
+    if (annotationBelongsToReader(annotation)) readCitation(citation, 'saved note', undefined, annotation.annotation_id);
+  }
+
+  function beginCapture(draft_key: string) {
+    const location = currentPositionRef.current;
+    if (!location || previewRef.current || captureRef.current) return;
+    const capture = { draft_key, location, trigger: document.activeElement instanceof HTMLElement ? document.activeElement : null };
+    captureRef.current = capture;
+    setCandidate(null); setPassageCapture(capture);
+    if (location.reader_mode === 'reading') {
+      setTargetLocation({ ...location, reader_mode: 'pdf', reading_block_id: null });
+      setTargetAnchor(null); setNavigationKey(value => value + 1);
+    }
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.passage-capture-bar button')?.focus({ preventScroll: true }));
+  }
+
+  function finishCapture(selected: SelectionContext | null) {
+    const capture = captureRef.current, paper = activeRef.current?.paper;
+    if (!capture || !paper || paper.paper_id !== capture.location.paper_id) return;
+    if (selected) {
+      const passage: AiPassage = { ...selected, paper_id: paper.paper_id, pdf_hash: paper.pdf_hash };
+      const alreadySource = capture.draft_key.startsWith('new:') && selectionRef.current && selectionKey(selectionRef.current) === selectionKey(selected);
+      if (!alreadySource) setAttachments(previous => {
+        const attached = previous[capture.draft_key] ?? [];
+        return attached.some(p => selectionKey(p) === selectionKey(selected)) ? previous : { ...previous, [capture.draft_key]: [...attached, passage] };
+      });
+    }
+    captureRef.current = null; setPassageCapture(null); setCandidate(null);
+    setTargetLocation(capture.location); setTargetAnchor(null); setNavigationKey(value => value + 1);
+    requestAnimationFrame(() => { if (capture.trigger?.isConnected) capture.trigger.focus({ preventScroll: true }); });
+  }
+
+  function openNoteOrigin(annotation: Annotation) {
+    const origin = annotation.body.kind === 'note' && annotation.body.origin;
+    if (!origin || !annotationBelongsToReader(annotation)) return;
+    if (!aiConversations.conversations.some(v => v.conversation.conversation_id === origin.conversation_id &&
+        v.conversation.turns.some(t => t.turn_id === origin.turn_id))) {
+      setNotice({ tone: 'info', message: 'The originating conversation is unavailable on this device.' }); return;
+    }
+    void openAi(origin.conversation_id, origin.turn_id);
+  }
+
+  function returnFromSource(attach = false) {
+    const preview = previewRef.current;
+    const paper = activeRef.current?.paper;
+    if (!preview || !paper || paper.paper_id !== preview.location.paper_id) return;
+    if (attach && preview.conversation_id) {
+      const id = preview.conversation_id, anchor = preview.citation.anchor;
+      const passage: AiPassage = { paper_id: paper.paper_id, pdf_hash: paper.pdf_hash, page_anchors: [anchor],
+        selected_text: anchor.text_quote.exact_text, context_text: '' };
+      setAttachments(previous => ({ ...previous, [id]: [...(previous[id] ?? []).filter(p => selectionKey(p) !== selectionKey(passage)), passage] }));
+    }
+    if (preview.from === 'saved note' && !inspectorOpen && preview.annotation_id) {
+      setInspectorTab('notes'); setInspectorOpen(true); setReopenedNote(preview.annotation_id);
+    }
+    previewRef.current = null;
+    setSourcePreview(null);
+    setTargetLocation(preview.location);
+    setTargetAnchor(null);
+    setNavigationKey(value => value + 1);
+    requestAnimationFrame(() => {
+      if (attach && preview.conversation_id) document.getElementById(`conversation-question-${preview.conversation_id}`)?.focus();
+      else if (preview.trigger?.isConnected) preview.trigger.focus({ preventScroll: true });
+    });
   }
 
   async function exportAnnotations() {
@@ -1009,7 +1138,7 @@ export function WorkspacePage() {
   }
 
   const current = currentLocation(history);
-  const selectedPages = selection ? [...new Set(selection.page_anchors.map((anchor) => anchor.page_number))].join(', ') : '';
+  const newDraftKey = active ? `new:${active.paper.paper_id}:${active.paper.pdf_hash}` : '';
   const pendingAnnotation = Boolean(annotationBusy);
   const sourcePaperId = active ? sessionsRef.current.get(active.paper.paper_id)?.source_paper_id : null;
   const sourcePaper = sourcePaperId ? papers.find((paper) => paper.paper_id === sourcePaperId) : undefined;
@@ -1023,16 +1152,18 @@ export function WorkspacePage() {
     on_update_annotation={(annotation, content) => readerActionsRef.current.updateAnnotation(annotation, content)}
     on_delete_annotation={(annotation) => readerActionsRef.current.removeAnnotation(annotation)}
     on_navigate_annotation={(annotation, anchor) => readerActionsRef.current.jumpToAnnotation(annotation, anchor)}
+    on_navigate_ai_citation={(annotation, citation) => readerActionsRef.current.readNoteCitation(annotation, citation)}
+    on_open_ai_origin={annotation => readerActionsRef.current.openNoteOrigin(annotation)} cited_anchor={sourcePreview?.citation.anchor}
     target_location={targetLocation} target_anchor={targetAnchor} navigation_key={navigationKey}
     edge_navigation={edgeNavigation}
     on_edge_navigation={() => readerActionsRef.current.handleEdgeNavigation(active.paper.paper_id, edgeNavigation)}
-    controls_visible={controlsVisible && !inspectorBlocksReader} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()}
+    controls_visible={Boolean(passageCapture) || (controlsVisible && !inspectorBlocksReader && !sourcePreview)} on_toggle_controls={() => readerActionsRef.current.toggleReadingControls()}
     viewport_key={viewportKey} initial_fit_width={active.initial_fit_width} reading_active={!modalOpen && !inspectorBlocksReader && !aiTransition}
     on_location_change={handleLocationChange} on_navigate={(target) => readerActionsRef.current.handleNavigate(target)} on_selection={handleSelection}
     on_references={(items, status = 'ready') => { if (activeRef.current?.paper.paper_id === active.paper.paper_id) { setReferences(items); setReferenceStatus(status); } }}
     on_error={(message) => setNotice({ tone: 'error', message })} /> : null,
   [active, annotations, annotationBusy, annotationEdit, isDesktop, targetLocation, targetAnchor, navigationKey, controlsVisible,
-    inspectorBlocksReader, viewportKey, modalOpen, aiTransition, edgeNavigation, handleLocationChange, handleSelection]);
+    inspectorBlocksReader, sourcePreview, passageCapture, viewportKey, modalOpen, aiTransition, edgeNavigation, handleLocationChange, handleSelection]);
 
   return (
     <div className={`app-shell library-workspace ${active ? 'reading-mode' : 'library-home-mode'} ${supportsTabs && tabIds.length ? 'has-paper-tabs' : ''} ${phoneAi.open ? 'phone-ai-open' : ''} ${isDesktop ? 'desktop-reader' : ''} ${isDesktop && inspectorOpen ? 'desktop-inspector-open' : ''}`}>
@@ -1046,7 +1177,7 @@ export function WorkspacePage() {
           on_input_change={setArxivInput} on_search_change={setSearchInput} on_lookup={() => { void lookupPaper(arxivInput); }} on_cancel_lookup={stopOpening}
           on_open={(paper) => { void openPaper(paper.arxiv_id, paper); }} on_remove={(paper) => { setRemoving(paper); setRemoveError(null); }}
           on_retry_library={() => { void retryLibrary(); }} on_settings={showSettings} />}
-        {active && controlsVisible && !phoneAi.open && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening) || aiTransition} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending || aiTransition} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={showHome} on_info={showPaperInfo} on_inspector={toggleInspector} on_settings={showSettings} on_direction={() => { void changeReaderDirection(); }} on_close={() => closePaper(active.paper.paper_id)} source_title={supportsTabs ? sourcePaper?.title : undefined} on_source={supportsTabs && sourcePaper ? () => { void openPaper(sourcePaper.arxiv_id, sourcePaper); } : undefined} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
+        {active && controlsVisible && !paperInFront && !phoneAi.open && <ReaderOverlay paper={active.paper} can_go_back={canGoBack(history)} can_go_forward={canGoForward(history)} busy={Boolean(opening) || aiTransition} inspector_open={inspectorOpen} supports_orientation={readerCapabilities.supports_orientation} orientation={readerOrientation} orientation_pending={orientationPending || aiTransition} library_button_ref={libraryButtonRef} on_back={() => { void navigateHistory('back'); }} on_forward={() => { void navigateHistory('forward'); }} on_library={showHome} on_info={showPaperInfo} on_inspector={toggleInspector} on_settings={showSettings} on_ask={!isPhone ? () => { setAiScreen('question'); void openAi(); } : undefined} on_direction={() => { void changeReaderDirection(); }} on_close={() => closePaper(active.paper.paper_id)} source_title={supportsTabs ? sourcePaper?.title : undefined} on_source={supportsTabs && sourcePaper ? () => { void openPaper(sourcePaper.arxiv_id, sourcePaper); } : undefined} reader_mode={current?.reader_mode ?? 'pdf'} on_mode={() => {
           const source = currentPositionRef.current ?? current;
           if (source) jumpTo({ ...source, reader_mode: source.reader_mode === 'reading' ? 'pdf' : 'reading', reading_block_id: null, zoom: 1, zoom_mode: 'fit_width' });
         }} />}
@@ -1055,15 +1186,30 @@ export function WorkspacePage() {
         {notice && <div className={`notice notice-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.tone === 'success' ? <Check size={15} /> : notice.tone === 'error' ? <CircleHelp size={15} /> : <CircleHelp size={15} />}<span>{notice.message}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={14} /></button></div>}
 
         {aiTransition && !phoneAi.open && <div className="phone-ai-transition" role="status"><LoaderCircle size={20} className="spin" /><span>Changing viewing direction…</span><button type="button" className="text-button" onClick={() => hideReadingControls()}>Back to paper</button></div>}
-        <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !inspectorBlocksReader && !modalOpen && !aiTransition && !orientationPending)} on_activate={() => { void openAi(); }} />
+        {!isPhone && <FloatingSelectionAction controls_visible={controlsVisible} visible={Boolean(active && selection && !paperInFront && !inspectorBlocksReader && !modalOpen && !aiTransition && !orientationPending)} on_activate={() => { void openAi(); }} />}
+        {active && isPhone && !paperInFront && !inspectorOpen && !modalOpen && !aiTransition && !orientationPending &&
+          <div className="reader-ask-dock"><button type="button" className="button button-primary" aria-label={selection ? 'Ask AI or add a note to this passage' : 'Ask about paper'}
+            onClick={() => { void openAi(); }}><Sparkles size={17} />{selection ? 'Ask about passage' : 'Ask AI'}</button></div>}
+        {passageCapture && <section className="citation-preview-bar passage-capture-bar" aria-label="Attach a passage">
+          {candidate ? <details><summary>Selected passage · p. {candidate.page_anchors[0].page_number}</summary><blockquote>{candidate.selected_text}</blockquote></details> :
+            <p role="status">Select text in the PDF to attach it to your question.</p>}
+          <div className="citation-preview-actions"><button type="button" className="button button-subtle" onClick={() => finishCapture(null)}>Cancel</button>
+            <button type="button" className="button button-primary" disabled={!candidate} onClick={() => finishCapture(candidate)}>Attach passage</button></div>
+        </section>}
+        {sourcePreview && <section className="citation-preview-bar" aria-label="Cited passage">
+          <details><summary><BookOpen size={16} /> {sourcePreview.citation.citation_id} · p. {sourcePreview.citation.anchor.page_number}</summary>
+            <blockquote>{sourcePreview.citation.anchor.text_quote.exact_text}</blockquote></details>
+          <div className="citation-preview-actions"><button type="button" className="button button-primary" onClick={() => returnFromSource()}><ArrowLeft size={16} /> Back to {sourcePreview.from}</button>
+            {sourcePreview.from === 'answer' && <button type="button" className="button button-subtle" onClick={() => returnFromSource(true)}>Ask about this</button>}</div>
+        </section>}
 
-        {active && <div className={`reading-grid ${inspectorOpen ? 'with-inspector' : ''}`}>
+        {active && <div className={`reading-grid ${inspectorOpen && !paperInFront ? 'with-inspector' : ''}`}>
           <section className={`reading-surface ${active ? 'has-paper' : ''}`} aria-label="Paper reader">
             <div className="pdf-reader-mount" inert={inspectorBlocksReader || aiTransition}>{reader}</div>
           </section>
 
-          {inspectorOpen && <aside ref={aiDialogRef} id="paper-inspector" className={`inspector ${phoneAi.open ? 'phone-ai-screen' : ''}`} role={phoneAi.open ? 'dialog' : undefined} aria-modal={phoneAi.open ? true : undefined} aria-label={phoneAi.open ? 'Ask AI' : 'References and annotations'}>
-            {phoneAi.open ? <header className="phone-ai-header"><button type="button" className="text-button" onClick={() => hideReadingControls()}><ArrowLeft size={18} /> Back to paper</button><div><strong>Ask AI</strong><span>{active?.paper.title}</span></div><button type="button" className="icon-button" aria-label="AI provider settings" onClick={showSettings}><Settings2 size={18} /></button></header> : <div className="inspector-heading"><div className="inspector-tabs" role="tablist" aria-label="Paper details">
+          {inspectorOpen && <aside hidden={paperInFront} ref={aiDialogRef} id="paper-inspector" className={`inspector ${phoneAi.open ? 'phone-ai-screen' : ''}`} role={phoneAi.open ? 'dialog' : undefined} aria-modal={phoneAi.open ? true : undefined} aria-label={phoneAi.open ? 'Ask AI' : 'References and annotations'}>
+            {phoneAi.open ? <header className="phone-ai-header"><button type="button" className="text-button" onClick={() => hideReadingControls()}><ArrowLeft size={18} /> Back to paper</button><div><strong>Ask AI</strong><span>{active?.paper.title}</span></div><button type="button" className="icon-button" aria-label="Conversations" onClick={() => setAiScreen('list')}><MessageSquare size={18} /></button><button type="button" className="icon-button" aria-label="AI provider settings" onClick={showSettings}><Settings2 size={18} /></button></header> : <div className="inspector-heading"><div className="inspector-tabs" role="tablist" aria-label="Paper details">
               <button type="button" role="tab" id="references-tab" aria-controls="references-panel" aria-selected={inspectorTab === 'references'} className={inspectorTab === 'references' ? 'is-active' : ''} onClick={() => setInspectorTab('references')}><Link2 size={15} /> References {references.length > 0 && <span>{references.length}</span>}</button>
               <button type="button" role="tab" id="notes-tab" aria-controls="notes-panel" aria-selected={inspectorTab === 'notes'} className={inspectorTab === 'notes' ? 'is-active' : ''} onClick={() => setInspectorTab('notes')}><StickyNote size={15} /> Notes {annotations.length > 0 && <span>{annotations.length}</span>}</button>
             </div>{isDesktop && <button type="button" className="icon-button inspector-close" aria-label="Close notes sidebar" onClick={() => {
@@ -1081,27 +1227,62 @@ export function WorkspacePage() {
                 <p>{referenceStatus === 'loading' ? 'Reading the bibliography on this device.' : 'You can still follow embedded links directly in the PDF.'}</p>
               </div>}
             </div> : <div id="notes-panel" ref={notesPanelRef} role={phoneAi.open ? undefined : 'tabpanel'} aria-labelledby={phoneAi.open ? undefined : 'notes-tab'} className="inspector-content notes-content">
-              {selection && active ? <form className="selection-composer" onSubmit={(event) => { void submitSelection(event); }}>
-                <div className="selection-heading"><span><span className="selection-dot" /> SELECTED PASSAGE</span><button type="button" className="icon-button" onClick={clearSelection} aria-label="Dismiss selected passage"><X size={14} /></button></div>
-                <blockquote>{selection.selected_text}</blockquote><span className="selection-page">Page {selectedPages}</span>
-                <div className="composer-tabs"><button type="button" className={composingAi ? 'is-active' : ''} onClick={() => { if (requiresPhoneAi && !phoneAi.open) void openAi(); else { setComposerKind('ai'); askInputRef.current?.focus(); } }}><Sparkles size={14} /> Ask AI</button>{!phoneAi.open && <button type="button" className={!composingAi ? 'is-active' : ''} onClick={() => setComposerKind('note')}><StickyNote size={14} /> Add a note</button>}</div>
-                {composingAi ? <><label className="sr-only" htmlFor="selection-question">Question about this selection</label><textarea id="selection-question" ref={askInputRef} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to understand?" rows={3} />{!settings.model_id || !settings.base_url ? <div className="setup-assistant"><span>Connect your AI provider to ask a question.</span><button type="button" className="text-button" onClick={showSettings}>Set up AI <ArrowUpRight size={12} /></button></div> : <><details className="context-preview"><summary>Context sent to {settings.model_id} <ChevronRight size={12} /></summary><p>The selection, paper title, authors, abstract, and the nearby text below.</p><pre>{selection.context_text || 'No additional nearby text.'}</pre></details><button type="submit" className="button button-primary composer-submit" disabled={!question.trim() || pendingAnnotation}><Sparkles size={15} />Ask</button></>}</> : <><label className="sr-only" htmlFor="selection-note">Note for this selection</label><textarea id="selection-note" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Keep a thought beside this passage…" rows={4} disabled={Boolean(annotationBusy)} /><button type="submit" className="button button-primary composer-submit" disabled={!noteDraft.trim() || pendingAnnotation}>{annotationBusy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}{annotationBusy ? 'Saving…' : 'Save note'}</button></>}
-              </form> : annotations.length === 0 && aiConversations.conversations.length === 0 ? <div className="notes-intro"><span className="empty-symbol"><MessageSquare size={23} strokeWidth={1.5} /></span><h2>Make room for a thought.</h2><p>Select a passage to ask a question or leave a note beside it.</p></div> : null}
+              {(!phoneAi.open || aiScreen === 'question') && <PaperQuestionComposer selection={selection} phone={phoneAi.open}
+                attachments={attachments[newDraftKey] ?? []} on_attach={p => setAttachments(previous => ({ ...previous, [newDraftKey]: p }))}
+                on_pick={() => beginCapture(newDraftKey)}
+                composing_ai={composingAi || (!requiresPhoneAi && !selection)} busy={pendingAnnotation} settings={settings} input_ref={askInputRef}
+                question={question} note={noteDraft} on_question={setQuestion} on_note={setNoteDraft} on_submit={submitSelection}
+                on_clear={() => clearSelection(composingAi)} on_manual={() => setComposerKind('note')} on_settings={showSettings}
+                on_ai={() => { if (requiresPhoneAi && !phoneAi.open) void openAi(); else { setComposerKind('ai'); askInputRef.current?.focus(); } }} />}
+              {phoneAi.open && aiScreen === 'list' && <div className="ai-thread-list-heading"><h2>Conversations</h2>
+                <button type="button" className="button button-subtle" onClick={() => { setAiScreen('question'); setQuestion(''); }}><Plus size={15} /> New conversation</button>
+              </div>}
               {!phoneAi.open && <SavedNotes key={active.paper.paper_id} annotations={annotations}
                 busy_annotation_id={annotationBusy} edit={annotationEdit} importing={importing} exporting={exporting}
                 on_edit={editAnnotation} on_update={updateAnnotation} on_delete={removeAnnotation} on_navigate={jumpToAnnotation}
+                on_read_citation={readNoteCitation} on_open_origin={openNoteOrigin} reopened_id={reopenedNote}
                 on_import={(file) => { void importAnnotations(file); }} on_export={() => { void exportAnnotations(); }} />}
               {aiConversations.loading && <p className="field-hint" role="status">Loading conversations…</p>}
               {aiConversations.load_error && <div className="inline-error" role="alert"><p>{aiConversations.load_error}</p><button type="button" className="text-button" onClick={() => { void aiConversations.reload(); }}>Retry conversations</button></div>}
               {aiConversations.conversations.length > 0 && <div className="ai-conversation-list">{aiConversations.conversations.map((view) => {
                 const id = view.conversation.conversation_id;
-                if (requiresPhoneAi && !phoneAi.open) return <button type="button" className="phone-conversation-preview" key={id} onClick={() => { void openAi(id); }}>
+                if (phoneAi.open && (aiScreen === 'question' || (aiScreen === 'conversation' && id !== conversationId))) return null;
+                if ((requiresPhoneAi && !phoneAi.open) || (phoneAi.open && aiScreen === 'list')) return <button type="button" className="phone-conversation-preview" key={id} onClick={() => { void openAi(id); }}>
                   <MessageSquare size={17} /><span><strong>{view.conversation.turns[0]?.question || 'AI conversation'}</strong><small>{view.conversation.turns.length} {view.conversation.turns.length === 1 ? 'question' : 'questions'} · Open conversation</small></span><ChevronRight size={16} />
                 </button>;
-                return <AiConversationCard key={id} view={view}
+                const revision = { paper_id: active.paper.paper_id, pdf_hash: active.paper.pdf_hash };
+                const options: AiPassage[] = selection ? [{ ...revision, ...selection }] : [];
+                const recent = view.conversation.turns.find(t => t.turn_id === selectedTurn) ?? view.conversation.turns.at(-1);
+                if (recent) {
+                  options.push(...recent.attachments ?? []);
+                  for (const citation of recent.citations ?? []) options.push({ ...revision, page_anchors: [citation.anchor], selected_text: citation.anchor.text_quote.exact_text, context_text: '' });
+                }
+                return <AiConversationCard key={conversationId === id ? `${id}:${conversationVisit}` : id} view={view} focused={phoneAi.open || (conversationId === id && !!selectedTurn)}
+                  selected_turn_id={conversationId === id ? selectedTurn : undefined} on_select_turn={turn => { setConversationId(id); setSelectedTurn(turn); }}
+                  passage_options={options} attachments={attachments[id] ?? []} on_attach={passages => setAttachments(previous => ({ ...previous, [id]: passages }))}
+                  on_pick={() => beginCapture(id)}
+                  turn_actions={{
+                    on_read: (citation, from) => readCitation(citation, from, id),
+                    on_edit: (turn, note) => aiConversations.editTurnNote(id, turn, note),
+                    on_pin: async (turn, content, target) => {
+                      const saved = await aiConversations.pinTurn(id, turn, content, target);
+                      if (saved && annotationBelongsToReader(saved)) {
+                        setNotice({ tone: 'success', message: saved.target.scope === 'paper' ? 'Note pinned to this paper.' : 'Note pinned to the passage.' });
+                        if (phoneAi.open && aiDialogRef.current?.isConnected) {
+                          if (saved.target.scope === 'paper') {
+                            hideReadingControls(); setReopenedNote(saved.annotation_id); setInspectorTab('notes'); setInspectorOpen(true);
+                          } else jumpToAnnotation(saved);
+                        }
+                      }
+                      return saved;
+                    },
+                  }}
                   follow_up_question={followUpDrafts[id] ?? ''}
                   on_follow_up_question_change={(value) => setFollowUpDrafts((drafts) => ({ ...drafts, [id]: value }))}
-                  on_follow_up={(question) => aiConversations.followUp(id, question)}
+                  on_follow_up={question => {
+                    if (!aiConversations.followUp(id, question, attachments[id])) return false;
+                    setAttachments(previous => ({ ...previous, [id]: [] })); return true;
+                  }}
                   on_generate_note={() => { void aiConversations.generateNote(id); }}
                   on_stop={() => aiConversations.stop(id)}
                   on_edit_note={(content) => aiConversations.editNote(id, content)}

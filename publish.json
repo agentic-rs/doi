@@ -1,5 +1,5 @@
 {
   "description": "Read arXiv papers, follow references, and save AI explanations beside selected passages.",
   "project_url": "https://github.com/agentic-rs/doi",
-  "release_notes": "Adds the Paper Reader icon to the Apell launcher and Store listing."
+  "release_notes": "Ask about a paper or selected passages, follow AI citations into the PDF, and pin an edited note with its sources."
 }

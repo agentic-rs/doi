@@ -91,11 +91,23 @@ export interface PageAnchor {
 export interface AnnotationTarget {
   paper_id: string;
   pdf_hash: string;
+  /** Legacy passage targets omit scope. Whole-paper targets have no geometry. */
+  scope?: 'paper';
   page_anchors: PageAnchor[];
 }
 
+export interface AiCitation {
+  citation_id: string;
+  anchor: PageAnchor;
+}
+
+export interface AiNoteOrigin {
+  conversation_id: string;
+  turn_id: string;
+}
+
 export type AnnotationBody =
-  | { kind: 'note'; content: string }
+  | { kind: 'note'; content: string; citations?: AiCitation[]; origin?: AiNoteOrigin; llm_provenance?: LlmProvenance }
   | {
       kind: 'ai_answer';
       question: string;
@@ -122,6 +134,8 @@ export interface SelectionContext {
   context_text: string;
   page_anchors: PageAnchor[];
 }
+
+export type AiPassage = SelectionContext & { paper_id: string; pdf_hash: string };
 
 export interface ReferenceItem {
   reference_id: string;
@@ -201,6 +215,15 @@ export interface AiConversationTurn {
   error: string | null;
   created_at: string;
   llm_provenance?: LlmProvenance;
+  attachments?: AiPassage[];
+  citations?: AiCitation[];
+  note?: AiTurnNote;
+}
+
+export interface AiTurnNote {
+  content: string;
+  target: AnnotationTarget;
+  saved_annotation_id: string | null;
 }
 
 export interface AiNoteDraft {
@@ -235,7 +258,8 @@ export interface AiConversationRequest {
   request_id: string;
   conversation_id: string;
   question: string;
-  source?: SelectionContext & { paper_id: string; pdf_hash: string };
+  source?: AiPassage;
+  attachments?: AiPassage[];
 }
 
 export interface AiConversationResponse {
@@ -250,7 +274,7 @@ export interface AiConversationSaveResult {
 
 export interface AiStreamEvent {
   request_id: string;
-  kind: 'status' | 'thinking_delta' | 'answer_delta';
+  kind: 'status' | 'thinking_delta' | 'answer_delta' | 'round_reset';
   text: string;
 }
 
@@ -293,6 +317,9 @@ export interface PdfReaderProps {
   on_update_annotation?: (annotation: Annotation, content: string) => Promise<boolean>;
   on_delete_annotation?: (annotation: Annotation) => Promise<boolean>;
   on_navigate_annotation?: (annotation: Annotation, anchor?: PageAnchor) => void;
+  on_navigate_ai_citation?: (annotation: Annotation, citation: AiCitation) => void;
+  on_open_ai_origin?: (annotation: Annotation) => void;
+  cited_anchor?: PageAnchor | null;
   on_location_change: (location: ReadingLocation) => void;
   on_navigate: (target: ReaderTarget) => void;
   on_selection: (selection: SelectionContext | null) => void;

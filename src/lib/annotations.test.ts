@@ -47,6 +47,24 @@ describe('app annotation sidecar', () => {
   it('round trips coordinates and content independently of the renderer', () => {
     expect(parseAnnotationSidecar(serializeAnnotations(paper, [annotation]), paper)).toEqual([annotation]);
   });
+  it('keeps a whole-paper note independent from its cited passage and rejects broken links', () => {
+    const citation = { citation_id: 'S2', anchor: annotation.target.page_anchors[0] };
+    const pinned: Annotation = { ...annotation, target: { ...annotation.target, scope: 'paper', page_anchors: [] },
+      body: { kind: 'note', content: 'My takeaway', citations: [citation], origin: { conversation_id: 'discussion', turn_id: 'question' } } };
+    const data = serializeAnnotations(paper, [pinned]);
+    expect(parseAnnotationSidecar(data, paper)).toEqual([pinned]);
+    for (const mutate of [
+      (n: Annotation) => { delete n.target.scope; },
+      (n: Annotation) => { n.target.page_anchors.push(citation.anchor); },
+      (n: Annotation) => { if (n.body.kind === 'note') n.body.citations!.push(citation); },
+      (n: Annotation) => { if (n.body.kind === 'note') n.body.citations![0].anchor.quad_points = []; },
+      (n: Annotation) => { if (n.body.kind === 'note') n.body.origin!.turn_id = ''; },
+    ]) {
+      const sidecar = JSON.parse(data);
+      mutate(sidecar.annotations[0]);
+      expect(() => parseAnnotationSidecar(JSON.stringify(sidecar), paper)).toThrow();
+    }
+  });
   it('rejects other PDF revisions and malformed geometry', () => {
     const data = serializeAnnotations(paper, [annotation]);
     expect(() => parseAnnotationSidecar(data, { ...paper, pdf_hash: 'b'.repeat(64) })).toThrow(/revision/);

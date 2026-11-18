@@ -1,11 +1,16 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronDown, ChevronRight, LoaderCircle, Sparkles, StickyNote, Trash2 } from 'lucide-react';
-import type { Annotation } from '../lib/types';
+import type { AiCitation, Annotation } from '../lib/types';
+import { CitationLinks, CitedText } from './AiPassages';
+import { ComposerForm } from './ComposerForm';
 import './note-card.css';
 
 export interface NoteCardProps {
   annotation: Annotation;
   on_navigate: (annotation: Annotation) => void;
+  on_read_citation?: (annotation: Annotation, citation: AiCitation) => void;
+  on_open_origin?: (annotation: Annotation) => void;
+  initially_expanded?: boolean;
   on_update?: (annotation: Annotation, content: string) => Promise<boolean>;
   on_delete?: (annotation: Annotation) => Promise<boolean>;
   busy?: boolean;
@@ -16,8 +21,8 @@ export interface NoteCardProps {
   on_edit_draft_change?: (draft: string | null) => void;
 }
 
-export function NoteCard({ annotation, on_navigate, on_update, on_delete, busy = false, pending = false, frozen = false, on_before_resize, edit_draft, on_edit_draft_change }: NoteCardProps) {
-  const [local_expanded, setExpanded] = useState(false);
+export function NoteCard({ annotation, on_navigate, on_read_citation, on_open_origin, initially_expanded = false, on_update, on_delete, busy = false, pending = false, frozen = false, on_before_resize, edit_draft, on_edit_draft_change }: NoteCardProps) {
+  const [local_expanded, setExpanded] = useState(initially_expanded);
   const [local_draft, setDraft] = useState<string | null>(null);
   const [full_answer, setFullAnswer] = useState(false);
   const [operation, setOperation] = useState<'save' | 'delete' | null>(null);
@@ -83,19 +88,20 @@ export function NoteCard({ annotation, on_navigate, on_update, on_delete, busy =
       {expanded ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
     </button>
     {expanded && <div className="note-card-content" id={content_id}>
-      <div className="note-card-meta"><span>{body.kind === 'ai_answer' ? 'AI note' : 'Your note'}</span>{pages && <span>p. {pages}</span>}</div>
+      <div className="note-card-meta"><span>{body.kind === 'ai_answer' || body.origin ? 'AI note' : 'Your note'}</span><span>{pages ? `p. ${pages}` : 'Whole paper'}</span></div>
       {quote && <blockquote className="note-card-quote">{quote}</blockquote>}
       {body.kind === 'ai_answer' && body.question && <h3 className="note-card-question">{body.question}</h3>}
-      {editing ? <form className="note-card-editor" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      {editing ? <ComposerForm className="note-card-editor" on_action={save}>
         <label htmlFor={editor_id}>Edit note</label>
         <textarea id={editor_id} value={draft} rows={6} disabled={mutation_blocked} readOnly={frozen} onChange={(event) => { if (!frozen) edit(event.target.value); }} />
         <div className="note-card-actions">
           <button type="button" disabled={mutation_blocked} aria-disabled={blocked} onClick={() => { if (!blocked) finishEditing(); }}>Cancel</button>
-          <button type="submit" className="note-card-save" disabled={mutation_blocked || !draft.trim()} aria-disabled={blocked || !draft.trim()}>
+          <button type="button" onClick={save} className="note-card-save" disabled={mutation_blocked || !draft.trim()} aria-disabled={blocked || !draft.trim()}>
             {operation === 'save' && <LoaderCircle size={16} className="spin" aria-hidden="true" />}{operation === 'save' ? 'Saving…' : 'Save note'}
           </button>
         </div>
-      </form> : <div className="note-card-body">{content}</div>}
+      </ComposerForm> : <div className="note-card-body">{body.kind === 'note' && on_read_citation ? <CitedText text={content} citations={body.citations} on_read={c => on_read_citation(annotation, c)} /> : content}</div>}
+      {body.kind === 'note' && on_read_citation && <CitationLinks citations={body.citations} on_read={c => on_read_citation(annotation, c)} />}
       {body.kind === 'ai_answer' && body.note_content !== undefined && body.note_content !== body.answer && <div className="note-card-answer">
         <button type="button" aria-expanded={full_answer} aria-controls={answer_id} disabled={pending} aria-disabled={pending || frozen}
           onClick={() => { if (!frozen) resize(() => setFullAnswer(!full_answer)); }}>
@@ -106,7 +112,8 @@ export function NoteCard({ annotation, on_navigate, on_update, on_delete, busy =
       {body.kind === 'ai_answer' && body.model_id && <div className="note-card-model">{body.model_id}</div>}
       {(date_label || annotation.updated_at !== annotation.created_at) && <div className="note-card-date">{date_label}{annotation.updated_at !== annotation.created_at ? `${date_label ? ' · ' : ''}Edited` : ''}</div>}
       <div className="note-card-actions">
-        <button type="button" onClick={() => on_navigate(annotation)}><ArrowUpRight size={16} aria-hidden="true" />Go to passage</button>
+        {pages && <button type="button" onClick={() => on_navigate(annotation)}><ArrowUpRight size={16} aria-hidden="true" />Go to passage</button>}
+        {body.kind === 'note' && body.origin && on_open_origin && <button type="button" onClick={() => on_open_origin(annotation)}>Open conversation</button>}
         {on_update && !editing && <button type="button" disabled={mutation_blocked} aria-disabled={blocked} onClick={() => { if (!blocked) resize(() => edit(content)); }}>Edit</button>}
         {on_delete && <button type="button" className="note-card-delete" disabled={mutation_blocked} aria-disabled={blocked} aria-label="Delete annotation" title="Delete note" onClick={() => { void remove(); }}>
           {pending || operation === 'delete' ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Trash2 size={16} aria-hidden="true" />}Delete

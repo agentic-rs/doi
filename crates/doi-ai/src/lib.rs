@@ -91,5 +91,15 @@ mod wasm {
           .map_err(|error| JsValue::from_str(&error))?,
       )
     }
+
+    #[wasm_bindgen(js_name = supplyReads)]
+    pub fn supply_reads(&mut self, results: JsValue) -> Result<(), JsValue> {
+      let results = serde_wasm_bindgen::from_value(results)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+      self
+        .0
+        .supply_reads(results)
+        .map_err(|error| JsValue::from_str(&error))
+    }
   }
 }

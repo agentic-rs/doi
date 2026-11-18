@@ -256,6 +256,8 @@ describe('durable AI conversations', () => {
     records.set(saved.conversation_id, saved);
     act(() => {
       emit({ request_id: request.request_id, kind: 'thinking_delta', text: 'Received thought' });
+      emit({ request_id: request.request_id, kind: 'answer_delta', text: 'I will check the PDF.' });
+      emit({ request_id: request.request_id, kind: 'round_reset', text: '' });
       emit({ request_id: request.request_id, kind: 'answer_delta', text: 'Partial answer' });
     });
     expect(result.current.conversations[0].conversation.turns[0].answer).toBe('');

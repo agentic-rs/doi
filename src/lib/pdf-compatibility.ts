@@ -3,11 +3,26 @@ import type { PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 type PdfTextPage = Pick<PDFPageProxy, 'isPureXfa' | 'getTextContent' | 'streamTextContent'>;
 type PdfTextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;
 type PdfTextParameters = Parameters<PDFPageProxy['getTextContent']>[0];
+type TextBudget = { max_items: number; max_characters: number };
 
 /** Safari 18 streams have getReader(), but lack the async iterator PDF.js uses. */
-export async function readPdfTextContent(page: PdfTextPage, parameters: PdfTextParameters = {}): Promise<PdfTextContent> {
+export async function readPdfTextContent(page: PdfTextPage, parameters: PdfTextParameters = {}, budget?: TextBudget): Promise<PdfTextContent> {
+  let items = 0;
+  let characters = 0;
+  function checkBudget(chunk: PdfTextContent) {
+    if (!budget) return;
+    items += chunk.items.length;
+    for (const item of chunk.items) if ('str' in item) characters += item.str.length;
+    if (items > budget.max_items || characters > budget.max_characters) {
+      throw new Error('This PDF page exceeds the text extraction budget.');
+    }
+  }
   // XFA documents use a separate text source rather than the ordinary stream.
-  if (page.isPureXfa) return page.getTextContent(parameters);
+  if (page.isPureXfa) {
+    const content = await page.getTextContent(parameters);
+    checkBudget(content);
+    return content;
+  }
 
   const reader = page.streamTextContent(parameters).getReader();
   const content: PdfTextContent = { items: [], styles: Object.create(null), lang: null };
@@ -16,6 +31,7 @@ export async function readPdfTextContent(page: PdfTextPage, parameters: PdfTextP
       const { value, done } = await reader.read();
       if (done) break;
       const chunk = value as PdfTextContent;
+      checkBudget(chunk);
       content.lang ??= chunk.lang;
       Object.assign(content.styles, chunk.styles);
       content.items.push(...chunk.items);

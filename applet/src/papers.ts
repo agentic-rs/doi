@@ -129,13 +129,19 @@ export const downloadArxivPaper = (preview_id: string, request_id: string): Prom
 
 export interface PdfFiles { paths: string[]; size_bytes: number; directory: string }
 
-export async function getPdfBytes(paper_id: string): Promise<Uint8Array> {
+export async function getPdfBytes(paper_id: string, options: { expected_pdf_hash?: string; signal?: AbortSignal } = {}): Promise<Uint8Array> {
+  options.signal?.throwIfAborted();
   const { file, paper } = await store.transaction(async (db) => ({ paper: await requirePaper(db, paper_id), file: await db.get<PdfFiles>('pdf', paper_id) }));
+  if (options.expected_pdf_hash !== undefined && paper.pdf_hash !== options.expected_pdf_hash) {
+    throw new Error('The cached PDF belongs to a different revision.');
+  }
   if (!file) throw new Error('The cached PDF is missing.');
   const data = new Uint8Array(file.size_bytes);
   let offset = 0;
   for (const path of file.paths) {
+    options.signal?.throwIfAborted();
     const result = await fs.read(path, { length: 1024 * 1024 });
+    options.signal?.throwIfAborted();
     data.set(result.bytes, offset);
     offset += result.bytes.length;
   }

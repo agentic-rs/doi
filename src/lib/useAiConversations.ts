@@ -1,9 +1,10 @@
+import { createId } from '../../applet/vendor/apell-sdk';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   askAiConversation, cancelAiRequest, generateAiConversationNote, listAiConversations,
-  onAiStream, saveAiConversationNote, updateAiConversationNote,
+  onAiStream, saveAiConversationNote, updateAiConversationNote, saveAiTurnNote, updateAiTurnNoteDraft,
 } from './backend';
-import type { AiConversation, AiConversationRequest, AiConversationResponse, Annotation, Paper, SelectionContext } from './types';
+import type { AiConversation, AiConversationRequest, AiConversationResponse, AiPassage, AiTurnNote, Annotation, AnnotationTarget, Paper, SelectionContext } from './types';
 
 export interface AiConversationView {
   conversation: AiConversation;
@@ -64,6 +65,9 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
   const requestsRef = useRef(new Map<string, RequestRuntime>());
   const remoteStopsRef = useRef(new Set<string>());
   const notesRef = useRef(new Map<string, NoteRuntime>());
+  // The latest local turn edit remains authoritative while its SQLite write is queued.
+  const turnEdits = useRef(new Map<string, AiTurnNote>());
+  const turnWrites = useRef(new Map<string, Promise<void>>());
   const loadSequenceRef = useRef(0);
   const paperRef = useRef(paper);
   paperRef.current = paper;
@@ -94,6 +98,8 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     const runtime = requestsRef.current.get(id);
     const turns = conversation.turns.map((turn) => {
       const old = previous?.conversation.turns.find((item) => item.turn_id === turn.turn_id);
+      const edited = turnEdits.current.get(turn.turn_id);
+      if (edited) return { ...turn, note: edited };
       return turn.phase === 'incomplete' && old && old.answer.length > turn.answer.length
         ? { ...turn, answer: old.answer } : turn;
     });
@@ -223,12 +229,13 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
   ) => {
     let thinking = '';
     let answer = '';
+    let resetAnswer = false;
     let status: string | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
-      if (!thinking && !answer && status === null) return;
+      if (!thinking && !answer && status === null && !resetAnswer) return;
       change(id, (view) => ({
         ...view, status: status ?? view.status,
         thinking_by_turn: operation === 'answer'
@@ -237,21 +244,29 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
         note_thinking: operation === 'note' ? view.note_thinking + thinking : view.note_thinking,
         conversation: operation === 'answer' ? {
           ...view.conversation,
-          turns: view.conversation.turns.map((turn) => turn.turn_id === requestId ? { ...turn, answer: turn.answer + answer } : turn),
+          turns: view.conversation.turns.map((turn) => turn.turn_id === requestId ? { ...turn, answer: (resetAnswer ? '' : turn.answer) + answer } : turn),
         } : view.conversation,
       }));
       thinking = '';
       answer = '';
+      resetAnswer = false;
       status = null;
     };
     const runtime: RequestRuntime = { request_id: requestId, operation, cancelled: false, invoked: false, flush };
     requestsRef.current.set(id, runtime);
     try {
       if (!await flushNote(id)) throw new Error('Store your note edits before continuing. Retry storing the draft or save the note.');
+      const turns = viewsRef.current.find(v => v.conversation.conversation_id === id)?.conversation.turns ?? [];
+      await Promise.all(turns.map(t => turnWrites.current.get(t.turn_id)));
+      if (turns.some(t => turnEdits.current.has(t.turn_id))) throw new Error('Your note edit could not be stored. Reopen the draft and pin it before continuing.');
       if (runtime.cancelled || !mountedRef.current) return;
       const unlisten = await onAiStream((event) => {
         if (event.request_id !== requestId || runtime.cancelled || !mountedRef.current) return;
-        if (event.kind === 'thinking_delta') {
+        if (event.kind === 'round_reset') {
+          resetAnswer = true;
+          answer = '';
+          flush();
+        } else if (event.kind === 'thinking_delta') {
           thinking += event.text;
           status = operation === 'note' ? 'Thinking about the note…' : 'Thinking…';
         } else if (event.kind === 'answer_delta') {
@@ -317,14 +332,15 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     return true;
   }, [change]);
 
-  const ask = useCallback((sourcePaper: Paper, selection: SelectionContext, question: string) => {
+  const ask = useCallback((sourcePaper: Paper, selection: SelectionContext | null, question: string, attachments: AiPassage[] = []) => {
     if (!question.trim()) return undefined;
-    const id = crypto.randomUUID();
-    const requestId = crypto.randomUUID();
+    const id = createId();
+    const requestId = createId();
     const now = new Date().toISOString();
     const source: NonNullable<AiConversationRequest['source']> = {
-      ...selection, paper_id: sourcePaper.paper_id, pdf_hash: sourcePaper.pdf_hash,
-      page_anchors: selection.page_anchors.map((anchor) => ({
+      selected_text: selection?.selected_text ?? '', context_text: selection?.context_text ?? '',
+      paper_id: sourcePaper.paper_id, pdf_hash: sourcePaper.pdf_hash,
+      page_anchors: (selection?.page_anchors ?? []).map((anchor) => ({
         ...anchor, text_quote: { ...anchor.text_quote }, quad_points: anchor.quad_points.map((quad) => [...quad]),
       })),
     };
@@ -336,14 +352,16 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     start(id, requestId, 'answer');
     change(id, (view) => ({ ...view, unpersisted_turn_ids: [requestId], conversation: { ...view.conversation, turns: [{
       turn_id: requestId, question: question.trim(), answer: '', phase: 'pending', provider_id: '', model_id: '', error: null, created_at: now,
+      attachments: selection ? [source, ...attachments] : attachments,
     }] } }));
-    void run(id, requestId, 'answer', () => askAiConversation({ request_id: requestId, conversation_id: id, question: question.trim(), source }));
+    void run(id, requestId, 'answer', () => askAiConversation({ request_id: requestId, conversation_id: id, question: question.trim(), source,
+      ...(attachments.length ? { attachments } : {}) }));
     return id;
   }, [change, receive, run, start]);
 
-  const followUp = useCallback((id: string, question: string) => {
+  const followUp = useCallback((id: string, question: string, attachments: AiPassage[] = []) => {
     if (!question.trim()) return false;
-    const requestId = crypto.randomUUID();
+    const requestId = createId();
     if (!start(id, requestId, 'answer')) return false;
     const view = viewsRef.current.find((item) => item.conversation.conversation_id === id)!;
     const source = view.history_persisted ? undefined : {
@@ -351,15 +369,16 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     };
     change(id, (view) => ({ ...view, unpersisted_turn_ids: [...view.unpersisted_turn_ids, requestId], conversation: { ...view.conversation, turns: [...view.conversation.turns, {
       turn_id: requestId, question: question.trim(), answer: '', phase: 'pending', provider_id: '', model_id: '', error: null, created_at: new Date().toISOString(),
+      attachments,
     }] } }));
-    void run(id, requestId, 'answer', () => askAiConversation({ request_id: requestId, conversation_id: id, question: question.trim(), ...(source ? { source } : {}) }));
+    void run(id, requestId, 'answer', () => askAiConversation({ request_id: requestId, conversation_id: id, question: question.trim(), ...(source ? { source } : {}), ...(attachments.length ? { attachments } : {}) }));
     return true;
   }, [change, run, start]);
 
   const generateNote = useCallback(async (id: string) => {
     const view = viewsRef.current.find((item) => item.conversation.conversation_id === id);
     if (!view?.conversation.turns.some((turn) => turn.phase === 'complete')) return;
-    const requestId = crypto.randomUUID();
+    const requestId = createId();
     if (!start(id, requestId, 'note')) return;
     await run(id, requestId, 'note', () => generateAiConversationNote(requestId, id));
   }, [run, start]);
@@ -432,11 +451,49 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
     change(id, (view) => ({ ...view, collapsed: !view.collapsed }));
   }, [change]);
 
+  const editTurnNote = useCallback((id: string, turnId: string, note: AiTurnNote) => {
+    turnEdits.current.set(turnId, note);
+    change(id, v => ({ ...v, error: null, conversation: { ...v.conversation,
+      turns: v.conversation.turns.map(t => t.turn_id === turnId ? { ...t, note } : t) } }));
+    const previous = turnWrites.current.get(turnId) ?? Promise.resolve();
+    const work = previous.then(async () => {
+      if (turnEdits.current.get(turnId) !== note || discardedRef.current.has(id)) return;
+      await updateAiTurnNoteDraft(id, turnId, note.content, note.target);
+      if (turnEdits.current.get(turnId) === note) turnEdits.current.delete(turnId);
+    }).catch(cause => {
+      if (turnEdits.current.get(turnId) === note) change(id, v => ({ ...v, error: `Could not store this draft: ${String(cause)}` }));
+    }).finally(() => {
+      if (turnWrites.current.get(turnId) === work) turnWrites.current.delete(turnId);
+    });
+    turnWrites.current.set(turnId, work);
+  }, [change]);
+
+  const pinTurn = useCallback(async (id: string, turnId: string, content: string, target: AnnotationTarget) => {
+    const view = viewsRef.current.find(v => v.conversation.conversation_id === id);
+    if (!view || view.saving_note || view.pending || !content.trim()) return;
+    change(id, v => ({ ...v, saving_note: true, error: null }));
+    try {
+      await turnWrites.current.get(turnId);
+      if (discardedRef.current.has(id)) return;
+      const result = await saveAiTurnNote(id, turnId, content, target);
+      if (!mountedRef.current || discardedRef.current.has(id)) return;
+      turnEdits.current.delete(turnId);
+      receive(result.conversation);
+      onSavedRef.current(result.annotation);
+      return result.annotation;
+    } catch (cause) {
+      change(id, v => ({ ...v, error: `Could not pin note: ${String(cause)}` }));
+    } finally {
+      change(id, v => ({ ...v, saving_note: false }));
+    }
+  }, [change, receive]);
+
   const forgetPaper = useCallback((paperId: string) => {
     paperGenerationsRef.current.set(paperId, (paperGenerationsRef.current.get(paperId) ?? 0) + 1);
     for (const view of viewsRef.current.filter((item) => item.conversation.target.paper_id === paperId)) {
       const id = view.conversation.conversation_id;
       discardedRef.current.add(id);
+      for (const turn of view.conversation.turns) turnEdits.current.delete(turn.turn_id);
       const runtime = requestsRef.current.get(id);
       if (runtime) {
         runtime.cancelled = true;
@@ -507,7 +564,7 @@ export function useAiConversations(paper: Paper | null, onSaved: (annotation: An
 
   return {
     conversations: views.filter((view) => view.conversation.target.paper_id === paper?.paper_id && view.conversation.target.pdf_hash === paper?.pdf_hash),
-    loading, load_error: loadError, reload, ask, followUp, generateNote, stop, editNote,
+    loading, load_error: loadError, reload, ask, followUp, generateNote, stop, editNote, editTurnNote, pinTurn,
     retryNotePersistence: flushNote, saveNote, toggleCollapsed, forgetPaper,
   };
 }

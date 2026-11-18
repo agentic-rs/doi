@@ -33,8 +33,8 @@ Updating the bundle with the same `doi` applet ID preserves its library. This ve
 
 1. Enter an arXiv ID or URL, inspect its metadata, then download and open it.
 2. Read the original PDF or switch to Reading view. Reading view crops source blocks and preserves the paper's typography; it does not use OCR or reflow text.
-3. Select a passage to ask a question or add a manual note. Follow-up answers and editable note drafts persist with the paper.
-4. Configure the model in **Apell Settings**. Paper Reader does not collect API keys. Model-proposed notes require your review and an explicit **Save note** action.
+3. Choose **Ask AI** in the reader, or select a passage to ask about it. The agent can search the cached PDF and read page excerpts. Tap a citation to inspect the quoted passage, then return to your answer.
+4. Use **Save as note** on an answer, edit the takeaway, and choose the whole paper or a passage as its home. The note carries its cited passages when exported. Conversations and drafts persist locally. Set the shared model connection in **Apell Settings**.
 5. Follow detected arXiv references in the reader; Crossref can suggest matches for citations without an identifier.
 6. Removing a paper deletes its library records and queues its cached PDF files for cleanup. Closing a tab only saves the reading position.
 
@@ -44,7 +44,7 @@ Updating the bundle with the same `doi` applet ID preserves its library. This ve
 - PDF.js runs its worker protocol on the main thread with embedded fonts, CMaps, and decoder assets. Native font-face loading is disabled to comply with Apell's sandbox. Large or complex documents may render more slowly.
 - Screen orientation follows the device. Applet-controlled rotation of the screen is unavailable; PDF page rotation still works.
 - External links are shown as selectable addresses. Annotation export shows selectable JSON. Native browser opening, file export/share, and automatic import of the standalone library require additional host support.
-- LLM compatibility depends on the selected provider. Required note tools may be unsupported; failed generation retains the existing draft. Provider-specific thinking controls and streaming `reasoning_details` are not available through the current host contract.
+- PDF reading uses extractable text and its page geometry. Image-only scans and visual details of figures require a separate visual-reading capability. Models without tool support can answer from supplied context. See [AI behavior](docs/ai.md).
 
 ## Verification
 

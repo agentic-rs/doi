@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent } from 'react';
+import type { CSSProperties, KeyboardEvent, PointerEvent } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCw, Scan, Expand, FileText, WrapText } from 'lucide-react';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -921,8 +921,7 @@ export function PdfReader(props: PdfReaderProps) {
     }
   }
 
-  function submitPage(event: FormEvent) {
-    event.preventDefault();
+  function submitPage() {
     const value = Number(page_input);
     if (Number.isInteger(value)) navigatePage(value);
     else setPageInput(String(active_page));
@@ -1060,8 +1059,11 @@ export function PdfReader(props: PdfReaderProps) {
       <div className="pdf-toolbar" hidden={!controls_visible} aria-label="PDF view controls">
         <div className="pdf-toolbar-group">
           <button type="button" title="Previous page" aria-label="Previous page" disabled={!loaded || active_page <= 1} onClick={() => navigatePage(active_page - 1)}><ChevronLeft size={16} /></button>
-          <form className="pdf-page-picker" onSubmit={submitPage}>
-            <input aria-label="Page number" inputMode="numeric" value={page_input} onChange={(event) => setPageInput(event.target.value)} disabled={!loaded} />
+          <form className="pdf-page-picker" onSubmit={event => { event.preventDefault(); submitPage(); }}>
+            <input aria-label="Page number" inputMode="numeric" value={page_input} onChange={(event) => setPageInput(event.target.value)} disabled={!loaded}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (!event.repeat) submitPage(); }
+              }} />
             <span>of {loaded?.pages.length ?? '—'}</span>
           </form>
           <button type="button" title="Next page" aria-label="Next page" disabled={!loaded || active_page >= loaded.pages.length} onClick={() => navigatePage(active_page + 1)}><ChevronRight size={16} /></button>
@@ -1115,7 +1117,7 @@ export function PdfReader(props: PdfReaderProps) {
               source_rect={block.source_rect} block_id={block.block_id} render_paused={render_paused} scroll_root={scroll_root}
               split_lines={block.block_type === 'content' && block_preferences.isSplit(block)}
               on_split_status={on_split_status} on_layout_change={on_split_layout_change}
-              annotations={matching_annotations} register_page={register_page} on_link={(link, page_number) => void followLink(link, page_number)} on_error={report_error} />
+              annotations={matching_annotations} cited_anchor={props.cited_anchor} register_page={register_page} on_link={(link, page_number) => void followLink(link, page_number)} on_error={report_error} />
             <div className="reading-block-actions">
               <span>{(block.figure_label ? `Figure ${block.figure_label}` : null) ?? (block.kind === 'original' ? 'Original layout' : 'Source')} · p. {block.page_number}</span>
               {block.kind === 'figure' && <button type="button" aria-label={`Enlarge ${block.figure_label ? `Figure ${block.figure_label}` : 'figure'}`} onClick={() => { reportLocation(); setEnlargedFigure(block); }}><Expand size={15} /> Enlarge</button>}
@@ -1143,6 +1145,8 @@ export function PdfReader(props: PdfReaderProps) {
                 on_edit_draft_change={props.on_edit_annotation ? (content) => props.on_edit_annotation?.(annotation, content) : undefined}
                 on_update={props.on_update_annotation}
                 on_delete={props.on_delete_annotation}
+                on_read_citation={props.on_navigate_ai_citation}
+                on_open_origin={props.on_open_ai_origin}
                 on_navigate={() => { reportLocation(); props.on_navigate_annotation?.(annotation, anchor); }} />)}
             </aside>}
           </article>) :
@@ -1154,6 +1158,7 @@ export function PdfReader(props: PdfReaderProps) {
             render_paused={render_paused}
             scroll_root={scroll_root}
             annotations={matching_annotations}
+            cited_anchor={props.cited_anchor}
             register_page={register_page}
             on_link={(link, page_number) => void followLink(link, page_number)}
             on_error={report_error}

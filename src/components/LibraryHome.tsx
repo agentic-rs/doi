@@ -98,6 +98,10 @@ function LibraryPaperCard(props: Pick<LibraryHomeProps, 'on_open' | 'on_remove'>
 
 export function LibraryHome(props: LibraryHomeProps) {
   const inputId = useId();
+  const canLookup = props.is_native && !props.lookup_busy && Boolean(props.input.trim());
+  function lookup() {
+    if (canLookup) props.on_lookup();
+  }
   const search = props.search.trim().toLocaleLowerCase();
   const papers = props.papers.filter((paper) => `${paper.title} ${paper.arxiv_id}v${paper.arxiv_version} ${paper.authors.join(' ')}`.toLocaleLowerCase().includes(search))
     .sort((left, right) => recentTime(right) - recentTime(left));
@@ -110,16 +114,16 @@ export function LibraryHome(props: LibraryHomeProps) {
       </header>
       <section className="library-home-add" aria-labelledby={`${inputId}-heading`}>
         <div><h2 id={`${inputId}-heading`}>Add a paper</h2><p>Find an arXiv paper, read its abstract, and save it to your library.</p></div>
-        <form onSubmit={(event) => {
-          event.preventDefault();
-          if (props.is_native && !props.lookup_busy && props.input.trim()) props.on_lookup();
-        }}>
+        <form onSubmit={event => { event.preventDefault(); lookup(); }}>
           <label htmlFor={inputId}>arXiv ID or link</label>
           <div className="library-home-lookup">
             <input id={inputId} ref={props.input_ref} value={props.input} onChange={(event) => props.on_input_change(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (!event.repeat) lookup(); }
+              }}
               placeholder="1706.03762 or arxiv.org/abs/…" autoComplete="off" autoCapitalize="none"
               autoCorrect="off" spellCheck={false} disabled={props.lookup_busy} />
-            <button type="submit" disabled={!props.is_native || props.lookup_busy || !props.input.trim()}><Search size={18} aria-hidden="true" /> Find paper</button>
+            <button type="button" onClick={lookup} disabled={!canLookup}><Search size={18} aria-hidden="true" /> Find paper</button>
           </div>
         </form>
         {props.lookup_busy && <div className="library-home-lookup-status"><p role="status"><LoaderCircle size={18} className="spin" aria-hidden="true" />{props.lookup_message || 'Finding paper…'}</p><button type="button" onClick={props.on_cancel_lookup}>Cancel</button></div>}

@@ -43,7 +43,20 @@ pub fn validate_annotation(annotation: &Annotation) -> Result<()> {
     }
   }
   match &annotation.body {
-    AnnotationBody::Note { content } => require_text(content, "note", MAX_TEXT_BYTES)?,
+    AnnotationBody::Note { content, citations } => {
+      require_text(content, "note", MAX_TEXT_BYTES)?;
+      if citations.len() > 64 {
+        return Err("Too many note citations.".into());
+      }
+      let mut seen = std::collections::HashSet::new();
+      for citation in citations {
+        validate_id(&citation.citation_id)?;
+        if !seen.insert(&citation.citation_id) {
+          return Err("Duplicate note citation.".into());
+        }
+        validate_page_anchor(&citation.anchor)?;
+      }
+    }
     AnnotationBody::AiAnswer {
       question,
       answer,
@@ -77,41 +90,46 @@ pub fn validate_annotation_target(target: &AnnotationTarget) -> Result<()> {
   if target.pdf_hash.len() != 64 || !target.pdf_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
     return Err("An annotation must identify the original PDF hash.".into());
   }
-  if target.page_anchors.is_empty() || target.page_anchors.len() > 100 {
+  if target.scope.is_some() != target.page_anchors.is_empty() || target.page_anchors.len() > 100 {
     return Err("An annotation must contain a bounded selection of page anchors.".into());
   }
-  for anchor in &target.page_anchors {
-    if anchor.page_number == 0
-      || anchor.page_number > 100_000
-      || anchor.quad_points.is_empty()
-      || anchor.quad_points.len() > 10_000
-      || anchor.text_quote.normalization_version != 1
+  target
+    .page_anchors
+    .iter()
+    .try_for_each(validate_page_anchor)
+}
+
+fn validate_page_anchor(anchor: &PageAnchor) -> Result<()> {
+  if anchor.page_number == 0
+    || anchor.page_number > 100_000
+    || anchor.quad_points.is_empty()
+    || anchor.quad_points.len() > 10_000
+    || anchor.text_quote.normalization_version != 1
+  {
+    return Err("Invalid annotation page anchor.".into());
+  }
+  require_text(
+    &anchor.text_quote.exact_text,
+    "selected quote",
+    MAX_TEXT_BYTES,
+  )?;
+  bound_text(&anchor.text_quote.prefix, "quote prefix", 8192)?;
+  bound_text(&anchor.text_quote.suffix, "quote suffix", 8192)?;
+  for quad in &anchor.quad_points {
+    if quad
+      .iter()
+      .any(|coordinate| !coordinate.is_finite() || coordinate.abs() > 1_000_000.0)
     {
-      return Err("Invalid annotation page anchor.".into());
+      return Err("Annotation coordinates must be finite PDF user-space values.".into());
     }
-    require_text(
-      &anchor.text_quote.exact_text,
-      "selected quote",
-      MAX_TEXT_BYTES,
-    )?;
-    bound_text(&anchor.text_quote.prefix, "quote prefix", 8192)?;
-    bound_text(&anchor.text_quote.suffix, "quote suffix", 8192)?;
-    for quad in &anchor.quad_points {
-      if quad
-        .iter()
-        .any(|coordinate| !coordinate.is_finite() || coordinate.abs() > 1_000_000.0)
-      {
-        return Err("Annotation coordinates must be finite PDF user-space values.".into());
-      }
-      let area = (0..4)
-        .fold(0.0, |sum, index| {
-          let next = (index + 1) % 4;
-          sum + quad[index * 2] * quad[next * 2 + 1] - quad[next * 2] * quad[index * 2 + 1]
-        })
-        .abs();
-      if area < 0.000_001 {
-        return Err("Annotation quadrilaterals must enclose a non-empty area.".into());
-      }
+    let area = (0..4)
+      .fold(0.0, |sum, index| {
+        let next = (index + 1) % 4;
+        sum + quad[index * 2] * quad[next * 2 + 1] - quad[next * 2] * quad[index * 2 + 1]
+      })
+      .abs();
+    if area < 0.000_001 {
+      return Err("Annotation quadrilaterals must enclose a non-empty area.".into());
     }
   }
   Ok(())

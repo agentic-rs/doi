@@ -66,8 +66,12 @@ export async function askSelection(_request: AiRequest): Promise<AiAnswer> {
 
 export async function getReaderCapabilities(): Promise<ReaderCapabilities> {
   const device = await hostCall<{ platform: string }>('device.info');
-  return { supports_orientation: false, device_kind: device.platform === 'ios' || device.platform === 'android'
-    ? (window.innerWidth >= 768 ? 'tablet' : 'phone') : 'desktop' };
+  if (device.platform !== 'ios' && device.platform !== 'android') return { supports_orientation: false, device_kind: 'desktop' };
+  // Apell exposes the platform. Use the display's short side so turning a
+  // phone or opening a narrow tablet window keeps the same navigation model.
+  const screen = window.screen;
+  const short_side = screen.width && screen.height ? Math.min(screen.width, screen.height) : Math.min(window.innerWidth, window.innerHeight);
+  return { supports_orientation: false, device_kind: short_side >= 600 ? 'tablet' : 'phone' };
 }
 export async function setReaderOrientation(_orientation: ReaderOrientation): Promise<ReaderOrientation> {
   throw new Error('Rotate your device to change the reading direction.');

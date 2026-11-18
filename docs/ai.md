@@ -1,24 +1,24 @@
-# AI in the Apell applet
+# Ask AI in Paper Reader
 
-Apell owns provider settings, credentials, model selection, transport, and streaming. Paper Reader constructs the source context and completed conversation history, validates note proposals in Rust/WASM, and persists conversations and annotations through the applet's SQLite store.
+Open a paper to start a conversation, or select a passage to attach it to a question. Follow-ups can attach other passages from the same PDF revision. Apell supplies the configured model, credentials, streaming transport and cancellation. Configure the model in Apell Settings. Demo mode uses scripted replies.
 
-Close the applet and use Apell Settings to configure the shared model. Demo mode provides scripted replies and is not evidence of a live model connection.
+## Reading and citing a PDF
 
-The initial answer offers `propose_annotation` as an optional tool. A valid call becomes a draft only; Paper Reader returns a tool result and requests a final text answer. Follow-ups do not offer tools. **Generate note** requires exactly one valid proposal, and failures retain the previous draft. **Save note** writes the reviewed content without another model call.
+Paper Reader sends the paper's title, arXiv revision, authors, abstract, attached text and completed conversation history. During an initial answer or a follow-up the model can request two local tools.
 
-The runner uses `llm.generate`, not the legacy `llm.complete`. Each provider round has a distinct request ID, while UI events retain the enclosing operation ID. Stop cancels the currently active round and prevents starting another. Cancelled, truncated, failed, and unsupported outcomes retain available answer text as incomplete. Incomplete turns are excluded from future context.
+- `search_document` finds text matching a literal phrase in the cached PDF. Results give the pages searched and the next starting page when more pages remain.
+- `read_page` extracts passages from a one-based page number. Long pages have a continuation offset. Image-only pages have no extractable passages.
 
-Apell returns a replayable assistant `message`. Paper Reader passes it back intact during the tool exchange, preserving native `provider_state`. Ordinary completed question/answer turns form the durable history.
+PDF.js reads the exact stored revision locally. Apell receives short text excerpts with page numbers. The applet retains each excerpt's normalized quote and PDF-space highlight coordinates. It assigns source IDs for one answer, including IDs for eligible attached passages and recent cited evidence. The model can refer to an excerpt with a marker such as `[S1]`. Opening that citation takes the reader to the stored passage. The app verifies that each linked ID was supplied to the model in that answer. Readers can inspect the quote to judge whether it supports the claim.
 
-Thinking events are displayed transiently and excluded from stored answers and exports. Stored turns and notes carry `llm_provenance` with the connection ID, requested model, and nullable provider-reported model. The legacy display field `model_id` uses the requested model when the actual model is unknown; `llm_provenance.model_id` retains that distinction.
+Reads run within a budget of three tool rounds, four calls per round and 32 KiB of tool excerpts per answer. The initial prompt and completed history share a separate 128 KiB budget. Stop cancels the active Apell request or local PDF read. A confirmed unsupported-tools response on the first model call permits one text-only retry using the supplied context.
 
-Paper Reader sends the selected passage, nearby context, title, authors, abstract, and completed conversation turns. It does not automatically read every cited paper. The applet rejects oversized context instead of silently truncating it.
+## Saved notes and conversations
 
-Current compatibility limits:
+**Save as note** opens an editable note for a completed answer. Choose its placement on the paper or beside a passage. Pinning stores the reviewed text, verified source anchors, model attribution and a local link to the originating turn. A note can sit beside the introduction and cite an appendix. Saving requires no further model call.
 
-- Provider capability reports can be `unknown`; each request's outcome is authoritative.
-- A positively identified unsupported-tools response permits one text-only retry for an initial answer. Explicit note generation never substitutes ordinary answer text for a required proposal.
-- Apell has no per-request thinking control. Providers that reject required tools in their configured thinking mode need a compatible model/host configuration.
-- The current host cannot preserve nonempty streaming `reasoning_details`; it rejects that format explicitly.
+During tool use, Paper Reader replays the complete assistant message returned by `llm.generate`, including Apell's native `provider_state`. It routes subsequent rounds of the answer to the connection and requested model that began it. Each provider round has a distinct request ID. Progress is associated with the enclosing operation. The applet stores completed question/answer turns and their source locations. It excludes interrupted turns from subsequent prompts and renders streaming thinking transiently. Later turns receive the original page and quote for previously cited claims.
 
-Live-provider and physical-device behavior still require integration testing.
+Stored model provenance includes the connection ID, requested model and nullable provider-reported model. Existing AI answers and drafts keep their original records. The legacy **Generate note** action requires one valid `propose_annotation` tool result and retains the previous draft on failure.
+
+The PDF reader currently handles extractable text. Figures and scans require visual input or OCR to ground an answer in their contents.

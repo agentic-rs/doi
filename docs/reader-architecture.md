@@ -39,11 +39,11 @@ arXiv metadata and PDF requests share serialized access and a three-second pacin
 
 Saved papers open directly at their reading location; newly confirmed downloads open the original PDF. **Info** displays metadata over the mounted reader on demand. Dismissing it returns to reading, and taps show or hide controls without resizing or recreating the document. The close icon closes the paper rather than merely hiding its controls. Back/Forward restores the destination directly. Taps on links, scrolling gestures, long presses, and active text selection do not toggle controls.
 
-The iOS plugin requests portrait or landscape through the foreground window scene. Screen orientation is independent of PDF page rotation and never changes annotation coordinates or the sidecar schema. Viewport changes preserve the normalized page position; fit-width mode refits automatically, while manually chosen or restored zoom remains stable.
+Screen orientation follows the host device. PDF page rotation is independent of screen orientation. Viewport changes preserve the normalized page position, and fit-width mode refits automatically.
 
 On short landscape screens, the top and bottom controls use single rows with 44-point targets, and references and notes open in a narrow panel below the top bar. Safe-area insets keep overlays clear of the notch and home indicator. Apell owns native safe-area and WebView integration. The applet follows physical device orientation; it cannot change native orientation or status-bar policy.
 
-On iPhone, opening Ask AI or a saved conversation first requests portrait and waits for the native scene to settle. The full-screen conversation keeps portrait locked until Back or Escape, then releases the lock and restores the exact previous reading orientation. References, manual notes, and saved annotations remain usable in landscape. Native device idiom identifies phones independently of window width, so narrow iPad windows and Mac retain the existing AI panel. Unknown capabilities must resolve before opening AI. The PDF, conversation requests, selection, and unsent follow-up drafts stay mounted or owned by the workspace across this transition. Native calls serialize entry and restoration, and a full webview reload releases any stale lock.
+On phones, Ask AI shows one conversation over the mounted reader. Opening a source temporarily displays the original PDF with the cited geometry highlighted. Returning restores the prior reading location and the originating question, draft, or note. The applet uses Apell's platform information and the mobile display's short side to distinguish phones from tablets. Larger devices use the existing inspector.
 
 The text adapter consumes PDF.js text streams with `getReader()` because affected WebKit versions lack the asynchronous stream iteration used by `getTextContent()`. Both text layers and bibliography extraction use the same adapter. It retains chunk styles, language, cleanup, and the separate XFA path without modifying global stream prototypes or PDF.js internals.
 
@@ -51,9 +51,9 @@ The text adapter consumes PDF.js text streams with `getReader()` because affecte
 
 Separate the target from the body:
 
-- Target: exact document hash and revision, with one or more page anchors.
+- The target identifies the exact PDF revision and either a passage or the whole paper.
 - Page anchor: one-based page number, PDF user-space quadrilaterals, selected quote, and surrounding text.
-- Body: a user note or an AI answer, including its question, provider/model, and actual context used. AI notes can add reviewed `note_content` while retaining the full `answer`.
+- New pinned notes carry reviewed text, cited passage anchors, attribution, and an optional local conversation link. Legacy AI answer bodies retain their question and full response.
 - Record: schema version, stable annotation ID, and timestamps.
 
 Define quad point ordering and coordinate conventions explicitly. Preserve unscaled, unrotated PDF user-space coordinates, including page box offsets; use engine transforms when displaying them. Do not assume every page starts at zero or every page uses the same size. Screen/device pixel coordinates and PDF.js text item indices are transient.

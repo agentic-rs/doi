@@ -6,6 +6,7 @@ fn workflow(mode: Mode) -> Workflow {
     history: vec![],
     question: "Explain".into(),
     mode,
+    read_pdf: false,
   })
   .unwrap()
 }
@@ -56,6 +57,10 @@ fn tool_continuation_preserves_assistant_and_opaque_metadata() {
   ));
   let request = flow.request("second".into()).unwrap();
   assert!(request.get("tools").is_none());
+  assert_eq!(
+    request["target"],
+    json!({"connection_id":"connection", "model_id":"alias"})
+  );
   assert_eq!(request["messages"][3]["content"], first.content);
   assert_eq!(request["messages"][3]["provider_state"]["token"], "opaque");
   assert_eq!(request["messages"][4]["tool_call_id"], "call_1");
@@ -184,6 +189,7 @@ fn context_is_bounded_without_silent_trimming() {
     history: vec![],
     question: "Question".into(),
     mode: Mode::FollowUp,
+    read_pdf: false,
   };
   assert!(Workflow::new(input).is_err());
   let input = Input {
@@ -191,11 +197,20 @@ fn context_is_bounded_without_silent_trimming() {
     history: vec![("Question".into(), "Answer".into())],
     question: "Follow up".into(),
     mode: Mode::FollowUp,
+    read_pdf: false,
   };
   let request = Workflow::new(input).unwrap().request("id".into()).unwrap();
   assert_eq!(request["messages"][2]["role"], "user");
   assert_eq!(request["messages"][3]["role"], "assistant");
   assert_eq!(request["messages"][4]["content"], "Follow up");
+  let with_passage = Input {
+    source: "Paper".into(),
+    history: vec![("p".repeat(9 * 1024), "Answer".into())],
+    question: "Follow up".into(),
+    mode: Mode::FollowUp,
+    read_pdf: true,
+  };
+  assert!(Workflow::new(with_passage).is_ok());
 }
 
 #[test]

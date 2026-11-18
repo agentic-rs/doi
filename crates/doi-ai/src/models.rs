@@ -134,7 +134,21 @@ pub struct PageAnchor {
 pub struct AnnotationTarget {
   pub paper_id: String,
   pub pdf_hash: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub scope: Option<AnnotationScope>,
   pub page_anchors: Vec<PageAnchor>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnnotationScope {
+  Paper,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NoteCitation {
+  pub citation_id: String,
+  pub anchor: PageAnchor,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -142,6 +156,8 @@ pub struct AnnotationTarget {
 pub enum AnnotationBody {
   Note {
     content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    citations: Vec<NoteCitation>,
   },
   AiAnswer {
     question: String,

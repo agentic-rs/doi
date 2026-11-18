@@ -58,9 +58,9 @@ Reference extraction is a separate pipeline from paper downloading: the arXiv me
 
 ### Selection questions and annotations
 
-Selecting text reveals an Ask AI action. The question panel previews the selection and the context that will be sent: the selected text, nearby text, and paper metadata. Broader paper context can be added explicitly.
+Ask AI opens from the reader or a passage selection. A question can attach passages from the current revision. The model can request a local PDF text search or page read through Apell tool calls, then cite returned excerpts by their app-issued identifiers.
 
-Answers form a persistent conversation anchored to the original selection. Follow-ups continue that conversation; **Generate note** asks the model for a proposed note, and **Save note** explicitly creates an annotation. The first answer can include a suggested note. Keep unsaved drafts on failure and allow editing and deletion of saved notes. Returning home, changing tabs, or closing a reader does not cancel running AI; removing the paper does.
+Each paper can hold multiple conversations. Follow-ups can introduce new passages. **Save as note** opens a draft for a completed turn. The reader chooses the wording and placement, then pins the note. Opening a citation returns to the underlying passage independently of the note's placement. Older suggested notes remain available in their conversations.
 
 Persist page-specific quadrilaterals in unscaled PDF user-space coordinates, plus the selected quote and surrounding text. Convert between PDF and screen coordinates at the reader boundary so highlights survive zoom and rotation. A selection spanning pages has multiple page anchors. Never silently move annotations to another PDF revision.
 
