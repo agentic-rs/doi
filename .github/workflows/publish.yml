@@ -18,18 +18,10 @@ jobs:
     outputs:
       artifact_id: ${{ steps.release.outputs.artifact-id }}
     env:
-      APELL_BIN: ${{ github.workspace }}/apell/target/release/apell
       RUSTUP_TOOLCHAIN: 1.99.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          persist-credentials: false
-      - name: Check out pinned Apell CLI source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: agentic-rs/apell
-          ref: 7517beab013e8db7364392e091ab17beb0cabccd
-          path: apell
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -43,10 +35,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends pkg-config libssl-dev clang cmake
           cargo install --locked wasm-bindgen-cli --version 0.2.126
-      - name: Build Apell CLI
-        working-directory: apell
-        run: cargo build --locked --release -p apell-cli
+      - uses: agentic-rs/apell/actions/setup@actions-v1.0.0
+        id: apell
       - name: Build and test Paper Reader
+        env:
+          APELL_BIN: ${{ steps.apell.outputs.binary }}
         run: |
           pnpm install --frozen-lockfile
           cargo fetch --locked --manifest-path crates/doi-ai/Cargo.toml
@@ -56,7 +49,7 @@ jobs:
         run: |
           (cd artifacts && sha256sum --check doi.sha256)
           mkdir -p release
-          cp artifacts/doi.apel artifacts/doi.sha256 assets/icon.png publish.json "$APELL_BIN" release/
+          cp artifacts/doi.apel artifacts/doi.sha256 assets/icon.png publish.json release/
       - name: Retain release files
         id: release
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -74,8 +67,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      APELL_STORE_URL: ${{ vars.APELL_STORE_URL }}
     steps:
       - name: Download this run's tested bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -83,11 +74,12 @@ jobs:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: release
           digest-mismatch: error
-      - name: Publish with GitHub Actions identity
+      - name: Verify the package checksum
         working-directory: release
-        run: |
-          test -n "$APELL_STORE_URL"
-          sha256sum --check doi.sha256
-          chmod +x apell
-          ./apell publish doi.apel --store "$APELL_STORE_URL" \
-            --metadata publish.json --icon icon.png --auth github-oidc
+        run: sha256sum --check doi.sha256
+      - uses: agentic-rs/apell/actions/publish@actions-v1.0.0
+        with:
+          store_url: ${{ vars.APELL_STORE_URL }}
+          package: release/doi.apel
+          metadata: release/publish.json
+          icon: release/icon.png
